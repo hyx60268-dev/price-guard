@@ -1,0 +1,68 @@
+name: 同步成本和账号
+on:
+  issues:
+    types: [opened]
+permissions:
+  contents: read
+  issues: write
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  sync-and-publish:
+    if: github.event.issue.user.login == github.repository_owner && startsWith(github.event.issue.title, '[Price Guard Sync]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 恢复最新加密数据
+        uses: actions/cache/restore@v4
+        with:
+          path: state
+          key: price-guard-state-${{ github.run_id }}
+          restore-keys: |
+            price-guard-state-
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - name: 合并加密成本和账号
+        id: sync
+        run: node scripts/sync-input.mjs
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+      - name: 保存最新加密数据
+        run: mkdir -p state && cp public/data/latest.json.enc state/latest.json.enc
+      - uses: actions/cache/save@v4
+        with:
+          path: state
+          key: price-guard-state-${{ github.run_id }}
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      - name: 发布网页
+        id: deployment
+        uses: actions/deploy-pages@v4
+      - name: 确认并关闭同步请求
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `已安全同步并发布：${{ steps.sync.outputs.accounts }} 个账号、${{ steps.sync.outputs.costs }} 条加密成本记录。仪表盘会自动刷新。`
+            });
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              state: 'closed'
+            });

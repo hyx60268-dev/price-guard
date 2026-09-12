@@ -37,16 +37,16 @@ export function extractRecommendationCards(nextData){
   }));
 }
 
-async function fetchHtml(url,attempts=5){
+async function fetchHtml(url,attempts=2){
   let last;
   for(let attempt=1;attempt<=attempts;attempt++){
     const controller=new AbortController();
-    const timeout=setTimeout(()=>controller.abort(),45000);
+    const timeout=setTimeout(()=>controller.abort(),15000);
     try{
       const response=await fetch(url,{headers:{'user-agent':UA,'accept-language':'ja-JP,ja;q=0.9'},signal:controller.signal,redirect:'follow'});
       if(response.status===429){
         const retryAfter=Number(response.headers.get('retry-after'));
-        const waitMs=Number.isFinite(retryAfter)&&retryAfter>0?retryAfter*1000:Math.min(60000,10000*attempt);
+        const waitMs=Number.isFinite(retryAfter)&&retryAfter>0?Math.min(8000,retryAfter*1000):Math.min(8000,2500*attempt);
         if(attempt<attempts){console.warn(`[Yahoo 限流] ${Math.ceil(waitMs/1000)} 秒后重试 (${attempt}/${attempts})`);await new Promise(resolve=>setTimeout(resolve,waitMs));continue}
       }
       if(!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -55,7 +55,7 @@ async function fetchHtml(url,attempts=5){
       return html;
     }catch(error){
       last=error;
-      if(attempt<attempts) await new Promise(resolve=>setTimeout(resolve,Math.min(15000,1000*attempt*attempt)));
+      if(attempt<attempts) await new Promise(resolve=>setTimeout(resolve,1000*attempt));
     }finally{clearTimeout(timeout)}
   }
   throw new Error(`Yahoo 请求失败：${String(last)}`);
@@ -130,12 +130,13 @@ export async function discoverYahooProfile(_unusedPage,profileUrl){
   return {items,totalResults:Number(first.totalResultsAvailable||all.length),pages};
 }
 
-export async function yahooCompare(_unusedPage,item){
+export async function yahooCompare(_unusedPage,item,settings={}){
   const query=queryFor(item.title);
   const searchUrl=`https://paypayfleamarket.yahoo.co.jp/search/${encodeURIComponent(query)}?open=1`;
   let search=null,ownBundle=null,searchError='',itemPageError='';
-  try{search=await fetchResult(searchUrl)}catch(error){searchError=String(error)}
-  try{ownBundle=await fetchItemBundle(item.id)}catch(error){itemPageError=String(error)}
+  const [searchAttempt,itemAttempt]=await Promise.allSettled([fetchResult(searchUrl),fetchItemBundle(item.id)]);
+  if(searchAttempt.status==='fulfilled')search=searchAttempt.value;else searchError=String(searchAttempt.reason);
+  if(itemAttempt.status==='fulfilled')ownBundle=itemAttempt.value;else itemPageError=String(itemAttempt.reason);
   if(!search&&!ownBundle)throw new Error(`搜索与商品页均失败：${searchError}; ${itemPageError}`);
 
   const searchCards=(search?.items||[]).filter(raw=>raw.itemStatus==='OPEN').map(searchCard);
@@ -159,10 +160,12 @@ export async function yahooCompare(_unusedPage,item){
 
   const competitors=[];
   let detailCheckedCount=0;
-  for(let index=0;index<preliminary.length;index++){
+  const maxDetailChecks=Math.max(1,Number(settings.maxYahooDetailChecks)||2);
+  for(let index=0;index<preliminary.length&&detailCheckedCount<maxDetailChecks;index++){
     const card=preliminary[index];
+    detailCheckedCount++;
     try{
-      const bundle=await fetchItemBundle(card.id),detail=bundle.detail;detailCheckedCount++;
+      const bundle=await fetchItemBundle(card.id),detail=bundle.detail;
       if(detail.status!=='OPEN'){rejected.push({id:card.id,price:card.price,reason:'not_open'});continue}
       if(hasExplicitDefect(detail.title,detail.description)){rejected.push({id:card.id,price:Number(detail.price),reason:'defect'});continue}
       const detailCategory=categoryText(detail,card);
@@ -188,13 +191,14 @@ export async function yahooCompare(_unusedPage,item){
   const recommended=lowest&&lowest.price<item.ownPrice?Math.max(1,Math.floor(lowest.price)-1):item.ownPrice;
   const bothSources=Boolean(search&&ownBundle);
   const matchLabel=lowest&&!lowest.isOwn?'已核验在售同款':bothSources?'未发现更低同款':'仅部分来源成功，需复核';
+  const ownImages=[...(ownDetail?.images||[]).map(image=>typeof image==='string'?image:image?.url).filter(Boolean),ownDetail?.thumbnailImageUrl,item.image].filter(Boolean);
   return {
     query,searchUrl,lowestPrice:lowest?.price??item.ownPrice,lowestUrl:lowest?.url??item.url,
     recommendedPrice:recommended,candidates:competitors.slice(0,5),cardCount:cards.length,
     searchCardCount:searchCards.length,recommendationCardCount:recommendationCards.length,
     preliminaryCount:preliminary.length,detailCheckedCount,rejected:rejected.slice(0,30),
     competitorCount:competitors.length,status:'ok',comparisonStatus:lowest?.isOwn?'no_lower_found':'competitor_lower',
-    matchLabel,matchConfidence:lowest&&!lowest.isOwn?'高':bothSources?'覆盖检查':'需复核',
+    matchLabel,matchConfidence:lowest&&!lowest.isOwn?'高':bothSources?'覆盖检查':'需复核',checkedAt:new Date().toISOString(),ownImages:[...new Set(ownImages)].slice(0,8),
     sourceStatus:{search:search?'ok':'error',itemPage:ownBundle?'ok':'error'},searchError,itemPageError
   };
 }

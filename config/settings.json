@@ -4,6 +4,14 @@
   "profitWarningJPY": 1500,
   "costMultiplier": 1.05,
   "maxXianyuSamples": 5,
-  "scanDelayMs": 1800,
+  "maxXianyuDetailChecks": 6,
+  "maxXianyuItemsPerRun": 3,
+  "xianyuFreshHours": 168,
+  "xianyuRetryHours": 24,
+  "scanDelayMs": 1200,
+  "maxYahooDetailChecks": 3,
+  "yahooConcurrency": 3,
+  "yahooFreshMinutes": 15,
+  "scanBudgetMinutes": 12,
   "timezone": "Asia/Tokyo"
 }

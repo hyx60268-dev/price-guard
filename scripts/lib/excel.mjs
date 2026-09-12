@@ -13,12 +13,16 @@ export async function makeWorkbook(result,path){
   ws.getRow(1).font={bold:true,color:{argb:'FFFFFFFF'}};
   ws.getRow(1).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF17365D'}};
   for(const source of result.items){
-    const row=ws.addRow({...source,manualPurchaseCNY:null,manualFeeCNY:null,shippingJPY:null,costJPY:null,currentProfitJPY:null,afterProfitJPY:null,advice:null});
+    const row=ws.addRow({...source,
+      manualPurchaseCNY:source.manualPurchaseCNY??source.manualCost?.purchaseCNY??null,
+      manualFeeCNY:source.manualFeeCNY??source.manualCost?.manualFeeCNY??null,
+      shippingJPY:source.shippingJPY??source.manualCost?.shippingJPY??null
+    });
     const n=row.number;
-    row.getCell('K').value={formula:`IF(COUNTA(H${n}:J${n})<3,"",ROUNDUP(((H${n}+I${n})*参数!$B$2+J${n})*参数!$B$4,0))`};
-    row.getCell('L').value={formula:`IF(K${n}="","",D${n}-K${n})`};
-    row.getCell('M').value={formula:`IF(K${n}="","",F${n}-K${n})`};
-    row.getCell('N').value={formula:`IF(K${n}="","待输入成本",IF(M${n}<0,"调价后亏损",IF(M${n}<参数!$B$3,"不建议按推荐价出售",IF(L${n}<参数!$B$3,"建议提价或控制成本","利润正常"))))`};
+    row.getCell('K').value={formula:`IF(OR(AND(G${n}="",H${n}=""),I${n}="",J${n}=""),"",ROUNDUP(((IF(H${n}="",G${n},H${n})+I${n})*参数!$B$2+J${n})*参数!$B$4,0))`,result:source.costJPY??undefined};
+    row.getCell('L').value={formula:`IF(K${n}="","",D${n}-K${n})`,result:source.currentProfitJPY??undefined};
+    row.getCell('M').value={formula:`IF(K${n}="","",F${n}-K${n})`,result:source.afterProfitJPY??undefined};
+    row.getCell('N').value={formula:`IF(K${n}="","待输入成本",IF(M${n}<0,"调价后亏损",IF(M${n}<参数!$B$3,"不建议按推荐价出售",IF(L${n}<参数!$B$3,"建议提价或控制成本","利润正常"))))`,result:source.advice??'待输入成本'};
   }
   ws.autoFilter={from:'A1',to:'T1'};
   for(const key of ['ownPrice','lowestPrice','recommendedPrice','costJPY','currentProfitJPY','afterProfitJPY'])ws.getColumn(key).numFmt='¥#,##0;[Red]-¥#,##0';

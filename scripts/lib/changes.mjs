@@ -1,4 +1,4 @@
-const trackedFields=['ownPrice','lowestPrice','recommendedPrice','averageCNY','costJPY','afterProfitJPY','advice'];
+const trackedFields=['ownPrice','lowestPrice','recommendedPrice','averageCNY','costJPY','currentProfitJPY','afterProfitJPY','advice'];
 
 const same=(a,b)=>Number.isFinite(a)&&Number.isFinite(b)?Math.round(a*100)===Math.round(b*100):a===b;
 

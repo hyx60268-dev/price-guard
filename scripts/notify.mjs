@@ -19,10 +19,14 @@ if(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID){
 }
 
 if(!sent && process.env.GITHUB_TOKEN && process.env.GITHUB_REPOSITORY){
-  const response=await fetch(`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/issues`,{
-    method:'POST',headers:{authorization:`Bearer ${process.env.GITHUB_TOKEN}`,'content-type':'application/json','user-agent':'price-guard','x-github-api-version':'2022-11-28'},
-    body:JSON.stringify({title:`价格变动提醒：${summary.total} 项`,body:`${message}\n\n这是自动提醒。商品明细和利润只在加密仪表盘中显示。`,labels:[]})
+  const endpoint=`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/issues`,owner=process.env.GITHUB_REPOSITORY_OWNER;
+  const headers={authorization:`Bearer ${process.env.GITHUB_TOKEN}`,'content-type':'application/json','user-agent':'price-guard','x-github-api-version':'2022-11-28'};
+  const payload={title:`价格变动提醒：${summary.total} 项`,body:`${owner?`@${owner} `:''}${message}\n\n这是自动提醒。商品明细和利润只在加密仪表盘中显示。`,labels:[],assignees:owner?[owner]:[]};
+  let response=await fetch(endpoint,{
+    method:'POST',headers,body:JSON.stringify(payload)
   });
+  // 某些仓库策略不允许 Actions 自动指派；仍保留不指派的提醒作为降级方案。
+  if(!response.ok&&payload.assignees.length)response=await fetch(endpoint,{method:'POST',headers,body:JSON.stringify({...payload,assignees:[]})});
   if(!response.ok) throw new Error(`GitHub 手机提醒失败：HTTP ${response.status} ${await response.text()}`);
   console.log('已创建 GitHub Issue 提醒'); sent=true;
 }

@@ -13,11 +13,12 @@ permissions:
   id-token: write
 concurrency:
   group: pages
-  # 20 分钟任务接近上一轮结束时不要取消已完成大半的扫描；新一轮会排队。
-  cancel-in-progress: false
+  # 新代码或手工检查优先，定时任务之间仍顺序执行。
+  cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
 jobs:
   scan-and-publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 19
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -45,6 +46,7 @@ jobs:
           XIANYU_AUTH_PART_3: ${{ secrets.XIANYU_AUTH_PART_3 }}
           XIANYU_STORAGE_STATE_GZIP_B64: ${{ secrets.XIANYU_STORAGE_STATE_GZIP_B64 }}
           XIANYU_STORAGE_STATE_B64: ${{ secrets.XIANYU_STORAGE_STATE_B64 }}
+          SCAN_TRIGGER: ${{ github.event_name }}
       - name: 数据变化时发送手机提醒
         run: npm run notify
         env:
