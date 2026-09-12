@@ -75,6 +75,14 @@ export function extractRecommendationCards(nextData){
   }));
 }
 
+export function extractCategoryIds(raw={}){
+  return [...new Set([
+    ...(raw.genreCategoryIds||[]),
+    raw.category?.id,raw.category?.productCategoryId,
+    ...(raw.category?.path||[]).map(category=>category?.id)
+  ].filter(value=>value!==undefined&&value!==null))];
+}
+
 async function fetchHtml(url,attempts=2){
   let last;
   for(let attempt=1;attempt<=attempts;attempt++){
@@ -134,7 +142,7 @@ function searchCard(raw){
   return {
     id:raw.id,url:`https://paypayfleamarket.yahoo.co.jp/item/${raw.id}`,title:raw.title||'',text:raw.title||'',
     image:raw.thumbnailImageUrl||'',price:Number(raw.price),sellerId:raw.sellerId||'',itemStatus:raw.itemStatus,
-    categoryIds:raw.genreCategoryIds||[],source:'search',recommendationType:'',recommendationScore:null
+    categoryIds:extractCategoryIds(raw),source:'search',recommendationType:'',recommendationScore:null
   };
 }
 

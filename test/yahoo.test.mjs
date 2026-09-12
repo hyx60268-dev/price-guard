@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { extractItemData,extractNextData,extractRecommendationCards,queryFor } from '../scripts/lib/yahoo.mjs';
+import { extractCategoryIds,extractItemData,extractNextData,extractRecommendationCards,queryFor } from '../scripts/lib/yahoo.mjs';
 
 test('extractNextData accepts Yahoo nonce attribute',()=>{
   const value={props:{initialState:{searchState:{search:{result:{items:[]}}}}}};
@@ -28,6 +28,10 @@ test('extracts item detail and Yahoo item-page recommendation cards',()=>{
     image:'https://example.invalid/item.jpg',price:13999,sellerId:'p76631898',itemStatus:null,
     categoryIds:[2511,2119,2134],source:'recommendation',recommendationType:'vector',recommendationScore:0.9566
   });
+});
+
+test('extracts category ids from the current Yahoo search-card shape',()=>{
+  assert.deepEqual(extractCategoryIds({category:{id:2134,productCategoryId:2133,path:[{id:1},{id:2511},{id:2119},{id:2134}]}}),[2134,2133,1,2511,2119]);
 });
 
 test('uses broad recall wording while preserving distinctive product terms',()=>{
