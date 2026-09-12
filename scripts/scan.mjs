@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { openContext } from './lib/browser.mjs';
 import { discoverYahooProfile,yahooCompare } from './lib/yahoo.mjs';
@@ -17,14 +18,26 @@ if(!password||password.length<8) throw new Error('DASHBOARD_PASSWORD 至少需�
 
 await fs.mkdir(path.join(root,'data'),{recursive:true});
 await fs.mkdir(path.join(root,'public','data'),{recursive:true});
-async function stateFromEnv(name,file){
+async function stateFromEnv(name,file,compressed=false){
   const value=process.env[name];
-  if(value) await fs.writeFile(file,Buffer.from(value,'base64'));
+  if(value){
+    const raw=Buffer.from(value,'base64');
+    await fs.writeFile(file,compressed?zlib.gunzipSync(raw):raw);
+  }
   return await fs.access(file).then(()=>file).catch(()=>undefined);
+}
+async function stateFromParts(names,file){
+  const value=names.map(name=>process.env[name]||'').join('');
+  if(!value)return undefined;
+  await fs.writeFile(file,zlib.gunzipSync(Buffer.from(value,'base64')));
+  return file;
 }
 await fs.mkdir(path.join(root,'.auth'),{recursive:true});
 const yahooState=await stateFromEnv('YAHOO_STORAGE_STATE_B64',path.join(root,'.auth','yahoo.json'));
-const xianyuState=await stateFromEnv('XIANYU_STORAGE_STATE_B64',path.join(root,'.auth','xianyu.json'));
+const xianyuFile=path.join(root,'.auth','xianyu.json');
+const xianyuState=await stateFromParts(['XIANYU_AUTH_PART_1','XIANYU_AUTH_PART_2','XIANYU_AUTH_PART_3'],xianyuFile)
+  || await stateFromEnv('XIANYU_STORAGE_STATE_GZIP_B64',xianyuFile,true)
+  || await stateFromEnv('XIANYU_STORAGE_STATE_B64',xianyuFile);
 const y=await openContext(yahooState), x=await openContext(xianyuState);
 const yp=await y.context.newPage(), xp=await x.context.newPage();
 let activeItems=catalog.items;
