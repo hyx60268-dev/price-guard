@@ -2,8 +2,8 @@ import { imageSimilarity,imageHash } from './image.mjs';
 import { hasExplicitDefect,isRejected,semanticSameItem,titleScore } from './rules.mjs';
 
 const UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140 Safari/537.36';
-const DEFAULT_REQUEST_INTERVAL_MS=2200;
-const DEFAULT_RATE_LIMIT_COOLDOWN_MS=45000;
+const DEFAULT_REQUEST_INTERVAL_MS=5500;
+const DEFAULT_RATE_LIMIT_COOLDOWN_MS=60000;
 let requestIntervalMs=DEFAULT_REQUEST_INTERVAL_MS,rateLimitCooldownMs=DEFAULT_RATE_LIMIT_COOLDOWN_MS;
 let requestGate=Promise.resolve(),nextRequestAt=0;
 
@@ -24,13 +24,26 @@ function yahooCooldown(milliseconds){
 }
 
 function applyYahooSettings(settings={}){
-  requestIntervalMs=Math.max(1500,Number(settings.yahooRequestIntervalMs)||DEFAULT_REQUEST_INTERVAL_MS);
+  requestIntervalMs=Math.max(4000,Number(settings.yahooRequestIntervalMs)||DEFAULT_REQUEST_INTERVAL_MS);
   rateLimitCooldownMs=Math.max(15000,Number(settings.yahooRateLimitCooldownMs)||DEFAULT_RATE_LIMIT_COOLDOWN_MS);
 }
 
-export function queryFor(title=''){
+function exactQueryFor(title=''){
   return title.replace(/新品|未使用|未開封|正規品|中国限定|海外限定|匿名配送|送料無料/gi,' ')
     .replace(/[【】\[\]（）()<>《》/／]/g,' ').replace(/\s+/g,' ').trim();
+}
+
+// Yahoo の検索は長い完全一致語だと表記揺れを拾えないため、検索時だけ商品種別や
+// 「ペア/セット」などの一般語を外す。同一商品判定には下の exactQuery を使うので、
+// 広く呼び戻しても別キャラ・別数量・別版を最低価格として採用しない。
+export function queryFor(title=''){
+  const exact=exactQueryFor(title);
+  const recall=exact
+    .replace(/日本非売品|日本未発売|非売品|国内限定|フランス限定|香港限定|会場限定|限定/gi,' ')
+    .replace(/アクリルスタンド|アクスタ|アクリルブロック|ぬいぐるみ|マスコット|キーホルダー|キーチェーン|ストラップ|フィギュア|フォトカード|ポストカード|トレカ|コレクションカード|缶バッジ/gi,' ')
+    .replace(/(?:ペア|セット)(?=\s|$)/gi,' ')
+    .replace(/[&＆×「」『』#＃]/g,' ').replace(/\s+/g,' ').trim();
+  return recall.length>=3?recall:exact;
 }
 
 export function extractNextData(html=''){
@@ -163,17 +176,23 @@ export async function discoverYahooProfile(_unusedPage,profileUrl,settings={}){
 export async function yahooCompare(_unusedPage,item,settings={}){
   applyYahooSettings(settings);
   const query=queryFor(item.title);
+  const exactQuery=exactQueryFor(item.title);
   const searchUrl=`https://paypayfleamarket.yahoo.co.jp/search/${encodeURIComponent(query)}?open=1`;
   let search=null,ownBundle=null,searchError='',itemPageError='';
-  const [searchAttempt,itemAttempt]=await Promise.allSettled([fetchResult(searchUrl),fetchItemBundle(item.id)]);
-  if(searchAttempt.status==='fulfilled')search=searchAttempt.value;else searchError=String(searchAttempt.reason);
-  if(itemAttempt.status==='fulfilled')ownBundle=itemAttempt.value;else itemPageError=String(itemAttempt.reason);
+  // 正常時は検索ページ 1 回だけ。商品ページは検索が失敗した時の推薦候補フォールバックに限定する。
+  // これで 89 商品の基礎リクエストを半減し、Yahoo の公開ページ制限内で定期確認できる。
+  try{search=await fetchResult(searchUrl)}catch(error){searchError=String(error)}
+  if(!search){
+    try{ownBundle=await fetchItemBundle(item.id)}catch(error){itemPageError=String(error)}
+  }
   if(!search&&!ownBundle)throw new Error(`搜索与商品页均失败：${searchError}; ${itemPageError}`);
 
   const searchCards=(search?.items||[]).filter(raw=>raw.itemStatus==='OPEN').map(searchCard);
   const recommendationCards=ownBundle?.recommendations||[];
   const cards=mergeCards([searchCards,recommendationCards]);
-  const ownDetail=ownBundle?.detail||null,ownCategory=categoryText(ownDetail);
+  const ownDetail=ownBundle?.detail||null;
+  const ownSearchCard=searchCards.find(card=>card.id===item.id);
+  const ownCategory=categoryText(ownDetail,ownSearchCard)||item.yahoo?.ownCategory||'';
   const ownHash=await imageHash(item.image);
   const preliminary=[];
   const rejected=[];
@@ -181,12 +200,14 @@ export async function yahooCompare(_unusedPage,item,settings={}){
   for(const card of cards.sort((a,b)=>a.price-b.price)){
     if(card.id===item.id||!Number.isFinite(card.price)||card.price>=Number(item.ownPrice))continue;
     if(isRejected(card.title)){rejected.push({id:card.id,price:card.price,reason:'title_rejected'});continue}
-    const tScore=titleScore(query,card.title);
+    const tScore=titleScore(exactQuery,card.title);
+    const recallScore=titleScore(query,card.title);
     const semantic=semanticSameItem({query:item.title,candidate:card.title,queryCategory:ownCategory,candidateCategory:categoryText(null,card)});
     const fromRecommendation=recommendationEvidence(card);
-    if(tScore>=0.88||(semantic.accepted&&(tScore>=0.5||fromRecommendation))){
-      preliminary.push({...card,titleScore:tScore,semantic,fromRecommendation});
-    }else rejected.push({id:card.id,price:card.price,reason:semantic.reason||'weak_title',titleScore:tScore});
+    const strongTitle=tScore>=0.88&&!['variant_mismatch','product_mismatch'].includes(semantic.reason);
+    if(strongTitle||semantic.accepted||(fromRecommendation&&tScore>=0.5&&semantic.reason==='weak_anchors')){
+      preliminary.push({...card,titleScore:tScore,recallScore,semantic,fromRecommendation});
+    }else rejected.push({id:card.id,price:card.price,reason:semantic.reason||'weak_title',titleScore:tScore,recallScore});
   }
 
   const competitors=[];
@@ -201,8 +222,9 @@ export async function yahooCompare(_unusedPage,item,settings={}){
       if(hasExplicitDefect(detail.title,detail.description)){rejected.push({id:card.id,price:Number(detail.price),reason:'defect'});continue}
       const detailCategory=categoryText(detail,card);
       const semantic=semanticSameItem({query:item.title,candidate:`${detail.title}\n${detail.description||''}`,queryCategory:ownCategory,candidateCategory:detailCategory});
-      const detailTitleScore=titleScore(query,detail.title);
-      const accepted=detailTitleScore>=0.88||(semantic.accepted&&(detailTitleScore>=0.5||card.fromRecommendation));
+      const detailTitleScore=titleScore(exactQuery,detail.title);
+      const strongTitle=detailTitleScore>=0.88&&!['variant_mismatch','product_mismatch'].includes(semantic.reason);
+      const accepted=strongTitle||semantic.accepted||(card.fromRecommendation&&detailTitleScore>=0.5&&semantic.reason==='weak_anchors');
       if(!accepted){rejected.push({id:card.id,price:Number(detail.price),reason:semantic.reason||'detail_mismatch',titleScore:detailTitleScore});continue}
       let imageScore=null;
       const detailImage=detail.images?.[0]?.url||card.image;
@@ -220,16 +242,16 @@ export async function yahooCompare(_unusedPage,item,settings={}){
   const comparable=[own,...competitors].filter(x=>Number.isFinite(x.price)).sort((a,b)=>a.price-b.price);
   const lowest=comparable[0]||null;
   const recommended=lowest&&lowest.price<item.ownPrice?Math.max(1,Math.floor(lowest.price)-1):item.ownPrice;
-  const bothSources=Boolean(search&&ownBundle);
-  const matchLabel=lowest&&!lowest.isOwn?'已核验在售同款':bothSources?'未发现更低同款':'仅部分来源成功，需复核';
-  const ownImages=[...(ownDetail?.images||[]).map(image=>typeof image==='string'?image:image?.url).filter(Boolean),ownDetail?.thumbnailImageUrl,item.image].filter(Boolean);
+  const sourceCovered=Boolean(search||ownBundle);
+  const matchLabel=lowest&&!lowest.isOwn?'已核验在售同款':search?'未发现更低同款':'推荐候补中未发现更低同款';
+  const ownImages=[...(ownDetail?.images||[]).map(image=>typeof image==='string'?image:image?.url).filter(Boolean),ownDetail?.thumbnailImageUrl,...(item.yahoo?.ownImages||[]),item.image].filter(Boolean);
   return {
     query,searchUrl,lowestPrice:lowest?.price??item.ownPrice,lowestUrl:lowest?.url??item.url,
     recommendedPrice:recommended,candidates:competitors.slice(0,5),cardCount:cards.length,
     searchCardCount:searchCards.length,recommendationCardCount:recommendationCards.length,
     preliminaryCount:preliminary.length,detailCheckedCount,rejected:rejected.slice(0,30),
     competitorCount:competitors.length,status:'ok',comparisonStatus:lowest?.isOwn?'no_lower_found':'competitor_lower',
-    matchLabel,matchConfidence:lowest&&!lowest.isOwn?'高':bothSources?'覆盖检查':'需复核',checkedAt:new Date().toISOString(),ownImages:[...new Set(ownImages)].slice(0,8),
-    sourceStatus:{search:search?'ok':'error',itemPage:ownBundle?'ok':'error'},searchError,itemPageError
+    matchLabel,matchConfidence:lowest&&!lowest.isOwn?'高':sourceCovered?'覆盖检查':'需复核',checkedAt:new Date().toISOString(),ownImages:[...new Set(ownImages)].slice(0,8),ownCategory,
+    sourceStatus:{search:search?'ok':'error',itemPage:ownBundle?'fallback':'skipped'},searchError,itemPageError
   };
 }

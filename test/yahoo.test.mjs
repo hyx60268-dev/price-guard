@@ -30,6 +30,8 @@ test('extracts item detail and Yahoo item-page recommendation cards',()=>{
   });
 });
 
-test('keeps the current Yahoo search wording stable',()=>{
-  assert.equal(queryFor('【中国限定】雪肌精×モンチッチ ペアぬいぐるみ セット 新品'),'雪肌精×モンチッチ ペアぬいぐるみ セット');
+test('uses broad recall wording while preserving distinctive product terms',()=>{
+  assert.equal(queryFor('【中国限定】雪肌精×モンチッチ ペアぬいぐるみ セット 新品'),'雪肌精 モンチッチ');
+  assert.equal(queryFor('鬼滅の刃 中国限定 新繹シリーズ 時透無一郎 アクリルスタンド'),'鬼滅の刃 新繹シリーズ 時透無一郎');
+  assert.equal(queryFor('中国限定 MG ガンダムアストレイ クロスコントラストカラーズ 朽木黒'),'MG ガンダムアストレイ クロスコントラストカラーズ 朽木黒');
 });
