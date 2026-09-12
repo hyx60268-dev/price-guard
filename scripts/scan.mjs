@@ -6,7 +6,7 @@ import { openContext } from './lib/browser.mjs';
 import { discoverYahooProfile,yahooCompare } from './lib/yahoo.mjs';
 import { xianyuCost } from './lib/xianyu.mjs';
 import { advice,calculateCost } from './lib/rules.mjs';
-import { inventoryDelta,reconcileLiveItems,shouldScanXianyu } from './lib/planner.mjs';
+import { inventoryDelta,reconcileLiveItems,shouldScanXianyu,verifiedXianyuCache } from './lib/planner.mjs';
 import { makeWorkbook } from './lib/excel.mjs';
 import { decrypt,encryptFile } from './lib/crypto.mjs';
 import { compareSnapshots } from './lib/changes.mjs';
@@ -124,7 +124,10 @@ try{
 
     const rows=activeItems.map((item,index)=>{
       const yc=yahooResults[index],xc=xianyuResults[index],prior=previousById.get(item.id)||{};
-      const cachedAverage=Number.isFinite(prior.averageCNY)?prior.averageCNY:item.cachedXianyu?.averageCNY;
+      // v3 的闲鱼卡片均价没有进入详情页核验，可能包含系列最低价钩子，不能沿用。
+      // 只有 v4 详情验证 + 价格聚类产生的历史结果才有资格作为缓存。
+      const priorVerified=verifiedXianyuCache(prior);
+      const cachedAverage=priorVerified?.averageCNY??null;
       const averageCNY=Number.isFinite(xc.averageCNY)?xc.averageCNY:cachedAverage;
       const costSource=Number.isFinite(xc.averageCNY)?'live':Number.isFinite(cachedAverage)?'cached':'missing';
       const ownPrice=item.ownPrice;
@@ -136,7 +139,7 @@ try{
       const costJPY=calculateCost(averageCNY,null,null,settings),currentProfitJPY=null,afterProfitJPY=null;
       const yahooSource=yc.status==='ok'?'live':Number.isFinite(prior.lowestPrice)||Number.isFinite(item.cachedYahoo?.lowestPrice)?'cached':'own_baseline';
       const confidence=yc.status==='ok'&&(!needsXianyu||xc.status==='ok')?'高':(yahooSource==='cached'||costSource==='cached')?'参考缓存':'需人工';
-      const cachedSamples=prior.xianyu?.samples?.length?prior.xianyu.samples:(item.cachedXianyu?.samplePricesCNY||[]).map((price,i)=>({price,url:item.cachedXianyu.sampleLinks?.[i]||'',title:'历史确认样本'}));
+      const cachedSamples=priorVerified?.samples||[];
       const samples=xc.samples?.length?xc.samples:(cachedSamples||[]);
       return {...item,accountId:account.id,accountName:account.name,ownUrl:item.url,lowestPrice,lowestUrl,recommendedPrice,difference:ownPrice-lowestPrice,
         averageCNY,costJPY,currentProfitJPY,afterProfitJPY,currentUnder1500:false,afterUnder1500:false,

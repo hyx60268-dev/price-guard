@@ -30,3 +30,8 @@ export function inventoryDelta(previousItems=[],activeItems=[]){
 export function shouldScanXianyu(item,yahooResult){
   return yahooResult?.status==='ok' && Number.isFinite(yahooResult.lowestPrice) && yahooResult.lowestPrice<item.ownPrice;
 }
+
+export function verifiedXianyuCache(item={}){
+  if(item.xianyu?.verification!=='detail_and_price_cluster'||!Number.isFinite(item.averageCNY))return null;
+  return {averageCNY:item.averageCNY,samples:item.xianyu.samples||[]};
+}
