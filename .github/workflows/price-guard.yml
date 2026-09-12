@@ -29,6 +29,10 @@ jobs:
         env:
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
           YAHOO_STORAGE_STATE_B64: ${{ secrets.YAHOO_STORAGE_STATE_B64 }}
+          XIANYU_AUTH_PART_1: ${{ secrets.XIANYU_AUTH_PART_1 }}
+          XIANYU_AUTH_PART_2: ${{ secrets.XIANYU_AUTH_PART_2 }}
+          XIANYU_AUTH_PART_3: ${{ secrets.XIANYU_AUTH_PART_3 }}
+          XIANYU_STORAGE_STATE_GZIP_B64: ${{ secrets.XIANYU_STORAGE_STATE_GZIP_B64 }}
           XIANYU_STORAGE_STATE_B64: ${{ secrets.XIANYU_STORAGE_STATE_B64 }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
