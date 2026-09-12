@@ -1,121 +1,127 @@
-# 价格守卫 v3（Yahoo!フリマ × 闲鱼）
+# 价格守卫 v4（Yahoo!フリマ × 闲鱼）
 
-这一版以仓库根目录为唯一运行版本，并修复 Yahoo 空白和闲鱼误报失效：
+价格守卫在 GitHub Actions 云端运行，电脑和手机都可以关机。系统约每 20 分钟检查一次 Yahoo!フリマ 当前在售商品和同款最低价；只有自己的售价高于已确认同款最低价时，才继续搜索闲鱼成本。
 
-- **Yahoo 默认不登录**。直接读取 Yahoo 公开页面内的结构化 `__NEXT_DATA__`，不再依赖容易失效的可视 DOM，也不需要 `YAHOO_STORAGE_STATE_B64`。
-- **Yahoo 完整翻页**。卖家主页按总数读取全部页面，只保留 `OPEN`，排除 `SOLD`；比价页也只接受当前在售商品。
-- **多账号**。账号清单放在 `config/accounts.json`，每个账号有独立的 `config/catalogs/<id>.json` 商品清单。
-- **主页刷新失败不清空**。自动刷新失败时继续使用该账号上次确认的商品清单。
-- **前端账号下拉框**。页面可切换不同 Yahoo 账号。
-- **网页“账号管理”**。可以直接粘贴 Yahoo 卖家主页并保存在当前浏览器 `localStorage`。这种新增账号是“本机记忆”，不会自动写回 GitHub；页面可一键复制 Work 同步配置，后续让 Work 写回 `config/accounts.json` 即可。
-- **闲鱼单独登录**。不再把页面底部隐藏的“登录”链接误判为失效；保存的登录态确实失效时会自动清除它并匿名重试。成本有历史缓存就沿用，没有就留空。
-- **详细日志**。Yahoo 或闲鱼实时抓取失败时，GitHub Actions 会打印状态和错误，不再静默吞掉。
-- **准实时自动检查**。GitHub Actions 每 6 小时运行一次，电脑和手机都可以关闭。
-- **变化提醒**。默认在有变化时创建一个不含商品/利润明细的 GitHub Issue；安装 GitHub 手机 App 并 Watch 本仓库即可收到推送。也支持可选 Telegram 私聊提醒。
-- **加密变化基准**。上一次结果通过 Actions Cache 保存，第一次只建立基准，之后只在商品、售价、最低价、成本或利润发生变化时提醒。
+## v4 的主要变化
 
-> 仓库中旧的 `price_guard_work/` 是一次上传时误放的副本，Actions 不会运行它。v3 的有效代码全部位于仓库根目录。
+- **费用全部改为手工确认**：系统不再按小/中/大猜测人肉费或日本物流费。
+- **每件商品有 3 个输入框**：采购价（人民币）、人肉费（人民币）、日本物流费（日元）。
+- **利润即时重算**：保存后自动计算成本、当前利润、调价后利润和 ¥1,500 预警。
+- **手工数据可保存**：默认保存在当前浏览器；账号管理中可导出/导入 JSON，在手机和电脑之间迁移。
+- **Excel 可直接填写**：黄色三列为手工输入，成本与利润使用 Excel 公式自动计算。
+- **先同步库存差异**：读取 Yahoo 主页后只识别新增、减少和继续在售，继续在售商品复用已有搜索词和元数据。
+- **闲鱼按需运行**：Yahoo 比价确认需要降价时才搜索闲鱼，大多数商品会跳过闲鱼步骤。
+- **低价钩子保护**：闲鱼候选必须通过卡片标题、图片和商品详情二次核验；选款、改价、补差、多规格/多角色商品会被排除。
+- **价格聚类**：至少 2 个详情验证一致、价格处于同一合理区间的样本才生成自动均价；否则要求人工填写采购价。
+- **多账号入口保留**：每个 Yahoo 账号使用独立 catalog，页面可切换账号。
 
-## 账号配置
+## 计算公式
 
-`config/accounts.json`：
+    成本 = ((采购价人民币 + 人肉费人民币) × 人民币兑日元汇率 + 日本物流费日元) × 1.05
 
-```json
-{
-  "version": 1,
-  "accounts": [
+最终结果向上取整。采购价输入框留空时，仅在闲鱼已有可靠验证均价的情况下使用该均价；人肉费和日本物流费始终由用户填写。
+
+## 扫描流程
+
+1. 读取每个 Yahoo 卖家主页，只保留 OPEN 商品；
+2. 与上次加密基准比较，识别新增和减少；
+3. 继续在售商品复用 catalog/上次结果里的闲鱼搜索词等元数据；
+4. 对当前在售商品逐件做 Yahoo 同款最低价检查；
+5. 自己已经最低时跳过闲鱼；
+6. 自己价格更高时才搜索闲鱼，并进入候选详情核验；
+7. 加密生成仪表盘和 Excel；
+8. 与上次结果有变化时发送手机提醒。
+
+Yahoo 搜索仍保持单通道限速，以降低云端 IP 被 429 限流的概率。GitHub 的定时任务可能有数分钟排队延迟，因此“每 20 分钟”是云端计划频率，不承诺精确到秒。
+
+## 手机使用和通知
+
+仪表盘：
+
+<https://hyx60268-dev.github.io/price-guard/>
+
+- iPhone：用 Safari 打开，选择“分享 → 添加到主屏幕”。
+- Android：用 Chrome 打开，选择“安装应用”或“添加到主屏幕”。
+- 页面右上角的“手机与通知”也包含完整说明。
+
+默认通知通过 GitHub Issue：
+
+1. 安装 GitHub 手机 App；
+2. 打开本仓库；
+3. 选择 Watch → Custom → Issues；
+4. 在手机系统设置中允许 GitHub 通知。
+
+历史提醒：
+
+<https://github.com/hyx60268-dev/price-guard/issues>
+
+通知只包含变化数量和仪表盘链接，不公开商品成本或利润。若设置了 TELEGRAM_BOT_TOKEN 与 TELEGRAM_CHAT_ID，系统会优先发送 Telegram 私聊。
+
+## 手工成本保存范围
+
+网页是静态加密仪表盘，不能安全地把 GitHub 写入令牌放在浏览器里。因此手工成本默认保存在浏览器 localStorage：
+
+- 同一设备、同一浏览器再次打开仍会保留；
+- 清理网站数据会删除；
+- 手机和电脑之间不会自动同步；
+- 可在“账号管理 → 手工成本备份”导出 JSON，再在另一台设备导入。
+
+仓库是公开的，手工成本不会明文提交到仓库。
+
+## 多账号配置
+
+config/accounts.json：
+
     {
-      "id": "melon",
-      "name": "メロン",
-      "platform": "yahoo_fleamarket",
-      "profileUrl": "https://paypayfleamarket.yahoo.co.jp/user/p76217154",
-      "catalogFile": "config/catalogs/melon.json",
-      "enabled": true
+      "version": 1,
+      "accounts": [
+        {
+          "id": "melon",
+          "name": "メロン",
+          "platform": "yahoo_fleamarket",
+          "profileUrl": "https://paypayfleamarket.yahoo.co.jp/user/p76217154",
+          "catalogFile": "config/catalogs/melon.json",
+          "enabled": true
+        }
+      ]
     }
-  ]
-}
-```
 
-卖家主页链接使用账号 ID 型 URL，一般可长期保存。若 Yahoo 改版或账号迁移，只需更新 `profileUrl`。
+新增账号时：
 
-新增第二个账号时：
-
-1. 在 `config/accounts.json` 增加一条；
-2. 复制一个现有 catalog 为 `config/catalogs/<新id>.json`；
-3. 后续 Work 可打开新账号主页、抓取全部当前在售商品并覆盖该 catalog。
-
-网页里的“账号管理”适合先保存主页链接。它不需要 GitHub 写权限，因此不会泄露 GitHub token。
+1. 在 config/accounts.json 增加账号；
+2. 创建 config/catalogs/<账号ID>.json；
+3. 填入商品初始搜索词；之后库存增减会按账号独立检测。
 
 ## GitHub Secrets
 
-现在只需要：
+必需：
 
-- `DASHBOARD_PASSWORD`：至少 8 位；
-- `XIANYU_AUTH_PART_1`
-- `XIANYU_AUTH_PART_2`
-- `XIANYU_AUTH_PART_3`
+- DASHBOARD_PASSWORD：至少 8 位；
+- XIANYU_AUTH_PART_1
+- XIANYU_AUTH_PART_2
+- XIANYU_AUTH_PART_3
 
-兼容旧的 `XIANYU_STORAGE_STATE_GZIP_B64` / `XIANYU_STORAGE_STATE_B64`，但建议使用三段 Secret。
+兼容旧的 XIANYU_STORAGE_STATE_GZIP_B64 / XIANYU_STORAGE_STATE_B64。Yahoo 使用公开页面，不需要 Yahoo 登录 Secret。
 
-**不再需要 `YAHOO_STORAGE_STATE_B64`。**
+可选：
 
-可选的 Telegram 手机提醒：
-
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_CHAT_ID`
-
-不设置 Telegram 时会使用 GitHub Issue 提醒。GitHub 手机端进入本仓库，点击 `Watch → Custom → Issues`；提醒内容只含变化数量，详细数据仍需用密码打开仪表盘。
+- TELEGRAM_BOT_TOKEN
+- TELEGRAM_CHAT_ID
 
 ## 重新生成闲鱼登录 Secret
 
 电脑安装 Node.js 20+ 后，在项目目录运行：
 
-```bash
-npm install
-npx playwright install chromium
-npm run login
-```
+    npm install
+    npx playwright install chromium
+    npm run login
 
-程序只打开闲鱼。完成登录并确认能正常搜索商品后，回到终端按回车。会生成：
+完成闲鱼登录并确认可以搜索后回到终端按回车。程序会生成三个分段文件，分别复制到 GitHub：
 
-- `.auth/XIANYU_AUTH_PART_1.txt`
-- `.auth/XIANYU_AUTH_PART_2.txt`
-- `.auth/XIANYU_AUTH_PART_3.txt`
+Settings → Secrets and variables → Actions → Repository secrets
 
-分别复制到 GitHub：
+即使闲鱼登录失效，Yahoo 库存和价格检查仍会继续；需要降价但无法可靠搜索闲鱼的商品会显示人工采购价输入框。
 
-`Settings → Secrets and variables → Actions → Repository secrets`
+## 仓库说明
 
-然后进入：
-
-`Actions → 每日价格检查 → Run workflow`
-
-即使保存的闲鱼登录态以后再次过期，v3 也会先匿名重试，不会再仅因为页面里存在“登录”文字就把 89 件全部判为登录失效。
-
-## Work 预留接口
-
-未来让 ChatGPT Work 做实时同步时，目标很简单：
-
-1. 读取 `config/accounts.json`；
-2. 对每个 `profileUrl` 打开公开 Yahoo 主页；
-3. 获取当前全部在售商品；
-4. 保留已有 `xianyuQuery`、`size`、历史确认字段；
-5. 写回对应 `config/catalogs/<id>.json`；
-6. 提交后触发 GitHub Actions。
-
-网页“账号管理 → 复制 Work 同步配置”会生成适合交给 Work 的账号 JSON。
-
-## 状态说明
-
-仪表盘会分开显示：
-
-- Yahoo主页：实时成功 / 使用保存清单；
-- Yahoo比价：多少件拿到实时结果；
-- 闲鱼成本：实时 / 缓存 / 无成本；
-- Work接口：已预留。
-
-因此闲鱼过期不会再让 Yahoo 部分一起看起来“全坏了”。
-
-## 现实限制
-
-Yahoo 和闲鱼都可能对 GitHub Actions 的云端浏览器做风控，或更改页面结构。公开主页不要求 Yahoo 登录，但不等于一定允许 GitHub 云端环境稳定读取。遇到这种情况，系统会保留 catalog，不会删除商品；以后可以由 Work 在真实浏览器环境中刷新 catalog。
+仓库根目录是唯一运行版本。旧的 price_guard_work/ 是历史上传副本，不参与当前 GitHub Actions。

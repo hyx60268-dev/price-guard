@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { openContext } from './lib/browser.mjs';
 import { discoverYahooProfile,yahooCompare } from './lib/yahoo.mjs';
 import { xianyuCost } from './lib/xianyu.mjs';
-import { advice,calculateCost,inferSize } from './lib/rules.mjs';
+import { advice,calculateCost } from './lib/rules.mjs';
+import { inventoryDelta,reconcileLiveItems,shouldScanXianyu } from './lib/planner.mjs';
 import { makeWorkbook } from './lib/excel.mjs';
 import { decrypt,encryptFile } from './lib/crypto.mjs';
 import { compareSnapshots } from './lib/changes.mjs';
@@ -45,84 +46,119 @@ async function mapLimit(values,limit,worker){
 
 const previous=await previousSnapshot();
 const xianyuState=await xianyuStateFromEnv();
-const x=await openContext(xianyuState),xp=await x.context.newPage();
-let xianyuMode=xianyuState?'saved':'anonymous',xianyuAuthExpired=false,anyXianyuLoginRequired=false;
-const accountResults=[];
+let xBrowser,xContext,xPage,xianyuMode=xianyuState?'saved':'anonymous',xianyuAuthExpired=false,anyXianyuLoginRequired=false;
+
+async function ensureXianyuPage(){
+  if(xPage)return xPage;
+  const opened=await openContext(xianyuState);xBrowser=opened.browser;xContext=opened.context;xPage=await xContext.newPage();
+  return xPage;
+}
 
 async function switchXianyuToAnonymous(){
-  await x.context.clearCookies();
-  await xp.goto('https://www.goofish.com',{waitUntil:'domcontentloaded',timeout:45000}).catch(()=>{});
-  await xp.evaluate(()=>{localStorage.clear();sessionStorage.clear()}).catch(()=>{});
+  const page=await ensureXianyuPage();
+  await xContext.clearCookies();
+  await page.goto('https://www.goofish.com',{waitUntil:'domcontentloaded',timeout:45000}).catch(()=>{});
+  await page.evaluate(()=>{localStorage.clear();sessionStorage.clear()}).catch(()=>{});
   xianyuMode='anonymous';
 }
 
+const accountResults=[];
 try{
   for(const account of accountsCfg.accounts.filter(a=>a.enabled!==false)){
     const catalog=await readJson(path.join(root,account.catalogFile));
-    let activeItems=catalog.items||[],profileStatus='cached',profileError='';
+    const catalogItems=catalog.items||[];
+    const previousItems=(previous?.items||[]).filter(item=>(item.accountId||account.id)===account.id);
+    let activeItems=(previousItems.length?previousItems:catalogItems).map((item,index)=>({...item,seq:index+1}));
+    let profileStatus='cached',profileError='';
     console.log(`\n=== 账号 ${account.name} (${account.id}) ===`);
     try{
       const discovered=await discoverYahooProfile(null,account.profileUrl,settings);
       if(discovered.items.length){
-        const known=new Map((catalog.items||[]).map(item=>[item.id,item]));
-        activeItems=discovered.items.map((live,index)=>({...known.get(live.id),...live,seq:index+1,xianyuQuery:known.get(live.id)?.xianyuQuery||'',size:known.get(live.id)?.size||inferSize(live.title)}));
+        activeItems=reconcileLiveItems(catalogItems,previousItems,discovered.items);
         profileStatus='live';
         console.log(`Yahoo 主页实时刷新成功：${discovered.pages} 页中发现 ${activeItems.length} 件当前在售（历史总数 ${discovered.totalResults}）`);
-      }else console.warn(`Yahoo 主页返回 0 件在售；沿用保存清单 ${activeItems.length} 件`);
-    }catch(error){profileStatus='error';profileError=String(error);console.warn(`Yahoo 主页刷新失败；沿用保存清单：${profileError}`)}
+      }else console.warn(`Yahoo 主页返回 0 件在售；沿用上次/保存清单 ${activeItems.length} 件`);
+    }catch(error){profileStatus='error';profileError=String(error);console.warn(`Yahoo 主页刷新失败；沿用上次/保存清单：${profileError}`)}
 
-    // Yahoo 对云端 IP 限流明显。单通道并在每次搜索后停 4.2–5.0 秒，和闲鱼扫描并行完成。
-    const yahooPromise=mapLimit(activeItems,1,async(item,index)=>{
+    const profileDelta=inventoryDelta(previousItems,activeItems);
+    console.log(`商品清单变化：新增 ${profileDelta.added.length}、减少 ${profileDelta.removed.length}、复用 ${profileDelta.unchanged}`);
+
+    // 主页只负责增减与当前售价；商品搜索词等元数据优先复用 catalog/上次结果。
+    // Yahoo 搜索单通道限速以降低 429；全部 Yahoo 完成后，才决定哪些商品需要查闲鱼。
+    const yahooResults=await mapLimit(activeItems,1,async(item,index)=>{
       try{const result=await yahooCompare(null,item,settings);console.log(`[Yahoo ${account.name} ${index+1}/${activeItems.length}] cards=${result.cardCount} matches=${result.competitorCount}`);return result}
       catch(error){console.error(`[Yahoo ERROR][${item.id}]`,String(error));return {status:'error',error:String(error),candidates:[],lowestPrice:null,lowestUrl:'',recommendedPrice:item.ownPrice}}
       finally{await new Promise(resolve=>setTimeout(resolve,4200+Math.floor(Math.random()*800)))}
     });
+
+    const previousById=new Map(previousItems.map(item=>[item.id,item]));
     const xianyuResults=[];
+    let xianyuRequested=0,xianyuScanned=0,xianyuSkipped=0;
     for(const [index,item] of activeItems.entries()){
-      console.log(`[闲鱼 ${account.name} ${index+1}/${activeItems.length}] ${item.title}`);
+      if(!shouldScanXianyu(item,yahooResults[index])){
+        xianyuSkipped++;
+        xianyuResults.push({status:'skipped_no_reprice',reason:'当前售价已是最低或 Yahoo 本次未成功',samples:[],averageCNY:null});
+        continue;
+      }
+      xianyuRequested++;
+      if(!item.xianyuQuery){
+        xianyuResults.push({query:'',status:'missing_query',samples:[],averageCNY:null});
+        continue;
+      }
+      xianyuScanned++;
+      console.log(`[闲鱼 ${account.name} ${xianyuScanned}/${xianyuRequested}] ${item.title}`);
       let result;
       try{
-        result=await xianyuCost(xp,item,settings);
+        result=await xianyuCost(await ensureXianyuPage(),item,settings);
         if(result.status==='login_required'&&xianyuMode==='saved'){
           xianyuAuthExpired=true;
           console.warn('[闲鱼授权] 保存的登录状态失效，自动切换匿名搜索后重试');
           await switchXianyuToAnonymous();
-          result=await xianyuCost(xp,item,settings);result.fallback='anonymous';
+          result=await xianyuCost(xPage,item,settings);result.fallback='anonymous';
         }
       }catch(error){console.error(`[闲鱼 ERROR][${item.id}]`,String(error));result={status:'error',error:String(error),samples:[],averageCNY:null}}
       if(result.status==='login_required') anyXianyuLoginRequired=true;
-      if(result.status!=='ok'&&result.status!=='missing_query') console.warn(`[闲鱼][${item.id}] status=${result.status} cards=${result.cardCount??0}`);
+      if(result.status!=='ok'&&result.status!=='missing_query') console.warn(`[闲鱼][${item.id}] status=${result.status} cards=${result.cardCount??0} preliminary=${result.preliminaryCount??0} verified=${result.verifiedCount??0}`);
       xianyuResults.push(result);
     }
-    const yahooResults=await yahooPromise;
+
     const rows=activeItems.map((item,index)=>{
-      const yc=yahooResults[index],xc=xianyuResults[index];
-      const avg=Number.isFinite(xc.averageCNY)?xc.averageCNY:item.cachedXianyu?.averageCNY;
-      const costSource=Number.isFinite(xc.averageCNY)?'live':Number.isFinite(item.cachedXianyu?.averageCNY)?'cached':'missing';
-      const size=item.size||inferSize(item.title),ownPrice=item.ownPrice;
-      const lowestPrice=Number.isFinite(yc.lowestPrice)?yc.lowestPrice:(item.cachedYahoo?.lowestPrice??ownPrice);
-      const lowestUrl=yc.lowestUrl||item.cachedYahoo?.lowestUrl||item.url||'';
-      const recommendedPrice=Number.isFinite(yc.recommendedPrice)?yc.recommendedPrice:(item.cachedYahoo?.recommendedPrice??ownPrice);
-      const costJPY=calculateCost(avg,size,settings),currentProfitJPY=Number.isFinite(costJPY)?ownPrice-costJPY:null,afterProfitJPY=Number.isFinite(costJPY)?recommendedPrice-costJPY:null;
-      const yahooSource=yc.status==='ok'?'live':Number.isFinite(item.cachedYahoo?.lowestPrice)?'cached':'own_baseline';
-      const confidence=yc.status==='ok'&&xc.status==='ok'?'高':(yahooSource==='cached'||costSource==='cached')?'参考缓存':'需人工';
+      const yc=yahooResults[index],xc=xianyuResults[index],prior=previousById.get(item.id)||{};
+      const cachedAverage=Number.isFinite(prior.averageCNY)?prior.averageCNY:item.cachedXianyu?.averageCNY;
+      const averageCNY=Number.isFinite(xc.averageCNY)?xc.averageCNY:cachedAverage;
+      const costSource=Number.isFinite(xc.averageCNY)?'live':Number.isFinite(cachedAverage)?'cached':'missing';
+      const ownPrice=item.ownPrice;
+      const lowestPrice=Number.isFinite(yc.lowestPrice)?yc.lowestPrice:(prior.lowestPrice??item.cachedYahoo?.lowestPrice??ownPrice);
+      const lowestUrl=yc.lowestUrl||prior.lowestUrl||item.cachedYahoo?.lowestUrl||item.url||'';
+      const recommendedPrice=Number.isFinite(yc.recommendedPrice)?yc.recommendedPrice:(prior.recommendedPrice??item.cachedYahoo?.recommendedPrice??ownPrice);
+      const needsXianyu=shouldScanXianyu(item,yc);
+      // 人肉费和日本物流费不再由系统猜测。网页端填入三个值后即时计算并保存在浏览器。
+      const costJPY=calculateCost(averageCNY,null,null,settings),currentProfitJPY=null,afterProfitJPY=null;
+      const yahooSource=yc.status==='ok'?'live':Number.isFinite(prior.lowestPrice)||Number.isFinite(item.cachedYahoo?.lowestPrice)?'cached':'own_baseline';
+      const confidence=yc.status==='ok'&&(!needsXianyu||xc.status==='ok')?'高':(yahooSource==='cached'||costSource==='cached')?'参考缓存':'需人工';
+      const cachedSamples=prior.xianyu?.samples?.length?prior.xianyu.samples:(item.cachedXianyu?.samplePricesCNY||[]).map((price,i)=>({price,url:item.cachedXianyu.sampleLinks?.[i]||'',title:'历史确认样本'}));
+      const samples=xc.samples?.length?xc.samples:(cachedSamples||[]);
       return {...item,accountId:account.id,accountName:account.name,ownUrl:item.url,lowestPrice,lowestUrl,recommendedPrice,difference:ownPrice-lowestPrice,
-        averageCNY:avg,costJPY,currentProfitJPY,afterProfitJPY,currentUnder1500:Number.isFinite(currentProfitJPY)&&currentProfitJPY<settings.profitWarningJPY,
-        afterUnder1500:Number.isFinite(afterProfitJPY)&&afterProfitJPY<settings.profitWarningJPY,
-        advice:advice({ownPrice,recommendedPrice,cost:costJPY,warning:settings.profitWarningJPY}),confidence,yahooSource,costSource,
-        yahoo:{...yc,lowestPrice,lowestUrl},xianyu:{...xc,averageCNY:avg,samples:xc.samples?.length?xc.samples:(item.cachedXianyu?.samplePricesCNY||[]).map((price,i)=>({price,url:item.cachedXianyu.sampleLinks?.[i]||'',title:'历史确认样本'}))},
-        xianyuSearchUrl:xc.searchUrl||`https://www.goofish.com/search?q=${encodeURIComponent(item.xianyuQuery||'')}`};
+        averageCNY,costJPY,currentProfitJPY,afterProfitJPY,currentUnder1500:false,afterUnder1500:false,
+        advice:advice({ownPrice,recommendedPrice,cost:costJPY,warning:settings.profitWarningJPY}),confidence,yahooSource,costSource,needsXianyu,
+        needsManualPurchase:needsXianyu&&!Number.isFinite(averageCNY),
+        yahoo:{...yc,lowestPrice,lowestUrl},xianyu:{...xc,averageCNY,samples},
+        xianyuSearchUrl:xc.searchUrl||prior.xianyuSearchUrl||`https://www.goofish.com/search?q=${encodeURIComponent(item.xianyuQuery||'')}`};
     });
-    accountResults.push({id:account.id,name:account.name,profileUrl:account.profileUrl,profileStatus,profileError,itemCount:rows.length,lastCatalogCount:(catalog.items||[]).length,items:rows});
+    accountResults.push({id:account.id,name:account.name,profileUrl:account.profileUrl,profileStatus,profileError,profileDelta,itemCount:rows.length,lastCatalogCount:catalogItems.length,
+      scanStats:{yahoo:rows.length,xianyuRequested,xianyuScanned,xianyuSkipped},items:rows});
   }
-}finally{await x.browser.close().catch(()=>{})}
+}finally{await xBrowser?.close().catch(()=>{})}
 
 const checkedAt=new Date().toISOString(),allItems=accountResults.flatMap(account=>account.items);
-const result={version:3,checkedAt,settings,accounts:accountResults,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode},items:allItems};
+const result={version:4,checkedAt,settings,accounts:accountResults,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode},items:allItems};
 const changeSummary=compareSnapshots(previous,result);result.changes={...changeSummary,changes:changeSummary.changes.slice(0,100)};
 const jsonPath=path.join(root,'data','latest.json'),xlsxPath=path.join(root,'data','latest.xlsx');
 await fs.writeFile(jsonPath,JSON.stringify(result,null,2));await makeWorkbook(result,xlsxPath);
 await Promise.all([encryptFile(jsonPath,path.join(root,'public','data','latest.json.enc'),password),encryptFile(xlsxPath,path.join(root,'public','data','latest.xlsx.enc'),password)]);
-const summary={checkedAt,total:allItems.length,accounts:accountResults.map(a=>({id:a.id,name:a.name,count:a.itemCount,profileStatus:a.profileStatus})),repricing:allItems.filter(r=>r.recommendedPrice<r.ownPrice).length,currentLow:allItems.filter(r=>r.currentUnder1500).length,afterLow:allItems.filter(r=>r.afterUnder1500).length,manual:allItems.filter(r=>r.confidence!=='高').length,xianyuLoginRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode,changes:{total:changeSummary.total,firstRun:changeSummary.firstRun}};
+const scanTotals=accountResults.reduce((sum,account)=>({yahoo:sum.yahoo+account.scanStats.yahoo,xianyuRequested:sum.xianyuRequested+account.scanStats.xianyuRequested,xianyuScanned:sum.xianyuScanned+account.scanStats.xianyuScanned,xianyuSkipped:sum.xianyuSkipped+account.scanStats.xianyuSkipped}),{yahoo:0,xianyuRequested:0,xianyuScanned:0,xianyuSkipped:0});
+const summary={checkedAt,total:allItems.length,accounts:accountResults.map(a=>({id:a.id,name:a.name,count:a.itemCount,profileStatus:a.profileStatus,profileDelta:a.profileDelta,scanStats:a.scanStats})),repricing:allItems.filter(r=>r.recommendedPrice<r.ownPrice).length,
+  manual:allItems.filter(r=>r.confidence!=='高').length,needsManualPurchase:allItems.filter(r=>r.needsManualPurchase).length,scanTotals,
+  xianyuLoginRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode,changes:{total:changeSummary.total,firstRun:changeSummary.firstRun}};
 await Promise.all([fs.writeFile(path.join(root,'public','data','status.json'),JSON.stringify(summary,null,2)),fs.writeFile(path.join(root,'data','change-summary.json'),JSON.stringify(changeSummary,null,2))]);
 await Promise.allSettled([fs.unlink(jsonPath),fs.unlink(xlsxPath)]);console.log(summary);

@@ -3,11 +3,6 @@
   "exchangeRate": 22.99,
   "profitWarningJPY": 1500,
   "costMultiplier": 1.05,
-  "fees": {
-    "小": { "manualCNY": 30, "shippingJPY": 210 },
-    "中": { "manualCNY": 50, "shippingJPY": 850 },
-    "大": { "manualCNY": 100, "shippingJPY": 1200 }
-  },
   "maxXianyuSamples": 5,
   "scanDelayMs": 1800,
   "timezone": "Asia/Tokyo"
