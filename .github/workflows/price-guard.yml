@@ -13,7 +13,8 @@ permissions:
   id-token: write
 concurrency:
   group: pages
-  cancel-in-progress: true
+  # 20 分钟任务接近上一轮结束时不要取消已完成大半的扫描；新一轮会排队。
+  cancel-in-progress: false
 jobs:
   scan-and-publish:
     runs-on: ubuntu-latest
