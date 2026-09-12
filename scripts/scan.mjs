@@ -118,7 +118,10 @@ try{
         }
       }catch(error){console.error(`[闲鱼 ERROR][${item.id}]`,String(error));result={status:'error',error:String(error),samples:[],averageCNY:null}}
       if(result.status==='login_required') anyXianyuLoginRequired=true;
-      if(result.status!=='ok'&&result.status!=='missing_query') console.warn(`[闲鱼][${item.id}] status=${result.status} cards=${result.cardCount??0} preliminary=${result.preliminaryCount??0} verified=${result.verifiedCount??0}`);
+      if(result.status!=='ok'&&result.status!=='missing_query'){
+        const reasons=Object.entries((result.rejected||[]).reduce((counts,row)=>(counts[row.reason]=(counts[row.reason]||0)+1,counts),{})).map(([reason,count])=>`${reason}:${count}`).join(',');
+        console.warn(`[闲鱼][${item.id}] status=${result.status} cards=${result.cardCount??0} preliminary=${result.preliminaryCount??0} verified=${result.verifiedCount??0} rejected={${reasons}}`);
+      }
       xianyuResults.push(result);
     }
 

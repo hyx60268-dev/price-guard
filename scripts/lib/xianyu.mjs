@@ -12,23 +12,21 @@ async function verifyDetail(context,candidate,query,settings){
       const root=document.querySelector('main')||document.body;
       // 页面后部常带“猜你喜欢”，只检查商品主体前段，避免推荐卡片的多款文案污染判断。
       const text=(root?.innerText||'').replace(/\s+/g,' ').slice(0,6000);
-      const titleCandidates=[
-        document.querySelector('meta[property="og:title"]')?.content,
-        document.querySelector('h1')?.innerText,
-        document.querySelector('[class*="itemTitle" i]')?.innerText,
-        document.querySelector('[class*="title" i]')?.innerText,
-        document.title?.replace(/[-|_].*闲鱼.*$/,'')
-      ].filter(Boolean).map(value=>value.replace(/\s+/g,' ').trim());
+      const visibleTitles=[...document.querySelectorAll('h1,h2,[class*="itemTitle" i],[class*="title" i]')]
+        .filter(visible).map(element=>element.innerText||element.getAttribute('title')||'');
+      const titleCandidates=[document.querySelector('meta[property="og:title"]')?.content,...visibleTitles,document.title?.replace(/[-|_].*闲鱼.*$/,'')]
+        .filter(Boolean).map(value=>value.replace(/\s+/g,' ').trim()).filter(value=>value.length>=3&&value.length<=300);
       const optionNodes=[...root.querySelectorAll('[role="radio"], [class*="sku" i] button, [class*="spec" i] button, [class*="variant" i] button')].filter(visible);
       const blocked=/访问频繁|安全验证|滑块|验证码|请稍后重试|被挤爆/.test(text);
       const loginVisible=[...document.querySelectorAll('iframe[src*="login"], [class*="login" i]')].some(visible);
-      return {text,title:titleCandidates[0]||'',optionCount:optionNodes.length,blocked,loginVisible};
-    }).catch(()=>({text:'',title:'',optionCount:0,blocked:false,loginVisible:false}));
+      return {text,titles:[...new Set(titleCandidates)].slice(0,30),optionCount:optionNodes.length,blocked,loginVisible};
+    }).catch(()=>({text:'',titles:[],optionCount:0,blocked:false,loginVisible:false}));
     if(state.blocked)return {accepted:false,reason:'detail_blocked'};
     if(state.loginVisible||/login|signin/i.test(detail.url()))return {accepted:false,reason:'detail_login_required'};
-    if(!state.title||state.text.length<80)return {accepted:false,reason:'detail_unreadable'};
-    const detailTitle=state.title||candidate.title;
-    if(titleScore(query,detailTitle)<.70||hasVariantMismatch(query,detailTitle))return {accepted:false,reason:'detail_title_mismatch',detailTitle};
+    if(state.text.length<80)return {accepted:false,reason:'detail_unreadable'};
+    const ranked=(state.titles||[]).map(title=>({title,score:titleScore(query,title)})).sort((a,b)=>b.score-a.score);
+    const detailTitle=ranked[0]?.title||'';
+    if(!detailTitle||ranked[0].score<.70||hasVariantMismatch(query,detailTitle))return {accepted:false,reason:'detail_title_mismatch',detailTitle};
     if(state.optionCount>1||isLikelyVariantOffer(`${candidate.text} ${state.text}`,query))return {accepted:false,reason:'multi_variant_or_bait',detailTitle,optionCount:state.optionCount};
     return {accepted:true,reason:'detail_verified',detailTitle,optionCount:state.optionCount};
   }catch(error){return {accepted:false,reason:'detail_error',error:String(error)}}
