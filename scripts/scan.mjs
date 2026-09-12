@@ -71,9 +71,11 @@ try{
       }else console.warn(`Yahoo 主页返回 0 件在售；沿用保存清单 ${activeItems.length} 件`);
     }catch(error){profileStatus='error';profileError=String(error);console.warn(`Yahoo 主页刷新失败；沿用保存清单：${profileError}`)}
 
-    const yahooPromise=mapLimit(activeItems,4,async(item,index)=>{
+    // Yahoo 对云端 IP 限流明显。单通道并在每次搜索后停 4.2–5.0 秒，和闲鱼扫描并行完成。
+    const yahooPromise=mapLimit(activeItems,1,async(item,index)=>{
       try{const result=await yahooCompare(null,item,settings);console.log(`[Yahoo ${account.name} ${index+1}/${activeItems.length}] cards=${result.cardCount} matches=${result.competitorCount}`);return result}
       catch(error){console.error(`[Yahoo ERROR][${item.id}]`,String(error));return {status:'error',error:String(error),candidates:[],lowestPrice:null,lowestUrl:'',recommendedPrice:item.ownPrice}}
+      finally{await new Promise(resolve=>setTimeout(resolve,4200+Math.floor(Math.random()*800)))}
     });
     const xianyuResults=[];
     for(const [index,item] of activeItems.entries()){

@@ -19,20 +19,25 @@ function searchResult(nextData){
   return result;
 }
 
-async function fetchHtml(url,attempts=3){
+async function fetchHtml(url,attempts=5){
   let last;
   for(let attempt=1;attempt<=attempts;attempt++){
     const controller=new AbortController();
     const timeout=setTimeout(()=>controller.abort(),45000);
     try{
       const response=await fetch(url,{headers:{'user-agent':UA,'accept-language':'ja-JP,ja;q=0.9'},signal:controller.signal,redirect:'follow'});
+      if(response.status===429){
+        const retryAfter=Number(response.headers.get('retry-after'));
+        const waitMs=Number.isFinite(retryAfter)&&retryAfter>0?retryAfter*1000:Math.min(60000,10000*attempt);
+        if(attempt<attempts){console.warn(`[Yahoo 限流] ${Math.ceil(waitMs/1000)} 秒后重试 (${attempt}/${attempts})`);await new Promise(resolve=>setTimeout(resolve,waitMs));continue}
+      }
       if(!response.ok) throw new Error(`HTTP ${response.status}`);
       const html=await response.text();
       if(html.length<10000) throw new Error(`页面内容异常短 (${html.length} bytes)`);
       return html;
     }catch(error){
       last=error;
-      if(attempt<attempts) await new Promise(resolve=>setTimeout(resolve,700*attempt));
+      if(attempt<attempts) await new Promise(resolve=>setTimeout(resolve,Math.min(15000,1000*attempt*attempt)));
     }finally{clearTimeout(timeout)}
   }
   throw new Error(`Yahoo 请求失败：${String(last)}`);
