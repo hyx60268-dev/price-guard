@@ -27,6 +27,22 @@ export function isRejected(text='', allowBait=false) {
   return badPattern.test(text) || (!allowBait && baitPattern.test(text));
 }
 
+export function hasVariantMismatch(query='',candidate='') {
+  const q=normalize(query),title=String(candidate);
+  const extraPatterns=[
+    /(?:全?\s*\d+\s*(?:点|個|枚|種|本|箱|個入|ピース))/gi,
+    /(?:\d+\s*(?:box|セット))/gi,
+    /(?:まとめ売り|おまけ|おまけ付き|抱き合わせ)/gi,
+    /(?:ホログラムチケット|ポストカード|特典カード|缶バッジ)/gi,
+    /(?:[A-HＡ-Ｈ]\s*(?:タイプ|type|賞|カラー|色|版|ver(?:sion)?\.?))/gi,
+    /(?:(?:タイプ|type|カラー|色|版|ver(?:sion)?\.?)\s*[A-HＡ-Ｈ])/gi
+  ];
+  for(const pattern of extraPatterns){
+    for(const match of title.matchAll(pattern)) if(!q.includes(normalize(match[0]))) return true;
+  }
+  return false;
+}
+
 export function inferSize(title='') {
   if (/(カード|卡片|小卡|色紙|徽章|缶バッジ|アクリル|立牌|项链|ネックレス|手表|腕時計|帽子|ハット)/i.test(title)) return '小';
   if (/(一番賞|フィギュア|手办|ガンダム|高达|MG\s|PG\s|1\/\d+|大型|大号)/i.test(title)) return '大';
