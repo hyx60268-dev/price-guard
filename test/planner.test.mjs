@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { inventoryDelta,reconcileLiveItems,shouldScanXianyu,verifiedXianyuCache } from '../scripts/lib/planner.mjs';
+import { inventoryDelta,isFresh,isFreshMinutes,reconcileLiveItems,shouldScanXianyu,verifiedXianyuCache } from '../scripts/lib/planner.mjs';
+
+test('Yahoo minute cache does not accidentally last for hours',()=>{
+  const now=Date.parse('2026-09-12T12:00:00Z');
+  assert.equal(isFreshMinutes('2026-09-12T11:50:00Z',15,now),true);
+  assert.equal(isFreshMinutes('2026-09-12T11:30:00Z',15,now),false);
+  assert.equal(isFresh('2026-09-12T11:30:00Z',15,now),true);
+});
 
 test('live inventory reuses saved search metadata and reports add/remove',()=>{
   const catalog=[{id:'a',xianyuQuery:'目标 A',size:'小'}];

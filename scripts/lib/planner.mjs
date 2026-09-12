@@ -67,3 +67,8 @@ export function isFresh(value,hours,now=Date.now()){
   const timestamp=Date.parse(value||'');
   return Number.isFinite(timestamp)&&now-timestamp<Math.max(0,hours)*60*60*1000;
 }
+
+export function isFreshMinutes(value,minutes,now=Date.now()){
+  const timestamp=Date.parse(value||'');
+  return Number.isFinite(timestamp)&&now-timestamp<Math.max(0,minutes)*60*1000;
+}

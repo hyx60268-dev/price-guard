@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { openContext } from './lib/browser.mjs';
 import { discoverYahooProfile,yahooCompare } from './lib/yahoo.mjs';
 import { xianyuCost } from './lib/xianyu.mjs';
-import { inventoryDelta,isFresh,reconcileLiveItems,verifiedXianyuCache } from './lib/planner.mjs';
+import { inventoryDelta,isFresh,isFreshMinutes,reconcileLiveItems,verifiedXianyuCache } from './lib/planner.mjs';
 import { decrypt } from './lib/crypto.mjs';
 import { writeOutputs } from './lib/publish.mjs';
 import { calculateManualFields,manualCostFor,mergeAccountConfigs } from './lib/state.mjs';
@@ -106,7 +106,7 @@ const yahooConcurrency=Math.max(1,Math.min(4,Number(settings.yahooConcurrency)||
 await mapLimit(yahooTasks,yahooConcurrency,async(task,taskIndex)=>{
   const {context,item,prior}=task;
   const fresh=cachedYahoo(prior,item);
-  if(!forceYahoo&&fresh&&isFresh(fresh.checkedAt,yahooFreshMinutes)){
+  if(!forceYahoo&&fresh&&isFreshMinutes(fresh.checkedAt,yahooFreshMinutes)){
     context.yahooById.set(item.id,fresh);return;
   }
   if(Date.now()>=deadline){
@@ -114,7 +114,7 @@ await mapLimit(yahooTasks,yahooConcurrency,async(task,taskIndex)=>{
   }
   try{
     const result=await yahooCompare(null,item,settings);context.yahooById.set(item.id,result);
-    console.log(`[Yahoo ${taskIndex+1}/${yahooTasks.length}] ${context.account.name} ${item.id} cards=${result.cardCount} matches=${result.competitorCount}`);
+    console.log(`[Yahoo ${taskIndex+1}/${yahooTasks.length}] ${context.account.name} ${item.id} cards=${result.cardCount} matches=${result.competitorCount} lowest=${result.lowestPrice} source=${result.sourceStatus?.search||'unknown'}`);
   }catch(error){
     console.error(`[Yahoo ERROR][${context.account.id}:${item.id}]`,String(error));
     context.yahooById.set(item.id,cachedYahoo(prior,item,'request_error')||{status:'error',error:String(error),candidates:[],lowestPrice:null,lowestUrl:'',recommendedPrice:item.ownPrice});
