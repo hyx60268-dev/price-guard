@@ -1,0 +1,21 @@
+{
+  "name": "price-guard-yahoo-xianyu",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "scan": "node scripts/scan.mjs",
+    "login": "node scripts/login.mjs",
+    "serve": "node scripts/serve.mjs",
+    "test": "node --test",
+    "seed": "node scripts/seed.mjs"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "playwright": "^1.55.0",
+    "sharp": "^0.34.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
