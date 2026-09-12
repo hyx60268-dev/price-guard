@@ -11,6 +11,8 @@
   "scanDelayMs": 1200,
   "maxYahooDetailChecks": 3,
   "yahooConcurrency": 3,
+  "yahooRequestIntervalMs": 2200,
+  "yahooRateLimitCooldownMs": 45000,
   "yahooFreshMinutes": 15,
   "scanBudgetMinutes": 12,
   "timezone": "Asia/Tokyo"
