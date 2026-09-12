@@ -1,0 +1,18 @@
+<!doctype html><html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#13211b">
+<title>价格守卫</title><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="favicon.svg"><link rel="stylesheet" href="styles.css">
+</head><body>
+<header><div><p class="eyebrow">YAHOO!フリマ × 闲鱼</p><h1>价格守卫</h1><p id="stamp">读取最近一次云端检查…</p></div><button id="install" class="ghost" hidden>安装到桌面</button></header>
+<main>
+ <section id="unlock" class="unlock"><div class="lockmark">¥</div><h2>解锁价格数据</h2><p>价格和采购成本已加密。密码只在本机浏览器中使用。</p><form id="unlockForm"><input id="password" type="password" minlength="8" autocomplete="current-password" placeholder="输入仪表盘密码" required><button>打开仪表盘</button></form><p id="unlockError" class="error"></p></section>
+ <div id="dashboard" hidden>
+  <section id="loginNotice" class="notice" hidden><strong>闲鱼登录已失效</strong><span>本次沿用上次确认的成本；请更新 GitHub Secret 后手动运行检查。</span></section>
+  <section class="kpis" id="kpis"></section>
+  <section class="toolbar"><label class="search"><span>⌕</span><input id="search" placeholder="搜索商品名称"></label><select id="filter"><option value="all">全部商品</option><option value="reprice">建议调价</option><option value="low">利润低于 ¥1,500</option><option value="manual">需人工复核</option></select><button id="excel" class="ghost">下载 Excel</button></section>
+  <section class="tablewrap"><table><thead><tr><th>商品</th><th>我的售价</th><th>在售最低</th><th>建议价</th><th>闲鱼均价</th><th>成本</th><th>调价后利润</th><th>判断</th></tr></thead><tbody id="rows"></tbody></table><div id="cards"></div><p id="empty" hidden>没有符合筛选条件的商品。</p></section>
+ </div>
+</main>
+<dialog id="detail"><button class="close" aria-label="关闭">×</button><div id="detailBody"></div></dialog>
+<footer>价格仅作经营决策参考 · 低置信度结果需人工确认</footer><script type="module" src="app.js"></script>
+</body></html>
