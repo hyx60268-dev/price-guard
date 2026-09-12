@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateCost,advice,coherentPrices,hasVariantMismatch,isLikelyVariantOffer,titleScore } from '../scripts/lib/rules.mjs';
+import { calculateCost,advice,coherentPrices,distinctiveCoverage,hasExplicitDefect,hasVariantMismatch,isLikelyVariantOffer,semanticQuantity,semanticSameItem,titleScore } from '../scripts/lib/rules.mjs';
 import { encrypt,decrypt } from '../scripts/lib/crypto.mjs';
 const settings={exchangeRate:22.99,costMultiplier:1.05};
 test('manual cost formula',()=>assert.equal(calculateCost(90.5,30,210,settings),3130));
@@ -14,6 +14,26 @@ test('rejects extra set or version markers',()=>{
   assert.equal(hasVariantMismatch('時透無一郎 アクリルスタンド','時透無一郎 アクリルスタンド 2点セット'),true);
   assert.equal(hasVariantMismatch('時透無一郎 アクリルスタンド','時透無一郎 アクリルスタンド Bタイプ'),true);
   assert.equal(hasVariantMismatch('全8種 セット','全8種 セット'),false);
+});
+test('treats pair and two-piece one-set wording as the same quantity',()=>{
+  const own='雪肌精×モンチッチ ペアぬいぐるみ セット 限定';
+  const competitor='日本非売品 雪肌精×モンチッチ キーホルダー 2点 1セット';
+  assert.equal(semanticQuantity(own),2);
+  assert.equal(semanticQuantity(competitor),2);
+  assert.equal(hasVariantMismatch(own,competitor),false);
+});
+test('matches the Monchhichi pair by distinctive names, quantity, and plush category',()=>{
+  const own='雪肌精×モンチッチ ペアぬいぐるみ セット 限定';
+  const competitor='日本非売品 雪肌精×モンチッチ キーホルダー 2点 1セット';
+  assert.deepEqual(distinctiveCoverage(own,competitor).tokens,['雪肌精','モンチッチ']);
+  assert.equal(semanticSameItem({query:own,candidate:competitor,queryCategory:'ぬいぐるみ 2134',candidateCategory:'ぬいぐるみ 2134'}).accepted,true);
+  assert.equal(semanticSameItem({query:own,candidate:'日本非売品 雪肌精×モンチッチ Girl 1点',queryCategory:'ぬいぐるみ 2134',candidateCategory:'ぬいぐるみ 2134'}).accepted,false);
+  assert.equal(semanticSameItem({query:own,candidate:'雪肌精×モンチッチ 限定コラボ ぬいぐるみ ブルー',queryCategory:'ぬいぐるみ 2134',candidateCategory:'ぬいぐるみ 2134'}).accepted,false);
+});
+test('rejects actual defects but not generic overseas-product disclaimers',()=>{
+  assert.equal(hasExplicitDefect('通常品','箱に大きな破損があります。'),true);
+  assert.equal(hasExplicitDefect('通常品','海外製品のため、外箱の凹み等がある場合がございます。'),false);
+  assert.equal(hasExplicitDefect('【訳あり】商品',''),true);
 });
 test('rejects xianyu multi-variant bait but allows a whole-set query',()=>{
   assert.equal(isLikelyVariantOffer('全系列多款可选，标价为最低款价格','角色A 徽章'),true);

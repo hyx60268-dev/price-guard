@@ -144,7 +144,7 @@ function detail(id){
   const item=effective(raw),saved=manualFor(raw),samples=raw.xianyu?.samples||[];
   const rejected=raw.xianyu?.rejected||[];
   $('#detailBody').innerHTML=`
-    <div class="detailhead"><img src="${escapeHtml(item.image)}" alt=""><div><h2>${escapeHtml(item.title)}</h2><p>${pill(item)}　同款匹配：${escapeHtml(item.confidence)}</p></div></div>
+    <div class="detailhead"><img src="${escapeHtml(item.image)}" alt=""><div><h2>${escapeHtml(item.title)}</h2><p>${pill(item)}　Yahoo判断：${escapeHtml(item.yahoo?.matchLabel||'需复核')}（${escapeHtml(item.yahoo?.matchConfidence||item.confidence)}）</p></div></div>
     <div class="detailgrid">
       <div><small>我的售价</small><br><b>${money(item.ownPrice)}</b></div><div><small>Yahoo最低</small><br><b>${money(item.lowestPrice)}</b></div>
       <div><small>建议价</small><br><b>${money(item.recommendedPrice)}</b></div><div><small>闲鱼验证均价</small><br><b>${cny(item.averageCNY)}</b></div>
@@ -162,7 +162,7 @@ function detail(id){
       <p><small>公式：((采购价 + 人肉费) × ${data.settings.exchangeRate} + 日本物流费) × ${data.settings.costMultiplier}，向上取整。数据保存在当前浏览器。</small></p>
     </section>
     <p class="links"><a target="_blank" href="${escapeHtml(item.ownUrl)}">我的 Yahoo 商品</a><a target="_blank" href="${escapeHtml(item.lowestUrl||item.yahoo?.searchUrl)}">最低价/搜索结果</a><a target="_blank" href="${escapeHtml(item.xianyuSearchUrl)}">闲鱼搜索</a></p>
-    <p><small>Yahoo来源：${escapeHtml(item.yahooSource||'—')} · 成本来源：${escapeHtml(item.effectiveCostSource)}</small></p>
+    <p><small>Yahoo来源：${escapeHtml(item.yahooSource||'—')} · 搜索候选 ${escapeHtml(item.yahoo?.searchCardCount??'—')} 件 · 商品页推荐候选 ${escapeHtml(item.yahoo?.recommendationCardCount??'—')} 件 · 详情核验 ${escapeHtml(item.yahoo?.detailCheckedCount??0)} 件 · 成本来源：${escapeHtml(item.effectiveCostSource)}</small></p>
     <h3>采用的闲鱼样本（${samples.length}）</h3>
     <ul class="samples">${samples.map(sample=>`<li><a target="_blank" href="${escapeHtml(sample.url||'#')}">${escapeHtml(sample.title||'同款样本')}</a><b>${cny(sample.price)}</b></li>`).join('')||'<li>没有达到“至少 2 个详情验证一致样本”，请人工填写采购价。</li>'}</ul>
     ${rejected.length?`<p class="muted">已排除 ${rejected.length} 个多规格、低价钩子或详情不一致候选。</p>`:''}`;
