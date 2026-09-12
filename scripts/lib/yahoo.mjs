@@ -4,7 +4,8 @@ import { hasVariantMismatch,isRejected,titleScore } from './rules.mjs';
 const UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140 Safari/537.36';
 
 function queryFor(title=''){
-  return title.replace(/新品|未使用|未開封|正規品|中国限定|海外限定|匿名配送|送料無料/gi,' ').replace(/\s+/g,' ').trim();
+  return title.replace(/新品|未使用|未開封|正規品|中国限定|海外限定|匿名配送|送料無料/gi,' ')
+    .replace(/[【】\[\]（）()<>《》/／]/g,' ').replace(/\s+/g,' ').trim();
 }
 
 export function extractNextData(html=''){
