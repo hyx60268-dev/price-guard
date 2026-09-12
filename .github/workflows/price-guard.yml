@@ -1,11 +1,11 @@
-name: 每日价格检查
+name: 每20分钟价格检查
 on:
   push:
     branches: [main]
   workflow_dispatch:
   schedule:
-    # 每 6 小时检查一次：日本时间 03:00 / 09:00 / 15:00 / 21:00
-    - cron: '0 */6 * * *'
+    # GitHub 云端约每 20 分钟检查一次；无需电脑或手机保持开机。
+    - cron: '*/20 * * * *'
 permissions:
   contents: read
   issues: write

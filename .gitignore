@@ -1,0 +1,5 @@
+node_modules/
+.auth/
+state/
+data/
+public/data/*.enc
