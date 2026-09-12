@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "accounts": [
+    {
+      "id": "melon",
+      "name": "メロン",
+      "platform": "yahoo_fleamarket",
+      "profileUrl": "https://paypayfleamarket.yahoo.co.jp/user/p76217154",
+      "catalogFile": "config/catalogs/melon.json",
+      "enabled": true,
+      "notes": "公开主页，不依赖Yahoo登录。实时刷新失败时沿用已保存商品清单。"
+    }
+  ]
+}

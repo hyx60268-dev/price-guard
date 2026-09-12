@@ -7,12 +7,16 @@
     "scan": "node scripts/scan.mjs",
     "login": "node scripts/login.mjs",
     "serve": "node scripts/serve.mjs",
-    "test": "node --test"
+    "test": "node --test",
+    "seed": "node scripts/seed.mjs",
+    "notify": "node scripts/notify.mjs"
   },
   "dependencies": {
     "exceljs": "^4.4.0",
     "playwright": "^1.55.0",
     "sharp": "^0.34.3"
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  }
 }
