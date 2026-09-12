@@ -92,7 +92,8 @@ const contexts=await mapLimit(accounts,Math.min(2,accounts.length),async(account
 const relistAliases={};
 for(const context of contexts)for(const relisted of context.profileDelta.relisted||[])relistAliases[`${context.account.id}:${relisted.to}`]=relisted.from;
 
-const forceYahoo=process.env.SCAN_TRIGGER==='workflow_dispatch'||process.env.FORCE_FULL_SCAN==='1';
+// 代码部署必须用新规则完整验一次；日常 schedule 仍可复用 15 分钟内的结果。
+const forceYahoo=['push','workflow_dispatch'].includes(process.env.SCAN_TRIGGER)||process.env.FORCE_FULL_SCAN==='1';
 const yahooFreshMinutes=Number(settings.yahooFreshMinutes)||15;
 const deadline=startedAt+(Number(settings.scanBudgetMinutes)||12)*60_000;
 const yahooTasks=contexts.flatMap(context=>context.activeItems.map((item,itemIndex)=>{
