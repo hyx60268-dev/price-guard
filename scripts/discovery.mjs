@@ -9,6 +9,7 @@ import { xianyuCost } from './lib/xianyu.mjs';
 import { fetchYahooItemBundle,fetchYahooResult } from './lib/yahoo.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url)),root=path.resolve(here,'..');
+const DISCOVERY_VERSION=2;
 const readJson=file=>fs.readFile(file,'utf8').then(JSON.parse);
 const exists=file=>fs.access(file).then(()=>true).catch(()=>false);
 const wait=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
@@ -53,11 +54,12 @@ async function publishExisting(prior){
 }
 
 function isFresh(prior){
+  if(Number(prior?.version)!==DISCOVERY_VERSION)return false;
   const checked=Date.parse(prior?.checkedAt||'');return Number.isFinite(checked)&&Date.now()-checked<Number(cfg.freshHours)*3_600_000;
 }
 
 const prior=await priorDiscovery();
-const force=process.env.FORCE_DISCOVERY==='1'||process.env.SCAN_TRIGGER==='workflow_dispatch';
+const force=process.env.FORCE_DISCOVERY==='1'||['push','workflow_dispatch'].includes(process.env.SCAN_TRIGGER);
 if(prior&&!force&&isFresh(prior)){
   await publishExisting(prior);console.log(`选品发现使用 ${prior.checkedAt} 的缓存，共 ${prior.products?.length||0} 个候选`);process.exit(0);
 }
@@ -250,7 +252,7 @@ try{
 }finally{await browser?.close().catch(()=>{})}
 
 const products=sourceCandidates.sort((a,b)=>b.salesCount-a.salesCount||b.sourcePriceJPY-a.sourcePriceJPY).slice(0,Number(cfg.maxProducts));
-const result={version:1,checkedAt:new Date().toISOString(),filters:{keyword:cfg.keyword,soldOnly:true,minPriceJPY:cfg.minPriceJPY,sort:'newest',windowDays:cfg.windowDays},
+const result={version:DISCOVERY_VERSION,checkedAt:new Date().toISOString(),filters:{keyword:cfg.keyword,soldOnly:true,minPriceJPY:cfg.minPriceJPY,sort:'newest',windowDays:cfg.windowDays},
   products,stats:{sourceCandidates:sourceCandidates.length,ready:products.filter(item=>item.status==='ready').length,pending:products.filter(item=>item.status!=='ready').length,
     mercari:products.filter(item=>item.sourcePlatform==='mercari').length,yahoo:products.filter(item=>item.sourcePlatform==='yahoo').length},
   login:{xianyuRequired:xianyuAuthRequired},errors:errors.slice(0,30)};
