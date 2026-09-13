@@ -1,6 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canonicalSaleTitle,clusterSellerSales,eligibleDiscoveryCard,isOwnedDiscoverySource,isWithinDays,parseListingTime,rewriteListing,sameSaleProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor } from '../scripts/lib/discovery.mjs';
+import { canonicalSaleTitle,clusterSellerSales,eligibleDiscoveryCard,isOwnedDiscoverySource,isWithinDays,mercariDiscoverySearchUrl,parseListingTime,rewriteListing,sameSaleProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor,yahooDiscoverySearchUrl } from '../scripts/lib/discovery.mjs';
+
+test('discovery URLs use the live sold and price filters',()=>{
+  const mercari=new URL(mercariDiscoverySearchUrl({keyword:'中国限定',minPriceJPY:4999}));
+  assert.equal(mercari.searchParams.get('status'),'sold_out|trading');
+  assert.equal(mercari.searchParams.get('price_min'),'4999');
+  assert.equal(mercari.searchParams.get('sort'),'created_time');
+  assert.equal(mercari.searchParams.get('order'),'desc');
+
+  const yahoo=new URL(yahooDiscoverySearchUrl({keyword:'中国限定',minPriceJPY:4999}));
+  assert.equal(yahoo.searchParams.get('sold'),'1');
+  assert.equal(yahoo.searchParams.get('minPrice'),'4999');
+  assert.equal(yahoo.searchParams.get('sort'),'openTime');
+  assert.equal(yahoo.searchParams.get('order'),'desc');
+  assert.equal(yahoo.searchParams.has('open'),false);
+});
 
 test('same product clusters relists but not different quantities',()=>{
   assert.equal(sameSaleProduct({title:'中国限定 鬼滅の刃 新繹 アクスタ 時透無一郎 新品'},{title:'鬼滅の刃 新繹 アクリルスタンド 時透無一郎 中国限定'}),true);

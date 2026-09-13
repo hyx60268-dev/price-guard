@@ -4,12 +4,12 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { openContext,settle } from './lib/browser.mjs';
 import { decrypt,encrypt } from './lib/crypto.mjs';
-import { clusterSellerSales,discoveryId,eligibleDiscoveryCard,isOwnedDiscoverySource,isWithinDays,median,parseListingTime,rewriteListing,sameSaleProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor } from './lib/discovery.mjs';
+import { clusterSellerSales,discoveryId,eligibleDiscoveryCard,isOwnedDiscoverySource,isWithinDays,median,mercariDiscoverySearchUrl,parseListingTime,rewriteListing,sameSaleProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor,yahooDiscoverySearchUrl } from './lib/discovery.mjs';
 import { xianyuCost } from './lib/xianyu.mjs';
 import { fetchYahooItemBundle,fetchYahooResult } from './lib/yahoo.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url)),root=path.resolve(here,'..');
-const DISCOVERY_VERSION=3;
+const DISCOVERY_VERSION=4;
 const readJson=file=>fs.readFile(file,'utf8').then(JSON.parse);
 const exists=file=>fs.access(file).then(()=>true).catch(()=>false);
 const wait=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
@@ -136,7 +136,7 @@ async function mercariSellerCards(page,url){
 
 async function scanMercari(context,errors){
   const page=await context.newPage(),detail=await context.newPage(),origin='https://jp.mercari.com';
-  const search=`${origin}/search?keyword=${encodeURIComponent(cfg.keyword)}&status=sold_out&sort=created_time&order=desc&price_min=${cfg.minPriceJPY}`;
+  const search=mercariDiscoverySearchUrl(cfg);
   const sellers=new Map(),groups=[];
   try{
     await page.goto(search,{waitUntil:'domcontentloaded',timeout:35000});await settle(page,4200);
@@ -183,7 +183,7 @@ function yahooCard(raw){
 }
 
 async function scanYahoo(errors,owned){
-  const search=`https://paypayfleamarket.yahoo.co.jp/search/${encodeURIComponent(cfg.keyword)}?open=0&sort=openTime&order=desc`;
+  const search=yahooDiscoverySearchUrl(cfg);
   const sellers=new Map(),groups=[];
   try{
     const first=await fetchYahooResult(search,settings),results=[first];

@@ -4,6 +4,16 @@ import { distinctiveTokens,hasExplicitDefect,hasVariantMismatch,isLikelyVariantO
 const listingNoise=/(?:中国限定|海外限定|日本未発売|日本非売品|正規品|公式|新品(?:、未使用)?|未使用|未開封|即日発送|匿名配送|送料無料|送料込み|即購入(?:可|可能|ok)?|希少|レア|現品限り|在庫あり|\d+月\d+日(?:まで|以降)?|\d+\/\d+(?:まで|以降)?|発送予定)/gi;
 const rejectSale=/(?:様専用|専用出品|リクエスト|まとめ商品|オーダー|確認用|取り置き|ばら売り|バラ売り|訳あり|ジャンク|破損|欠品|箱潰れ)/i;
 
+export function mercariDiscoverySearchUrl({keyword='中国限定',minPriceJPY=4999}={}){
+  const params=new URLSearchParams({keyword,status:'sold_out|trading',sort:'created_time',order:'desc',price_min:String(minPriceJPY)});
+  return `https://jp.mercari.com/search?${params}`;
+}
+
+export function yahooDiscoverySearchUrl({keyword='中国限定',minPriceJPY=4999}={}){
+  const params=new URLSearchParams({sold:'1',minPrice:String(minPriceJPY),sort:'openTime',order:'desc'});
+  return `https://paypayfleamarket.yahoo.co.jp/search/${encodeURIComponent(keyword)}?${params}`;
+}
+
 export function canonicalSaleTitle(value=''){
   return String(value).normalize('NFKC').replace(listingNoise,' ')
     .replace(/[【】\[\]（）()<>《》「」『』#＃]/g,' ').replace(/\s+/g,' ').trim();
