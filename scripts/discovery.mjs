@@ -10,7 +10,7 @@ import { fetchYahooItemBundle,fetchYahooResult } from './lib/yahoo.mjs';
 import { discoveryDismissalKey,normalizeProductIdentity } from './lib/state.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url)),root=path.resolve(here,'..');
-const DISCOVERY_VERSION=7;
+const DISCOVERY_VERSION=8;
 const readJson=file=>fs.readFile(file,'utf8').then(JSON.parse);
 const exists=file=>fs.access(file).then(()=>true).catch(()=>false);
 const wait=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
@@ -88,13 +88,18 @@ async function mercariCards(page,{onlySold=true,assumeSold=false}={}){
       const scope=link.closest('li')||link.parentElement?.parentElement||link.parentElement||link;
       const sold=options.assumeSold||Boolean(scope.querySelector('[aria-label*="売り切れ"],[aria-label*="SOLD"],[data-testid*="sold" i],img[alt*="売り切れ"],img[alt*="SOLD" i]'))||/(?:売り切れ|売却済み|SOLD)/i.test(`${scope.innerText||''} ${scope.getAttribute?.('aria-label')||''}`);
       if(options.onlySold&&!sold)continue;
+      const labels=[link.getAttribute('aria-label'),...[...link.querySelectorAll('[aria-label]')].map(node=>node.getAttribute('aria-label'))].filter(Boolean);
+      const image=link.querySelector('img:not([alt="売り切れ"])');
+      const searchText=`${link.innerText||''} ${link.textContent||''} ${labels.join(' ')} ${image?.alt||''}`.replace(/\s+/g,' ').trim();
       const lines=(link.innerText||'').split(/\n+/).map(value=>value.trim()).filter(Boolean);
       const priceLine=lines.find(value=>/^[¥￥]?\s*[\d,]+円?$/.test(value.replace(/^現在\s*/,'')))||'';
-      const priceMatch=priceLine.match(/[\d,]+/),price=priceMatch?Number(priceMatch[0].replaceAll(',','')):null;
-      const image=link.querySelector('img:not([alt="売り切れ"])');
-      let title=lines.filter(value=>value!==priceLine&&!/^[¥￥]$/.test(value)&&value!=='現在').at(-1)||image?.alt||'';
+      const priceMatch=priceLine.match(/[\d,]+/)||searchText.match(/[¥￥]\s*([\d,]+)/)||searchText.match(/([\d,]+)円/);
+      const price=priceMatch?Number((priceMatch[1]||priceMatch[0]).replace(/[¥￥,]/g,'')):null;
+      let title=lines.filter(value=>value!==priceLine&&!/^[¥￥]$/.test(value)&&value!=='現在'&&!/^(?:売り切れ(?:ました)?|SOLD(?:\s*OUT)?)$/i.test(value)).at(-1)||image?.alt||'';
+      const labelledTitle=labels.find(value=>/の(?:画像|サムネイル)/.test(value))?.replace(/の(?:画像|サムネイル).*$/,'').trim()||'';
+      if(!title||title.length<4||/^(?:PR|広告|おすすめ)$/.test(title))title=labelledTitle||image?.alt||title;
       title=title.replace(/の(?:サムネイル|画像).*$/,'').trim();
-      seen.add(href.split('?')[0]);output.push({id:(href.match(/\/item\/(m\d+)/)||[])[1],href,title,price,sold,image:image?.currentSrc||image?.src||''});
+      seen.add(href.split('?')[0]);output.push({id:(href.match(/\/item\/(m\d+)/)||[])[1],href,title,price,sold,image:image?.currentSrc||image?.src||'',searchText});
     }
     return output;
   },{onlySold,assumeSold});
@@ -123,13 +128,38 @@ async function waitForMercariGrid(page,timeoutMs=35000){
   return current;
 }
 
+async function mercariSearchSnapshot(page,keyword){
+  return page.locator('main a[href^="/item/"]').evaluateAll((links,keyword)=>{
+    const compact=value=>String(value||'').normalize('NFKC').toLowerCase().replace(/\s+/g,'');
+    const wanted=compact(keyword),seen=new Set();let keywordCards=0;
+    for(const link of links){
+      const href=(link.getAttribute('href')||'').split('?')[0];if(!href||seen.has(href))continue;seen.add(href);
+      const labels=[link.getAttribute('aria-label'),...[...link.querySelectorAll('[aria-label]')].map(node=>node.getAttribute('aria-label'))].filter(Boolean).join(' ');
+      const evidence=`${link.innerText||''} ${link.textContent||''} ${labels} ${link.querySelector('img')?.alt||''}`;
+      if(wanted&&compact(evidence).includes(wanted))keywordCards++;
+    }
+    return {count:seen.size,keywordCards};
+  },keyword);
+}
+
 async function waitForMercariSearch(page){
-  let count=await waitForMercariGrid(page);
-  if(count)return count;
-  // Mercari occasionally renders its filters first and injects the result grid
-  // 10-25 seconds later. A single reload recovers that state in headless runners.
-  await page.reload({waitUntil:'domcontentloaded',timeout:35000});await settle(page,3000);
-  count=await waitForMercariGrid(page);return count;
+  let snapshot={count:0,keywordCards:0};
+  for(let attempt=0;attempt<2;attempt++){
+    const deadline=Date.now()+45000;let prior='',stableKeyword=0;
+    while(Date.now()<deadline){
+      snapshot=await mercariSearchSnapshot(page,cfg.keyword).catch(()=>({count:0,keywordCards:0}));
+      const signature=`${snapshot.count}:${snapshot.keywordCards}`;
+      stableKeyword=snapshot.keywordCards>0&&signature===prior?stableKeyword+1:0;
+      if(stableKeyword>=2)return snapshot;
+      prior=signature;await page.waitForTimeout(1500);
+    }
+    if(attempt===0){
+      // Mercari may keep a temporary advertising grid while the actual keyword
+      // results are still loading. Reload once, then wait for keyword evidence.
+      await page.reload({waitUntil:'domcontentloaded',timeout:35000});await settle(page,3000);
+    }
+  }
+  return snapshot;
 }
 
 async function mercariDetail(page,url){
@@ -169,11 +199,11 @@ async function scanMercari(context,errors){
   try{
     await page.goto(search,{waitUntil:'domcontentloaded',timeout:35000});await settle(page,4200);
     const initialCards=await waitForMercariSearch(page);
-    console.log(`[选品源] Mercari 页面稳定后卡片 ${initialCards}`);
+    console.log(`[选品源] Mercari 页面稳定后卡片 ${initialCards.count}，其中关键词卡片 ${initialCards.keywordCards}`);
     await expandMercariGrid(page,cfg.mercariSearchScrolls);
     const excluded=new Set((cfg.excludeMercariSellerIds||[]).map(String));
-    const rawSeeds=(await mercariCards(page,{onlySold:false,assumeSold:false}))
-      .filter(card=>Number(card.price)>=cfg.minPriceJPY&&containsDiscoveryKeyword(card.title,cfg.keyword));
+    const allCards=(await mercariCards(page,{onlySold:false,assumeSold:false})).filter(card=>Number(card.price)>=cfg.minPriceJPY);
+    const rawSeeds=allCards.filter(card=>containsDiscoveryKeyword(`${card.title} ${card.searchText}`,cfg.keyword));
     const markedSeeds=rawSeeds.filter(card=>card.sold);
     const seeds=(markedSeeds.length?markedSeeds:rawSeeds).slice(0,Number(cfg.seedLimitPerPlatform));
     let verifiedSeeds=0;
