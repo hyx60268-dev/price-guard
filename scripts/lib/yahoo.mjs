@@ -1,5 +1,5 @@
 import { imageFingerprints,imageSetSimilarity } from './image.mjs';
-import { conditionCompatible,hasExplicitDefect,isRejected,productFamily,semanticSameItem,titleScore } from './rules.mjs';
+import { conditionCompatible,hasExplicitDefect,isRejected,listingTextEquivalent,productFamily,semanticSameItem,titleScore } from './rules.mjs';
 
 const UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140 Safari/537.36';
 const DEFAULT_REQUEST_INTERVAL_MS=5500;
@@ -254,13 +254,14 @@ export async function yahooCompare(_unusedPage,item,settings={}){
       const detailFingerprints=(await Promise.all([...new Set(detailImages)].slice(0,5).map(imageFingerprints))).filter(Boolean);
       const imageScore=imageSetSimilarity(ownFingerprints,detailFingerprints);
       const imageThreshold=Math.max(.75,Number(settings.yahooImageMatchThreshold)||.80);
-      if(!ownFingerprints.length||!detailFingerprints.length||!Number.isFinite(imageScore)||imageScore<imageThreshold){
+      const textEquivalent=listingTextEquivalent(ownDetail?.title||item.title,ownDetail?.description||'',detail.title||'',detail.description||'');
+      if(!textEquivalent&&(!ownFingerprints.length||!detailFingerprints.length||!Number.isFinite(imageScore)||imageScore<imageThreshold)){
         rejected.push({id:card.id,price:Number(detail.price),reason:'physical_image_unconfirmed',titleScore:detailTitleScore,imageScore});continue
       }
       const detailImage=detailImages[0]||card.image;
       competitors.push({...card,url:`https://paypayfleamarket.yahoo.co.jp/item/${detail.id}`,title:detail.title,
         text:`${detail.title}\n${detail.description||''}`,image:detailImage,price:Number(detail.price),itemStatus:detail.status,
-        titleScore:detailTitleScore,imageScore,semantic,queryFamily,candidateFamily,matchMethod:'detail_type_quantity_text_images'});
+        titleScore:detailTitleScore,imageScore,semantic,queryFamily,candidateFamily,matchMethod:textEquivalent?'detail_type_quantity_equivalent_text':'detail_type_quantity_text_images'});
       const next=preliminary[index+1];
       if(!next||Number(detail.price)<=next.price)break;
     }catch(error){rejected.push({id:card.id,price:card.price,reason:'detail_error',error:String(error)})}

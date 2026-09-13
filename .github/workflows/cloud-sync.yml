@@ -1,4 +1,4 @@
-name: 同步成本和账号
+name: 同步成本、账号和已上传记录
 on:
   issues:
     types: [opened]
@@ -32,7 +32,7 @@ jobs:
           node-version: '20'
           cache: npm
       - run: npm ci
-      - name: 合并加密成本和账号
+      - name: 合并加密成本、账号和已上传记录
         id: sync
         run: node scripts/sync-input.mjs
         env:
@@ -58,7 +58,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `已安全同步并发布：${{ steps.sync.outputs.accounts }} 个账号、${{ steps.sync.outputs.costs }} 条加密成本记录。仪表盘会自动刷新。`
+              body: `已安全同步并发布：${{ steps.sync.outputs.accounts }} 个账号、${{ steps.sync.outputs.costs }} 条加密成本记录、${{ steps.sync.outputs.dismissed }} 个已上传选品。仪表盘会自动刷新。`
             });
             await github.rest.issues.update({
               owner: context.repo.owner,

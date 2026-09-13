@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { distinctiveTokens,hasExplicitDefect,hasVariantMismatch,isLikelyVariantOffer,isRejected,productFamily,semanticQuantity,titleScore } from './rules.mjs';
 
-const listingNoise=/(?:中国限定|海外限定|日本未発売|日本非売品|正規品|公式|新品(?:、未使用)?|未使用|未開封|即日発送|匿名配送|送料無料|送料込み|即購入(?:可|可能|ok)?|希少|レア|現品限り|在庫あり|\d+月\d+日(?:まで|以降)?|\d+\/\d+(?:まで|以降)?|発送予定)/gi;
+const listingNoise=/(?:中国限定|海外限定|日本未発売|日本非売品|正規品|公式|新品(?:、未使用)?|未使用|未開封|即日発送|当日発送|翌日発送|国内発送|即納|スピード発送|匿名配送|送料無料|送料込み|即購入(?:可|可能|ok)?|希少|レア|現品限り|ラスト\s*1点|残り\s*1点|在庫あり|在庫複数|複数在庫|早い者勝ち|お?値下げ不可|\d+月\d+日(?:まで|以降)?|\d+\/\d+(?:まで|以降)?|発送予定)/gi;
 const rejectSale=/(?:様専用|専用出品|リクエスト|まとめ商品|オーダー|確認用|取り置き|ばら売り|バラ売り|訳あり|ジャンク|破損|欠品|箱潰れ)/i;
 
 export function mercariDiscoverySearchUrl({keyword='中国限定',minPriceJPY=4999}={}){
@@ -29,6 +29,21 @@ function jaccard(left,right){
   return shared/(left.size+right.size-shared);
 }
 
+function coveredToken(token,other){
+  const normalized=String(token).toLowerCase();
+  return [...other].some(value=>{
+    const candidate=String(value).toLowerCase();
+    return candidate===normalized||(normalized.length>=3&&candidate.length>=3&&(candidate.includes(normalized)||normalized.includes(candidate)));
+  });
+}
+
+function distinctiveTokenEvidence(left,right){
+  const a=tokenSet(left),b=tokenSet(right);
+  const onlyA=[...a].filter(token=>!coveredToken(token,b)),onlyB=[...b].filter(token=>!coveredToken(token,a));
+  const shared=[...a].filter(token=>coveredToken(token,b));
+  return {a,b,onlyA,onlyB,shared,sharedLength:shared.reduce((sum,token)=>sum+token.length,0)};
+}
+
 export function sameSaleProduct(left={},right={}){
   const a=canonicalSaleTitle(left.title),b=canonicalSaleTitle(right.title);
   if(!a||!b||hasVariantMismatch(a,b)||hasVariantMismatch(b,a))return false;
@@ -37,8 +52,25 @@ export function sameSaleProduct(left={},right={}){
   const aq=semanticQuantity(a),bq=semanticQuantity(b);
   if(Number.isFinite(aq)&&Number.isFinite(bq)&&aq!==bq)return false;
   if(a===b)return true;
-  const overlap=jaccard(tokenSet(a),tokenSet(b));
-  return overlap>=.72||titleScore(a,b)>=.86&&titleScore(b,a)>=.72;
+  const evidence=distinctiveTokenEvidence(a,b);
+  // Two-sided unique terms usually identify different characters, colours or
+  // editions. Shared franchise/series wording must never merge those products.
+  if(evidence.onlyA.length&&evidence.onlyB.length)return false;
+  const overlap=jaccard(evidence.a,evidence.b);
+  const oneTitleIsStrictlyMoreDescriptive=!evidence.onlyA.length||!evidence.onlyB.length;
+  return overlap>=.72||(oneTitleIsStrictlyMoreDescriptive&&evidence.shared.length>=2&&evidence.sharedLength>=6&&titleScore(a,b)>=.72&&titleScore(b,a)>=.72);
+}
+
+export function sameDiscoveryProduct(left={},right={}){
+  const a=canonicalSaleTitle(left.title),b=canonicalSaleTitle(right.title);
+  if(!a||!b||hasVariantMismatch(a,b)||hasVariantMismatch(b,a))return false;
+  const af=productFamily(a),bf=productFamily(b);if(af&&bf&&af!==bf)return false;
+  const aq=semanticQuantity(a),bq=semanticQuantity(b);if(Number.isFinite(aq)&&Number.isFinite(bq)&&aq!==bq)return false;
+  if(sameSaleProduct(left,right))return true;
+  const na=a.toLowerCase().replace(/[^\p{L}\p{N}]/gu,''),nb=b.toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
+  if(na===nb)return true;
+  const shorter=na.length<=nb.length?na:nb,longer=na.length<=nb.length?nb:na;
+  return shorter.length>=8&&longer.includes(shorter)&&shorter.length/longer.length>=.62;
 }
 
 export function clusterSellerSales(cards=[]){
@@ -100,8 +132,8 @@ export function validDiscoveryXianyu(result={}){
   const richest=samples.map(sample=>({sample,images:[...new Set(sample.independentImages||[])].filter(url=>/^https?:\/\//.test(url))}))
     .sort((a,b)=>b.images.length-a.images.length)[0];
   const images=(richest?.images||[]).slice(0,8);
-  return {ready:result.status==='ok'&&samples.length>=2&&Number.isFinite(Number(result.averageCNY))&&images.length>=2,
-    images,sample:richest?.sample||null,imageSource:images.length>=2?'xianyu_independent_coherent':null};
+  return {ready:result.status==='ok'&&samples.length>=2&&Number.isFinite(Number(result.averageCNY))&&images.length>=3,
+    images,sample:richest?.sample||null,imageSource:images.length>=3?'xianyu_independent_coherent':null};
 }
 
 export function discoveryId(platform,sellerId,title=''){

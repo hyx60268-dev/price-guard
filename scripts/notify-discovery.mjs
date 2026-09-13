@@ -3,10 +3,10 @@ import fs from 'node:fs/promises';
 const file='data/discovery-change-summary.json';
 let summary;try{summary=JSON.parse(await fs.readFile(file,'utf8'))}catch{process.exit(0)}
 if(summary.firstRun||!summary.hasChanges||!summary.added){
-  console.log(summary.firstRun?'选品发现首次运行只建立基准':'没有新增的已核验热卖选品');process.exit(0);
+  console.log(summary.firstRun?'选品发现首次运行只建立基准':'没有新增热卖选品');process.exit(0);
 }
 const dashboard=process.env.DASHBOARD_URL||`https://${(process.env.GITHUB_REPOSITORY_OWNER||'').toLowerCase()}.github.io/${(process.env.GITHUB_REPOSITORY||'/price-guard').split('/')[1]||'price-guard'}/`;
-const message=`选品发现新增 ${summary.added} 个已核验候选，可在仪表盘查看月销量、售价、闲鱼采购价和图片。\n${dashboard}`;
+const message=`选品发现新增 ${summary.added} 个候选（已核验 ${summary.addedReady||0}，待复核 ${summary.addedPending||0}），可在仪表盘查看月销量、售价、闲鱼采购价和图片。\n${dashboard}`;
 let sent=false;
 if(process.env.TELEGRAM_BOT_TOKEN&&process.env.TELEGRAM_CHAT_ID){
   const response=await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({chat_id:process.env.TELEGRAM_CHAT_ID,text:message,disable_web_page_preview:true})});

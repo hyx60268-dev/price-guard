@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decrypt } from './lib/crypto.mjs';
 import { writeOutputs } from './lib/publish.mjs';
-import { accountIdFromProfile,calculateManualFields,manualCostFor,mergeManualCosts } from './lib/state.mjs';
+import { accountIdFromProfile,calculateManualFields,manualCostFor,mergeDismissedDiscoveries,mergeManualCosts } from './lib/state.mjs';
 import { decodeSyncBody } from './lib/sync-payload.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url)),root=path.resolve(here,'..');
@@ -21,6 +21,9 @@ const previous=JSON.parse(decrypt(await fs.readFile(statePath),password).toStrin
 const incomingCosts=payload.manualCosts&&typeof payload.manualCosts==='object'&&!Array.isArray(payload.manualCosts)?payload.manualCosts:{};
 if(Object.keys(incomingCosts).length>1500)throw new Error('成本记录数量异常');
 const manualCosts=mergeManualCosts(previous.manualCosts||{},incomingCosts);
+const incomingDismissed=payload.dismissedDiscoveries&&typeof payload.dismissedDiscoveries==='object'&&!Array.isArray(payload.dismissedDiscoveries)?payload.dismissedDiscoveries:{};
+if(Object.keys(incomingDismissed).length>3000)throw new Error('已上传记录数量异常');
+const dismissedDiscoveries=mergeDismissedDiscoveries(previous.dismissedDiscoveries||{},incomingDismissed);
 
 const settings=previous.settings||JSON.parse(await fs.readFile(path.join(root,'config','settings.json'),'utf8'));
 const configured=JSON.parse(await fs.readFile(path.join(root,'config','accounts.json'),'utf8')).accounts||[];
@@ -59,7 +62,14 @@ for(const account of managedAccounts.filter(account=>account.enabled!==false))if
 }
 
 const cloudSyncedAt=new Date().toISOString();
-const result={...previous,version:5,cloudSyncedAt,dataRevision:cloudSyncedAt,settings,manualCosts,managedAccounts,accounts,items};
+const result={...previous,version:5,cloudSyncedAt,dataRevision:cloudSyncedAt,settings,manualCosts,dismissedDiscoveries,managedAccounts,accounts,items};
 const {summary}=await writeOutputs({root,result,previous,password});
-if(process.env.GITHUB_OUTPUT)await fs.appendFile(process.env.GITHUB_OUTPUT,`synced_at=${cloudSyncedAt}\naccounts=${accounts.length}\ncosts=${Object.keys(manualCosts).length}\n`);
-console.log(`同步完成：${summary.accounts.length} 个账号，${Object.keys(manualCosts).length} 条加密成本记录`);
+// A cost/account/upload sync also deploys the static site. Preserve the latest
+// encrypted discovery payload so that this lightweight deployment cannot blank
+// the discovery tab until the next six-hour scan.
+for(const filename of ['discovery.json.enc','discovery-status.json']){
+  const source=path.join(root,'state',filename),target=path.join(root,'public','data',filename);
+  try{await fs.copyFile(source,target)}catch(error){if(error?.code!=='ENOENT')throw error}
+}
+if(process.env.GITHUB_OUTPUT)await fs.appendFile(process.env.GITHUB_OUTPUT,`synced_at=${cloudSyncedAt}\naccounts=${accounts.length}\ncosts=${Object.keys(manualCosts).length}\ndismissed=${Object.keys(dismissedDiscoveries).length}\n`);
+console.log(`同步完成：${summary.accounts.length} 个账号，${Object.keys(manualCosts).length} 条加密成本记录，${Object.keys(dismissedDiscoveries).length} 个已上传选品`);

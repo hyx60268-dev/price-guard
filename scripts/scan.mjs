@@ -62,6 +62,7 @@ function cachedYahoo(prior,item,reason='fresh_cache'){
 
 const previous=await previousSnapshot();
 const manualCosts=previous?.manualCosts||{};
+const dismissedDiscoveries=previous?.dismissedDiscoveries||{};
 const managedAccounts=previous?.managedAccounts||[];
 const accounts=mergeAccountConfigs(accountsCfg.accounts||[],managedAccounts);
 const defaultAccountId=accounts[0]?.id;
@@ -217,9 +218,18 @@ for(const context of contexts){
 }
 
 const checkedAt=new Date().toISOString(),allItems=accountResults.flatMap(account=>account.items);
+// Keep an encrypted, cross-account history of every title that has appeared in the
+// seller inventories.  A sold item disappears from the live profile, but it must
+// still be excluded from future product discovery runs.
+const ownedTitleHistory=[...new Set([
+  ...(previous?.ownedTitleHistory||[]),
+  ...(previous?.items||[]).map(item=>item.title),
+  ...contexts.flatMap(context=>context.catalogItems.map(item=>item.title)),
+  ...allItems.map(item=>item.title)
+].map(value=>String(value||'').trim()).filter(Boolean))].slice(-5000);
 const result={
   version:5,checkedAt,dataRevision:checkedAt,settings,accounts:accountResults,managedAccounts,
-  manualCosts,relistAliases,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode},items:allItems,
+  manualCosts,dismissedDiscoveries,ownedTitleHistory,relistAliases,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode},items:allItems,
   scanMeta:{trigger:process.env.SCAN_TRIGGER||'local',startedAt:new Date(startedAt).toISOString(),durationSeconds:Math.round((Date.now()-startedAt)/1000),
     budgetMinutes:Number(settings.scanBudgetMinutes)||12,yahooConcurrency,xianyuLimit}
 };

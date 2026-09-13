@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateManualFields,manualCostFor,manualCostKey,mergeAccountConfigs,mergeManualCosts } from '../scripts/lib/state.mjs';
+import { calculateManualFields,discoveryDismissalKey,manualCostFor,manualCostKey,mergeAccountConfigs,mergeDismissedDiscoveries,mergeManualCosts } from '../scripts/lib/state.mjs';
 
 const item={accountId:'m',id:'new',title:'中国限定 商品 A 新品',xianyuQuery:'商品A 中国版',ownPrice:5000,recommendedPrice:4500,averageCNY:20};
 
@@ -26,4 +26,12 @@ test('server calculation exposes current and repriced profit',()=>{
 test('managed account config is merged with static accounts',()=>{
   const accounts=mergeAccountConfigs([{id:'main',name:'A',profileUrl:'https://paypayfleamarket.yahoo.co.jp/user/p1',catalogFile:'config/a.json'}],[{id:'account-p2',name:'B',profileUrl:'https://paypayfleamarket.yahoo.co.jp/user/p2'}]);
   assert.deepEqual(accounts.map(account=>account.id),['main','account-p2']);
+});
+
+test('uploaded discovery products keep a stable cross-device dismissal key',()=>{
+  const item={id:'candidate',sourceTitle:'中国限定 鬼滅の刃 新繹 アクリルスタンド 不死川実弥'};
+  const key=discoveryDismissalKey(item),older={[key]:{productKey:key,title:item.sourceTitle,updatedAt:'2026-01-01T00:00:00Z'}};
+  const merged=mergeDismissedDiscoveries(older,{[key]:{productKey:key,title:item.sourceTitle,updatedAt:'2026-01-02T00:00:00Z'}});
+  assert.equal(discoveryDismissalKey({...item,productKey:key}),key);
+  assert.equal(merged[key].updatedAt,'2026-01-02T00:00:00Z');
 });

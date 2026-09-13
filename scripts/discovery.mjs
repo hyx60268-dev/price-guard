@@ -4,12 +4,13 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { openContext,settle } from './lib/browser.mjs';
 import { decrypt,encrypt } from './lib/crypto.mjs';
-import { clusterSellerSales,discoveryId,eligibleDiscoveryCard,isOwnedDiscoverySource,isWithinDays,median,mercariDiscoverySearchUrl,parseListingTime,rewriteListing,sameSaleProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor,yahooDiscoverySearchUrl } from './lib/discovery.mjs';
+import { canonicalSaleTitle,clusterSellerSales,discoveryId,eligibleDiscoveryCard,isOwnedDiscoverySource,isWithinDays,median,mercariDiscoverySearchUrl,parseListingTime,rewriteListing,sameDiscoveryProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor,yahooDiscoverySearchUrl } from './lib/discovery.mjs';
 import { xianyuCost } from './lib/xianyu.mjs';
 import { fetchYahooItemBundle,fetchYahooResult } from './lib/yahoo.mjs';
+import { discoveryDismissalKey,normalizeProductIdentity } from './lib/state.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url)),root=path.resolve(here,'..');
-const DISCOVERY_VERSION=4;
+const DISCOVERY_VERSION=5;
 const readJson=file=>fs.readFile(file,'utf8').then(JSON.parse);
 const exists=file=>fs.access(file).then(()=>true).catch(()=>false);
 const wait=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
@@ -36,14 +37,14 @@ async function latestPriceSnapshot(){
 }
 
 function ownedYahooScope(snapshot){
-  const sellerIds=new Set(),itemIds=new Set();
+  const sellerIds=new Set(),itemIds=new Set(),productTitles=[...(snapshot?.ownedTitleHistory||[])];
   const profiles=[settings.profileUrl,...(accountsCfg.accounts||[]).map(account=>account.profileUrl),
     ...(snapshot?.managedAccounts||[]).map(account=>account.profileUrl),...(snapshot?.accounts||[]).map(account=>account.profileUrl)];
   for(const profile of profiles){const id=sellerIdFromProfile(profile);if(id)sellerIds.add(id)}
-  for(const item of snapshot?.items||[]){if(item.id)itemIds.add(String(item.id));if(item.sellerId)sellerIds.add(String(item.sellerId))}
-  for(const account of snapshot?.accounts||[])for(const item of account.items||[]){if(item.id)itemIds.add(String(item.id));if(item.sellerId)sellerIds.add(String(item.sellerId))}
+  for(const item of snapshot?.items||[]){if(item.id)itemIds.add(String(item.id));if(item.sellerId)sellerIds.add(String(item.sellerId));if(item.title)productTitles.push(item.title)}
+  for(const account of snapshot?.accounts||[])for(const item of account.items||[]){if(item.id)itemIds.add(String(item.id));if(item.sellerId)sellerIds.add(String(item.sellerId));if(item.title)productTitles.push(item.title)}
   for(const id of cfg.excludeYahooSellerIds||[])sellerIds.add(String(id));
-  return {sellerIds,itemIds};
+  return {sellerIds,itemIds,productTitles:[...new Set(productTitles)]};
 }
 
 async function publishExisting(prior){
@@ -130,6 +131,7 @@ async function mercariDetail(page,url){
 
 async function mercariSellerCards(page,url){
   await page.goto(url,{waitUntil:'domcontentloaded',timeout:30000});await settle(page,2500);
+  await page.locator('main a[href^="/item/"]').first().waitFor({state:'attached',timeout:12000}).catch(()=>{});
   await expandMercariGrid(page,cfg.mercariSellerScrolls);
   return (await mercariCards(page,{onlySold:true})).slice(0,Number(cfg.sellerCardLimit));
 }
@@ -140,9 +142,10 @@ async function scanMercari(context,errors){
   const sellers=new Map(),groups=[];
   try{
     await page.goto(search,{waitUntil:'domcontentloaded',timeout:35000});await settle(page,4200);
+    await page.locator('main a[href^="/item/"]').first().waitFor({state:'attached',timeout:18000}).catch(()=>{});
     await expandMercariGrid(page,cfg.mercariSearchScrolls);
     const excluded=new Set((cfg.excludeMercariSellerIds||[]).map(String));
-    const seeds=(await mercariCards(page,{onlySold:true,assumeSold:true})).filter(card=>Number(card.price)>=cfg.minPriceJPY).slice(0,Number(cfg.seedLimitPerPlatform));
+    const seeds=(await mercariCards(page,{onlySold:true,assumeSold:false})).filter(card=>Number(card.price)>=cfg.minPriceJPY).slice(0,Number(cfg.seedLimitPerPlatform));
     for(const [index,seed] of seeds.entries()){
       if(sellers.size>=Number(cfg.sellerLimitPerPlatform))break;
       try{
@@ -224,7 +227,7 @@ function makeSourceCandidate(platform,seller,sales,representative){
   const title=representative.title||sales[0]?.title||'',description=representative.description||'';
   const rewrite=rewriteListing({title,description,condition:representative.condition,saleCount:sold.length});
   return {
-    id:discoveryId(platform,seller.id,title),sourcePlatform:platform,seller:{id:seller.id,name:seller.name,url:seller.url},
+    id:discoveryId(platform,seller.id,title),productKey:normalizeProductIdentity(canonicalSaleTitle(title)),sourcePlatform:platform,seller:{id:seller.id,name:seller.name,url:seller.url},
     salesCount:sold.length,platformSales:{[platform]:sold.length},saleDates:sold.map(item=>item.soldAt).filter(Boolean).sort().reverse(),sourcePriceJPY:median(sold.map(item=>item.price)),
     sourcePricesJPY:sold.map(item=>item.price).filter(Number.isFinite),sourceTitle:title,sourceDescription:description,sourceUrl:representative.url,
     sourceUrls:sold.map(item=>item.url).filter(Boolean).slice(0,8),sourceImages:[...(representative.images||[]),representative.image].filter(Boolean).slice(0,8),
@@ -235,7 +238,7 @@ function makeSourceCandidate(platform,seller,sales,representative){
 function aggregateAcrossPlatforms(candidates=[]){
   const groups=[];
   for(const candidate of candidates){
-    let group=groups.find(current=>sameSaleProduct({title:current.sourceTitle},{title:candidate.sourceTitle}));
+    let group=groups.find(current=>sameDiscoveryProduct({title:current.sourceTitle},{title:candidate.sourceTitle}));
     if(!group){group={members:[]};groups.push(group)}
     group.members.push(candidate);
   }
@@ -263,10 +266,19 @@ const sourceCandidates=[];
 const sourceScanStats={mercariSeeds:0,mercariSellers:0,yahooSeeds:0,yahooSellers:0};
 let ranked=[];
 try{
-  const owned=ownedYahooScope(await latestPriceSnapshot());
+  const latest=await latestPriceSnapshot(),owned=ownedYahooScope(latest);
+  for(const account of accountsCfg.accounts||[]){
+    if(!account.catalogFile)continue;
+    try{for(const item of (await readJson(path.join(root,account.catalogFile))).items||[])if(item.title)owned.productTitles.push(item.title)}catch{}
+  }
+  owned.productTitles=[...new Set(owned.productTitles)];
   const opened=await openContext(authState);browser=opened.browser;context=opened.context;
   const [mercari,yahoo]=await Promise.all([scanMercari(context,errors),scanYahoo(errors,owned)]);sourceCandidates.push(...mercari,...yahoo);
-  ranked=aggregateAcrossPlatforms(sourceCandidates).slice(0,Number(cfg.maxProducts));
+  const dismissed=Object.values(latest?.dismissedDiscoveries||{});
+  ranked=aggregateAcrossPlatforms(sourceCandidates).filter(item=>!owned.productTitles.some(title=>sameDiscoveryProduct({title:item.sourceTitle},{title}))).filter(item=>!dismissed.some(record=>{
+    if(discoveryDismissalKey(item)===String(record.productKey||''))return true;
+    return record.title&&sameDiscoveryProduct({title:item.sourceTitle},{title:record.title});
+  })).slice(0,Number(cfg.maxProducts));
   xPage=await context.newPage();
   for(const [index,item] of ranked.entries()){
     try{
@@ -288,9 +300,13 @@ const result={version:DISCOVERY_VERSION,checkedAt:new Date().toISOString(),filte
   login:{xianyuRequired:xianyuAuthRequired},errors:errors.slice(0,30)};
 
 function statusFor(value){return {version:value.version,checkedAt:value.checkedAt,total:value.products?.length||0,ready:value.stats?.ready||0,pending:value.stats?.pending||0,mercari:value.stats?.mercari||0,yahoo:value.stats?.yahoo||0,xianyuLoginRequired:Boolean(value.login?.xianyuRequired)}}
-const priorIds=new Set((prior?.products||[]).filter(item=>item.status==='ready').map(item=>item.id)),nextIds=new Set(products.filter(item=>item.status==='ready').map(item=>item.id));
-const added=[...nextIds].filter(id=>!priorIds.has(id)),removed=[...priorIds].filter(id=>!nextIds.has(id));
-const changeSummary={hasChanges:added.length+removed.length>0,total:added.length+removed.length,added:added.length,removed:removed.length,addedIds:added,removedIds:removed,firstRun:!prior};
+const candidateChangeKey=item=>item.productKey||normalizeProductIdentity(canonicalSaleTitle(item.sourceTitle||item.proposedTitle||''))||item.id;
+const priorKeys=new Set((prior?.products||[]).map(candidateChangeKey)),nextKeys=new Set(products.map(candidateChangeKey));
+const added=[...nextKeys].filter(key=>!priorKeys.has(key)),removed=[...priorKeys].filter(key=>!nextKeys.has(key));
+const addedSet=new Set(added),addedProducts=products.filter(item=>addedSet.has(candidateChangeKey(item)));
+const changeSummary={hasChanges:added.length+removed.length>0,total:added.length+removed.length,added:added.length,removed:removed.length,
+  addedReady:addedProducts.filter(item=>item.status==='ready').length,addedPending:addedProducts.filter(item=>item.status!=='ready').length,
+  addedIds:added,removedIds:removed,firstRun:!prior};
 const sealed=encrypt(Buffer.from(JSON.stringify(result)),password),status=statusFor(result);
 await Promise.all([fs.writeFile(stateEnc,sealed),fs.writeFile(publicEnc,sealed),fs.writeFile(stateStatus,JSON.stringify(status,null,2)),fs.writeFile(publicStatus,JSON.stringify(status,null,2)),
   fs.writeFile(path.join(root,'data','discovery-change-summary.json'),JSON.stringify(changeSummary,null,2))]);

@@ -25,6 +25,18 @@ export function titleScore(query, title) {
   return total ? hit/total : 0;
 }
 
+export function listingTextEquivalent(ownTitle='',ownDescription='',candidateTitle='',candidateDescription=''){
+  if(hasVariantMismatch(ownTitle,candidateTitle)||hasVariantMismatch(candidateTitle,ownTitle))return false;
+  const titleForward=titleScore(ownTitle,candidateTitle),titleBackward=titleScore(candidateTitle,ownTitle);
+  if(titleForward<.88||titleBackward<.82)return false;
+  const clean=value=>normalize(String(value).replace(/即購入.*|匿名配送.*|送料無料.*|ご覧いただきありがとうございます。?/gi,' '));
+  const own=clean(ownDescription),candidate=clean(candidateDescription);
+  if(own.length>=8&&own===candidate)return true;
+  if(own.length<16||candidate.length<16)return false;
+  const shorter=own.length<=candidate.length?own:candidate,longer=own.length<=candidate.length?candidate:own;
+  return longer.includes(shorter)&&shorter.length/longer.length>=.75;
+}
+
 function normalizedJapanese(value='') {
   return String(value).normalize('NFKC').toLowerCase();
 }
@@ -145,6 +157,9 @@ export function isLikelyVariantOffer(text='',query='') {
 
 export function hasVariantMismatch(query='',candidate='') {
   const q=normalize(query),title=String(candidate);
+  const standaloneMarkers=value=>new Set([...normalizedJapanese(value).toUpperCase().matchAll(/\b[A-H]\b/g)].map(match=>match[0]));
+  const queryMarkers=standaloneMarkers(query),candidateMarkers=standaloneMarkers(candidate);
+  if([...candidateMarkers].some(marker=>!queryMarkers.has(marker)))return true;
   const queryQuantity=semanticQuantity(query),candidateQuantity=semanticQuantity(candidate);
   if(Number.isFinite(candidateQuantity)&&candidateQuantity>1&&!Number.isFinite(queryQuantity))return true;
   // 元商品がペア/複数セットなら、候補側にも同じ個数の明記が必要。

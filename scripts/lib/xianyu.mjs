@@ -46,7 +46,7 @@ async function verifyDetail(context,candidate,item,settings,ownFingerprints){
     const detailFingerprints=(await mapLimit(state.images.slice(0,8),3,imageFingerprints)).filter(Boolean);
     const allCandidateImages=[candidate.fingerprint,...detailFingerprints].filter(Boolean);
     const imageScore=imageSetSimilarity(ownFingerprints,allCandidateImages);
-    const independentImages=coherentIndependentImages(detailFingerprints,ownFingerprints,2);
+    const independentImages=coherentIndependentImages(detailFingerprints,ownFingerprints,3);
     const textStrong=semantic.accepted&&(titleMatch>=.74||(titleMatch>=.52&&bodyMatch>=.82));
     const visualStrong=ownFingerprints.length?Number.isFinite(imageScore)&&imageScore>=.70:titleMatch>=.88;
     if(!textStrong||!visualStrong)return {accepted:false,reason:!textStrong?'detail_title_mismatch':'detail_image_mismatch',detailTitle,titleMatch,bodyMatch,imageScore};

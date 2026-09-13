@@ -23,13 +23,13 @@
     "windowDays": 30,
     "minSalesPerSeller": 2,
     "freshHours": 6,
-    "seedLimitPerPlatform": 200,
-    "sellerLimitPerPlatform": 200,
-    "sellerCardLimit": 160,
-    "searchPages": 3,
-    "sellerPages": 2,
-    "mercariSearchScrolls": 24,
-    "mercariSellerScrolls": 8,
+    "seedLimitPerPlatform": 80,
+    "sellerLimitPerPlatform": 40,
+    "sellerCardLimit": 100,
+    "searchPages": 1,
+    "sellerPages": 1,
+    "mercariSearchScrolls": 12,
+    "mercariSellerScrolls": 5,
     "maxProducts": 30
   }
 }

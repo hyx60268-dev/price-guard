@@ -63,6 +63,21 @@ export function mergeManualCosts(base={},incoming={}){
   return output;
 }
 
+export function mergeDismissedDiscoveries(base={},incoming={}){
+  const output={...base};
+  for(const [key,value] of Object.entries(incoming||{})){
+    if(!value||typeof value!=='object')continue;
+    const next={...value,productKey:String(value.productKey||key),title:String(value.title||''),updatedAt:value.updatedAt||new Date(0).toISOString()};
+    const current=output[key];
+    if(!current||timestamp(next)>=timestamp(current))output[key]=next;
+  }
+  return output;
+}
+
+export function discoveryDismissalKey(item={}){
+  return String(item.productKey||normalizeProductIdentity(item.sourceTitle||item.proposedTitle||item.title||'')||item.id||'');
+}
+
 export function manualCostFor(costs={},item={},aliases={}){
   const accountId=item.accountId||'default';
   const directKeys=[`${accountId}:${item.id}`,`${accountId}:item:${item.id}`,...itemIdentityKeys(item)];

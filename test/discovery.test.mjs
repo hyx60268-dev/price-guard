@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canonicalSaleTitle,clusterSellerSales,eligibleDiscoveryCard,isOwnedDiscoverySource,isWithinDays,mercariDiscoverySearchUrl,parseListingTime,rewriteListing,sameSaleProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor,yahooDiscoverySearchUrl } from '../scripts/lib/discovery.mjs';
+import { canonicalSaleTitle,clusterSellerSales,eligibleDiscoveryCard,isOwnedDiscoverySource,isWithinDays,mercariDiscoverySearchUrl,parseListingTime,rewriteListing,sameDiscoveryProduct,sameSaleProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor,yahooDiscoverySearchUrl } from '../scripts/lib/discovery.mjs';
 
 test('discovery URLs use the live sold and price filters',()=>{
   const mercari=new URL(mercariDiscoverySearchUrl({keyword:'中国限定',minPriceJPY:4999}));
@@ -24,6 +24,15 @@ test('same product clusters relists but not different quantities',()=>{
   assert.equal(groups[0].items.length,3);
 });
 
+test('discovery deduplicates harmless seller wording but keeps variants separate',()=>{
+  assert.equal(sameDiscoveryProduct({title:'即日発送 鬼滅の刃 中国限定 新繹シリーズ 不死川実弥 アクリルスタンド'},{title:'鬼滅の刃 新繹シリーズ 中国限定 アクリルスタンド 不死川実弥'}),true);
+  assert.equal(sameDiscoveryProduct({title:'在庫複数 当日発送 鬼滅の刃 中国限定 新繹シリーズ 不死川実弥 アクリルスタンド'},{title:'鬼滅の刃 新繹シリーズ アクリルスタンド 不死川実弥'}),true);
+  assert.equal(sameDiscoveryProduct({title:'中国限定 アクリルスタンド 不死川実弥'},{title:'中国限定 アクリルスタンド 冨岡義勇'}),false);
+  assert.equal(sameDiscoveryProduct({title:'あんスタ 瀬名泉 ワイヤレスイヤホン LCD搭載 中国限定 bilibili'},{title:'あんスタ 朱桜司 ワイヤレスイヤホン LCD搭載 中国限定 bilibili'}),false);
+  assert.equal(sameDiscoveryProduct({title:'MG ガンダムアストレイ クロスコントラストカラーズ 落桜白'},{title:'MG ガンダムアストレイ クロスコントラストカラーズ 朽木黒'}),false);
+  assert.equal(sameDiscoveryProduct({title:'鬼滅の刃 中国限定 新繹シリーズ アクリルスタンド B 全8種 ランダム'},{title:'鬼滅の刃 中国限定 新繹シリーズ アクリルスタンド A 全8種 ランダム'}),false);
+});
+
 test('relative timestamps and rolling month are handled',()=>{
   const now=Date.parse('2026-09-13T03:00:00Z');
   assert.equal(parseListingTime('3時間前',now),'2026-09-13T00:00:00.000Z');
@@ -35,7 +44,8 @@ test('discovery enforces sold price date and valid xianyu images',()=>{
   const now=Date.parse('2026-09-13T03:00:00Z');
   assert.equal(eligibleDiscoveryCard({sold:true,price:4999,soldAt:'2026-09-12T03:00:00Z',title:'中国限定 商品'},{minPriceJPY:4999,windowDays:30},now),true);
   assert.equal(eligibleDiscoveryCard({sold:false,price:9000,soldAt:'2026-09-12T03:00:00Z',title:'中国限定 商品'},{minPriceJPY:4999,windowDays:30},now),false);
-  assert.equal(validDiscoveryXianyu({status:'ok',query:'商品',averageCNY:28,samples:[{price:28,independentImages:['https://a/1','https://a/2']},{price:30}]}).ready,true);
+  assert.equal(validDiscoveryXianyu({status:'ok',query:'商品',averageCNY:28,samples:[{price:28,independentImages:['https://a/1','https://a/2','https://a/3']},{price:30}]}).ready,true);
+  assert.equal(validDiscoveryXianyu({status:'ok',query:'商品',averageCNY:28,samples:[{price:28,independentImages:['https://a/1','https://a/2']},{price:30}]}).ready,false);
   assert.equal(validDiscoveryXianyu({status:'ok',query:'商品',averageCNY:3,samples:[{price:3,independentImages:['https://a/1']},{price:28}]}).ready,false);
 });
 
