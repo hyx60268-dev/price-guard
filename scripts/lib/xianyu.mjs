@@ -1,6 +1,6 @@
 import { cardsFromPage,settle } from './browser.mjs';
-import { imageFingerprints,imageSetSimilarity } from './image.mjs';
-import { average,coherentPrices,hasExplicitDefect,hasVariantMismatch,isLikelyVariantOffer,isRejected,titleScore,yen } from './rules.mjs';
+import { coherentIndependentImages,imageFingerprints,imageSetSimilarity } from './image.mjs';
+import { average,coherentPrices,conditionCompatible,hasExplicitDefect,hasVariantMismatch,isLikelyVariantOffer,isRejected,productFamily,semanticSameItem,titleScore,yen } from './rules.mjs';
 
 async function mapLimit(values,limit,worker){
   const output=new Array(values.length);let cursor=0;
@@ -38,14 +38,20 @@ async function verifyDetail(context,candidate,item,settings,ownFingerprints){
     const detailTitle=ranked[0]?.title||candidate.title||'',titleMatch=ranked[0]?.score??titleScore(query,candidate.title);
     if(hasVariantMismatch(query,detailTitle)||hasExplicitDefect(detailTitle,state.text))return {accepted:false,reason:'detail_variant_or_defect',detailTitle};
     if(state.optionCount>1||isLikelyVariantOffer(`${candidate.text} ${state.text}`,query))return {accepted:false,reason:'multi_variant_or_bait',detailTitle,optionCount:state.optionCount};
+    if(!conditionCompatible(item.title||query,`${detailTitle}\n${state.text}`))return {accepted:false,reason:'condition_or_packaging_mismatch',detailTitle};
+    const queryFamily=productFamily(query),candidateFamily=productFamily(`${detailTitle}\n${state.text}`);
+    if(queryFamily&&candidateFamily!==queryFamily)return {accepted:false,reason:'physical_product_type_unconfirmed',detailTitle,queryFamily,candidateFamily};
+    const semantic=semanticSameItem({query,candidate:`${detailTitle}\n${state.text}`});
     const bodyMatch=titleScore(query,state.text);
     const detailFingerprints=(await mapLimit(state.images.slice(0,8),3,imageFingerprints)).filter(Boolean);
     const allCandidateImages=[candidate.fingerprint,...detailFingerprints].filter(Boolean);
     const imageScore=imageSetSimilarity(ownFingerprints,allCandidateImages);
-    const textStrong=titleMatch>=.74||(titleMatch>=.52&&bodyMatch>=.82);
+    const independentImages=coherentIndependentImages(detailFingerprints,ownFingerprints,2);
+    const textStrong=semantic.accepted&&(titleMatch>=.74||(titleMatch>=.52&&bodyMatch>=.82));
     const visualStrong=ownFingerprints.length?Number.isFinite(imageScore)&&imageScore>=.70:titleMatch>=.88;
     if(!textStrong||!visualStrong)return {accepted:false,reason:!textStrong?'detail_title_mismatch':'detail_image_mismatch',detailTitle,titleMatch,bodyMatch,imageScore};
-    return {accepted:true,reason:'detail_text_images_verified',detailTitle,titleMatch,bodyMatch,imageScore,optionCount:state.optionCount,detailImages:state.images.slice(0,6)};
+    return {accepted:true,reason:'detail_type_quantity_text_images_verified',detailTitle,titleMatch,bodyMatch,imageScore,optionCount:state.optionCount,semantic,queryFamily,candidateFamily,
+      detailImages:state.images.slice(0,6),independentImages,imageSource:'xianyu'};
   }catch(error){return {accepted:false,reason:'detail_error',error:String(error)}}
   finally{await detail.close().catch(()=>{})}
 }

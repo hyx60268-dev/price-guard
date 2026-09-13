@@ -87,10 +87,11 @@ export function isOwnedDiscoverySource(card={},owned={}){
 
 export function validDiscoveryXianyu(result={}){
   const samples=(result.samples||[]).filter(sample=>Number.isFinite(Number(sample.price))&&!isLikelyVariantOffer(`${sample.title||''} ${sample.text||''}`,result.query||''));
-  const richest=samples.map(sample=>({sample,images:[...new Set(sample.detailImages||[])].filter(url=>/^https?:\/\//.test(url))}))
+  const richest=samples.map(sample=>({sample,images:[...new Set(sample.independentImages||[])].filter(url=>/^https?:\/\//.test(url))}))
     .sort((a,b)=>b.images.length-a.images.length)[0];
   const images=(richest?.images||[]).slice(0,8);
-  return {ready:result.status==='ok'&&samples.length>=2&&Number.isFinite(Number(result.averageCNY))&&images.length>=3,images,sample:richest?.sample||null};
+  return {ready:result.status==='ok'&&samples.length>=2&&Number.isFinite(Number(result.averageCNY))&&images.length>=2,
+    images,sample:richest?.sample||null,imageSource:images.length>=2?'xianyu_independent_coherent':null};
 }
 
 export function discoveryId(platform,sellerId,title=''){
@@ -127,7 +128,7 @@ export function rewriteListing({title='',description='',condition='',saleCount=0
   const body=[
     chinaRelated?'中国限定で販売された、日本では入手しにくいアイテムです。':'海外で販売された、国内では見かける機会の少ないアイテムです。',
     '',`【商品名】${core||title}`,`【状態】${state}`,
-    '',saleCount>=3?`同一出品者から直近30日以内に${saleCount}件以上の販売実績が確認された商品です。`:'',
+    '',saleCount>=2?`同一出品者から直近30日以内に${saleCount}件の販売実績が確認された商品です。`:'',
     '海外製品のため、初期傷・スレ・印刷の個体差などがある場合がございます。',
     '画像をご確認のうえ、海外製品にご理解いただける方のみご購入ください。',
     '', '即購入OKです。匿名配送で発送いたします。'

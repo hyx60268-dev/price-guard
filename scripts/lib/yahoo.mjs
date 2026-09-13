@@ -1,5 +1,5 @@
-import { imageSimilarity,imageHash } from './image.mjs';
-import { hasExplicitDefect,isRejected,semanticSameItem,titleScore } from './rules.mjs';
+import { imageFingerprints,imageSetSimilarity } from './image.mjs';
+import { conditionCompatible,hasExplicitDefect,isRejected,productFamily,semanticSameItem,titleScore } from './rules.mjs';
 
 const UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140 Safari/537.36';
 const DEFAULT_REQUEST_INTERVAL_MS=5500;
@@ -200,10 +200,9 @@ export async function yahooCompare(_unusedPage,item,settings={}){
   const searchCards=(search?.items||[]).filter(raw=>raw.itemStatus==='OPEN').map(searchCard);
   const recommendationCards=ownBundle?.recommendations||[];
   const cards=mergeCards([searchCards,recommendationCards]);
-  const ownDetail=ownBundle?.detail||null;
+  let ownDetail=ownBundle?.detail||null;
   const ownSearchCard=searchCards.find(card=>card.id===item.id);
-  const ownCategory=categoryText(ownDetail,ownSearchCard)||item.yahoo?.ownCategory||'';
-  const ownHash=await imageHash(item.image);
+  let ownCategory=categoryText(ownDetail,ownSearchCard)||item.yahoo?.ownCategory||'';
   const preliminary=[];
   const rejected=[];
 
@@ -220,6 +219,16 @@ export async function yahooCompare(_unusedPage,item,settings={}){
     }else rejected.push({id:card.id,price:card.price,reason:semantic.reason||'weak_title',titleScore:tScore,recallScore});
   }
 
+  // 只有出现更低的文字候选时才读取自己的详情图。后续必须同时通过实物类型、
+  // 规格数量、详情文字和图片验证；标题相似不再能单独成为最低价证据。
+  if(preliminary.length&&!ownDetail){
+    try{ownBundle=await fetchYahooItemBundle(item.id,settings);ownDetail=ownBundle.detail;ownCategory=categoryText(ownDetail,ownSearchCard)||ownCategory}
+    catch(error){itemPageError=String(error)}
+  }
+  const ownImages=[...(ownDetail?.images||[]).map(image=>typeof image==='string'?image:image?.url).filter(Boolean),ownDetail?.thumbnailImageUrl,...(item.yahoo?.ownImages||[]),item.image].filter(Boolean);
+  const ownFingerprints=(await Promise.all([...new Set(ownImages)].slice(0,5).map(imageFingerprints))).filter(Boolean);
+  const ownConditionText=`${item.title}\n${ownDetail?.title||''}\n${ownDetail?.description||''}\n${ownDetail?.condition?.name||ownDetail?.condition||''}`;
+
   const competitors=[];
   let detailCheckedCount=0;
   const maxDetailChecks=Math.max(1,Number(settings.maxYahooDetailChecks)||2);
@@ -230,18 +239,28 @@ export async function yahooCompare(_unusedPage,item,settings={}){
       const bundle=await fetchYahooItemBundle(card.id,settings),detail=bundle.detail;
       if(detail.status!=='OPEN'){rejected.push({id:card.id,price:card.price,reason:'not_open'});continue}
       if(hasExplicitDefect(detail.title,detail.description)){rejected.push({id:card.id,price:Number(detail.price),reason:'defect'});continue}
+      const candidateConditionText=`${detail.title||''}\n${detail.description||''}\n${detail.condition?.name||detail.condition||''}`;
+      if(!conditionCompatible(ownConditionText,candidateConditionText)){
+        rejected.push({id:card.id,price:Number(detail.price),reason:'condition_or_packaging_mismatch'});continue
+      }
       const detailCategory=categoryText(detail,card);
       const semantic=semanticSameItem({query:item.title,candidate:`${detail.title}\n${detail.description||''}`,queryCategory:ownCategory,candidateCategory:detailCategory});
       const detailTitleScore=titleScore(exactQuery,detail.title);
-      const strongTitle=detailTitleScore>=0.88&&!['variant_mismatch','product_mismatch'].includes(semantic.reason);
-      const accepted=strongTitle||semantic.accepted||(card.fromRecommendation&&detailTitleScore>=0.5&&semantic.reason==='weak_anchors');
-      if(!accepted){rejected.push({id:card.id,price:Number(detail.price),reason:semantic.reason||'detail_mismatch',titleScore:detailTitleScore});continue}
-      let imageScore=null;
-      const detailImage=detail.images?.[0]?.url||card.image;
-      if(ownHash&&detailImage)imageScore=imageSimilarity(ownHash,await imageHash(detailImage));
+      const queryFamily=productFamily(item.title,ownCategory),candidateFamily=productFamily(`${detail.title}\n${detail.description||''}`,detailCategory);
+      const familyConfirmed=queryFamily&&candidateFamily?queryFamily===candidateFamily:!queryFamily&&!candidateFamily&&detailTitleScore>=.95;
+      if(!familyConfirmed){rejected.push({id:card.id,price:Number(detail.price),reason:'physical_product_type_unconfirmed',queryFamily,candidateFamily,titleScore:detailTitleScore});continue}
+      if(!semantic.accepted||detailTitleScore<.72){rejected.push({id:card.id,price:Number(detail.price),reason:semantic.reason||'detail_mismatch',titleScore:detailTitleScore});continue}
+      const detailImages=[...(detail.images||[]).map(image=>typeof image==='string'?image:image?.url).filter(Boolean),card.image].filter(Boolean);
+      const detailFingerprints=(await Promise.all([...new Set(detailImages)].slice(0,5).map(imageFingerprints))).filter(Boolean);
+      const imageScore=imageSetSimilarity(ownFingerprints,detailFingerprints);
+      const imageThreshold=Math.max(.75,Number(settings.yahooImageMatchThreshold)||.80);
+      if(!ownFingerprints.length||!detailFingerprints.length||!Number.isFinite(imageScore)||imageScore<imageThreshold){
+        rejected.push({id:card.id,price:Number(detail.price),reason:'physical_image_unconfirmed',titleScore:detailTitleScore,imageScore});continue
+      }
+      const detailImage=detailImages[0]||card.image;
       competitors.push({...card,url:`https://paypayfleamarket.yahoo.co.jp/item/${detail.id}`,title:detail.title,
         text:`${detail.title}\n${detail.description||''}`,image:detailImage,price:Number(detail.price),itemStatus:detail.status,
-        titleScore:detailTitleScore,imageScore,semantic,matchMethod:detailTitleScore>=0.88?'detail_title':'detail_semantic'});
+        titleScore:detailTitleScore,imageScore,semantic,queryFamily,candidateFamily,matchMethod:'detail_type_quantity_text_images'});
       const next=preliminary[index+1];
       if(!next||Number(detail.price)<=next.price)break;
     }catch(error){rejected.push({id:card.id,price:card.price,reason:'detail_error',error:String(error)})}
@@ -254,7 +273,6 @@ export async function yahooCompare(_unusedPage,item,settings={}){
   const recommended=lowest&&lowest.price<item.ownPrice?Math.max(1,Math.floor(lowest.price)-1):item.ownPrice;
   const sourceCovered=Boolean(search||ownBundle);
   const matchLabel=lowest&&!lowest.isOwn?'已核验在售同款':search?'未发现更低同款':'推荐候补中未发现更低同款';
-  const ownImages=[...(ownDetail?.images||[]).map(image=>typeof image==='string'?image:image?.url).filter(Boolean),ownDetail?.thumbnailImageUrl,...(item.yahoo?.ownImages||[]),item.image].filter(Boolean);
   return {
     query,searchUrl,lowestPrice:lowest?.price??item.ownPrice,lowestUrl:lowest?.url??item.url,
     recommendedPrice:recommended,candidates:competitors.slice(0,5),cardCount:cards.length,

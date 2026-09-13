@@ -37,11 +37,21 @@ async function makeFingerprints(url){
   const buffer=await download(url);if(!buffer)return null;
   try{
     const center=await sharp(buffer).resize(256,256,{fit:'cover',position:'centre'}).png().toBuffer();
-    const [dHash,aHash,centerHash,stats]=await Promise.all([
-      differenceHash(buffer),averageHash(buffer),differenceHash(center),sharp(buffer).resize(32,32,{fit:'inside'}).stats()
+    const [dHash,aHash,centerHash,stats,metadata,border]=await Promise.all([
+      differenceHash(buffer),averageHash(buffer),differenceHash(center),sharp(buffer).resize(32,32,{fit:'inside'}).stats(),sharp(buffer).metadata(),
+      sharp(buffer).rotate().resize(48,48,{fit:'fill'}).removeAlpha().raw().toBuffer({resolveWithObject:true})
     ]);
     const color=(stats.channels||[]).slice(0,3).map(channel=>Math.round(channel.mean||0));
-    return {dHash,aHash,centerHash,color,url};
+    const sums=[0,0,0],squares=[0,0,0];let count=0;
+    for(let y=0;y<border.info.height;y++)for(let x=0;x<border.info.width;x++){
+      if(x>=6&&x<border.info.width-6&&y>=6&&y<border.info.height-6)continue;
+      const offset=(y*border.info.width+x)*border.info.channels;
+      for(let channel=0;channel<3;channel++){const value=border.data[offset+channel]??0;sums[channel]+=value;squares[channel]+=value*value}count++;
+    }
+    const background=sums.map(value=>Math.round(value/Math.max(1,count)));
+    const backgroundSpread=squares.map((value,index)=>Math.round(Math.sqrt(Math.max(0,value/Math.max(1,count)-(sums[index]/Math.max(1,count))**2))));
+    const aspectRatio=metadata.width&&metadata.height?metadata.width/metadata.height:null;
+    return {dHash,aHash,centerHash,color,background,backgroundSpread,aspectRatio,url};
   }catch{return null}
 }
 
@@ -87,4 +97,29 @@ export function imageSetSimilarity(left=[],right=[]){
     if(Number.isFinite(score)&&(best===null||score>best))best=score;
   }
   return best;
+}
+
+export function backgroundSimilarity(a,b){
+  if(!a?.background?.length||!b?.background?.length)return null;
+  const colorDistance=Math.sqrt(a.background.reduce((sum,value,index)=>sum+(value-b.background[index])**2,0))/(Math.sqrt(3)*255);
+  const spreadDistance=a.backgroundSpread?.length&&b.backgroundSpread?.length
+    ?Math.sqrt(a.backgroundSpread.reduce((sum,value,index)=>sum+(value-b.backgroundSpread[index])**2,0))/(Math.sqrt(3)*128):0;
+  const aspectPenalty=Number.isFinite(a.aspectRatio)&&Number.isFinite(b.aspectRatio)
+    ?Math.min(1,Math.abs(Math.log(a.aspectRatio/b.aspectRatio))/1.2):0;
+  return Math.max(0,Math.min(1,1-colorDistance*.65-spreadDistance*.2-aspectPenalty*.15));
+}
+
+export function coherentIndependentImages(candidates=[],sourceImages=[],minimum=2){
+  const unique=[...new Map(candidates.filter(item=>item?.url).map(item=>[item.url,item])).values()];
+  const independent=unique.filter(candidate=>!sourceImages.some(source=>{
+    const score=fingerprintSimilarity(candidate,source);return Number.isFinite(score)&&score>=.90;
+  }));
+  let best=[];
+  for(const seed of independent){
+    const group=independent.filter(candidate=>{
+      const score=backgroundSimilarity(seed,candidate);return !Number.isFinite(score)||score>=.72;
+    });
+    if(group.length>best.length)best=group;
+  }
+  return best.length>=minimum?best.map(item=>item.url):[];
 }

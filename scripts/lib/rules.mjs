@@ -1,5 +1,5 @@
 const noise = new Set(['中国限定','海外限定','正規品','新品','未使用','未開封','公式','限定','送料無料','匿名配送','即購入ok','即購入OK']);
-const badPattern = /(求购|收购|只收|蹲收|换物|交换|置换|补款|定金|尾款|仅展示|勿拍|非实体|电子版|网盘|租赁|出租|标价无意义|价格无意义|标价不实|运费链接|日本代购|煤炉|mercari|已售|售出勿拍|sold|売り切れ|ジャンク|訳あり|難あり|破損|欠品|箱なし|箱潰れ|箱ダメージ|盒损|瑕疵|残次|缺件)/i;
+const badPattern = /(求购|收购|只收|蹲收|换物|交换|置换|补款|定金|尾款|仅展示|勿拍|非实体|电子版|网盘|租赁|出租|标价无意义|价格无意义|标价不实|运费链接|日本代购|煤炉|mercari|已售|售出勿拍|sold|売り切れ|ジャンク|訳あり|難あり|破損|欠品|箱なし|箱無し|外箱なし|外箱のみ|箱のみ|空箱|パッケージのみ|ボックスのみ|箱だけ|仅外盒|只有盒|盒损|箱潰れ|箱ダメージ|瑕疵|残次|缺件)/i;
 const baitPattern = /(请点进去选项|点击立即购买查看|拍下改价|私聊改价|价格见图|图上价|多个角色|多款可选|任选|标价非实价|自带价|占位价|起步价|最低款价格|标价为最低|标价只是|页面价格不准)/i;
 const selectionPattern = /(请选择|选择规格|选择款式|选款|选图|拍哪款|下单备注|联系客服改价|私聊改价|各款价格|价格不一|每款价格|单独询价|需补差价|补差后发货|以详情价为准|详情价格为准)/i;
 const multiOfferPattern = /(多款|多角色|全系列|合集|系列任选|整套可拆|可拆卖)/i;
@@ -54,6 +54,8 @@ function setMultiplier(value='') {
 
 export function productFamily(value='',category='') {
   const text=normalizedJapanese(`${value} ${category}`);
+  if(/(?:レーザーチケット|ホログラムチケット|チケット|ticket|票卡|镭射票)/i.test(text))return 'ticket';
+  if(/(?:シールウエハース|ウエハースシール|ステッカー|sticker|贴纸|贴片)/i.test(text))return 'sticker';
   if(/(?:アクリルブロック|acrylic\s*block|亚克力砖)/i.test(text))return 'acrylic_block';
   if(/(?:アクリルスタンド|アクスタ|acrylic\s*stand|亚克力立牌|立牌)/i.test(text))return 'acrylic_stand';
   if(/(?:フィギュア|figure|手办|模型雕像)/i.test(text))return 'figure';
@@ -66,6 +68,28 @@ export function productFamily(value='',category='') {
   if(/(?:ネックレス|ペンダント|ブレスレット|リング|腕時計|项链|手链|戒指)/i.test(text))return 'accessory';
   if(/(?:書籍|写真集|コミック|book|书|(?:^|\s)本(?:\s|$))/i.test(text))return 'book';
   return '';
+}
+
+export function conditionProfile(value=''){
+  const text=normalizedJapanese(value);
+  return {
+    boxOnly:/(?:外箱のみ|箱のみ|空箱|パッケージのみ|ボックスのみ|箱だけ|仅外盒|只有盒|空盒)/i.test(text),
+    noBox:/(?:箱なし|箱無し|外箱なし|箱はありません|本体のみ|无盒|没有盒)/i.test(text),
+    openedOrUsed:/(?:中古|開封済|開封品|開封しています|飾って|展示品|使用済|使用感|組立済|二手|已开封|展示过)/i.test(text),
+    sealedNew:/(?:新品未開封|新品・未開封|未開封|未拆封|全新未拆)/i.test(text),
+    newUnused:/(?:新品[、・]?未使用|新品、未使用|新品未使用|未使用品|全新未使用)/i.test(text)
+  };
+}
+
+// 完整商品与“仅外盒”永不等价；自己的商品明确为新品/未拆时，候选也必须
+// 明确保持相同状态，不能用开封、展示、二手或无盒商品压低最低价。
+export function conditionCompatible(query='',candidate=''){
+  const own=conditionProfile(query),other=conditionProfile(candidate);
+  if(other.boxOnly)return false;
+  if((own.sealedNew||own.newUnused)&&(other.openedOrUsed||other.noBox))return false;
+  if(own.sealedNew&&!other.sealedNew)return false;
+  if(own.newUnused&&!own.sealedNew&&!(other.newUnused||other.sealedNew))return false;
+  return true;
 }
 
 const descriptorPattern=/(?:日本非売品|日本未発売|非売品|中国限定|海外限定|国内限定|正規品|新品|未使用|未開封|公式|限定|希少|レア|コラボレーション|コラボ|シリーズ|セット|まとめ売り|ペア|pair|単品|ランダム|random|全\s*\d+\s*種|\d+\s*(?:点|個|体|枚|本|箱|ピース|個入|入り|件)|ぬいぐるみ|マスコット|キーホルダー|キーチェーン|ストラップ|アクリルスタンド|アクスタ|アクリルブロック|フィギュア|プラモデル|フォトカード|ポストカード|カード|缶バッジ|タンブラー|ボトル|マグ|カップ)/gi;

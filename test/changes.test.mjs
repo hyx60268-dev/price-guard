@@ -12,3 +12,11 @@ test('detects add remove and tracked field update',()=>{
   const result=compareSnapshots(old,now);
   assert.deepEqual({total:result.total,added:result.added,removed:result.removed,updated:result.updated},{total:3,added:1,removed:1,updated:1});
 });
+
+test('does not alert when the checked price stays exactly the same',()=>{
+  const old={items:[{accountId:'m',id:'a',title:'A',ownPrice:4099,lowestPrice:2999,recommendedPrice:2998}]};
+  const same={items:[{accountId:'m',id:'a',title:'A',ownPrice:4099,lowestPrice:2999,recommendedPrice:2998}]};
+  const changed={items:[{accountId:'m',id:'a',title:'A',ownPrice:4099,lowestPrice:2998,recommendedPrice:2997}]};
+  assert.equal(compareSnapshots(old,same).hasChanges,false);
+  assert.equal(compareSnapshots(old,changed).hasChanges,true);
+});

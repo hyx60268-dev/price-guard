@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateCost,advice,coherentPrices,distinctiveCoverage,hasExplicitDefect,hasVariantMismatch,isLikelyVariantOffer,semanticQuantity,semanticSameItem,titleScore } from '../scripts/lib/rules.mjs';
+import { calculateCost,advice,coherentPrices,conditionCompatible,distinctiveCoverage,hasExplicitDefect,hasVariantMismatch,isLikelyVariantOffer,productFamily,semanticQuantity,semanticSameItem,titleScore } from '../scripts/lib/rules.mjs';
 import { encrypt,decrypt } from '../scripts/lib/crypto.mjs';
 const settings={exchangeRate:22.99,costMultiplier:1.05};
 test('manual cost formula',()=>assert.equal(calculateCost(90.5,30,210,settings),3130));
@@ -34,6 +34,18 @@ test('rejects actual defects but not generic overseas-product disclaimers',()=>{
   assert.equal(hasExplicitDefect('通常品','箱に大きな破損があります。'),true);
   assert.equal(hasExplicitDefect('通常品','海外製品のため、外箱の凹み等がある場合がございます。'),false);
   assert.equal(hasExplicitDefect('【訳あり】商品',''),true);
+});
+test('requires the same physical product family',()=>{
+  assert.equal(productFamily('不死川実弥 アクリルスタンド'),'acrylic_stand');
+  assert.equal(productFamily('不死川実弥 レーザーチケット'),'ticket');
+  assert.equal(productFamily('ディアボロ シールウエハース'),'sticker');
+  assert.equal(semanticSameItem({query:'不死川実弥 アクリルスタンド',candidate:'不死川実弥 レーザーチケット'}).accepted,false);
+});
+test('new sealed full products reject opened, no-box, and box-only listings',()=>{
+  assert.equal(conditionCompatible('新品未開封 フィギュア','開封品 展示していました'),false);
+  assert.equal(conditionCompatible('新品、未使用 箱あり','中古 本体のみ 箱なし'),false);
+  assert.equal(conditionCompatible('新品未開封 MASTERLISE フィギュア','MASTERLISE 外箱のみ'),false);
+  assert.equal(conditionCompatible('新品未開封 フィギュア','新品未開封 フィギュア'),true);
 });
 test('rejects xianyu multi-variant bait but allows a whole-set query',()=>{
   assert.equal(isLikelyVariantOffer('全系列多款可选，标价为最低款价格','角色A 徽章'),true);

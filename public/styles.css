@@ -110,6 +110,8 @@ hr{border:0;border-top:1px solid var(--line);margin:22px 0}
 .discoveryactions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .discoveryactions .soft{padding:8px 11px}
 .statusline{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.pagination{display:flex;align-items:center;justify-content:center;gap:12px;padding:15px;border-top:1px solid var(--line)}
+.pagination button:disabled{opacity:.45;cursor:not-allowed}
 
 @media(max-width:900px){
   .kpis{grid-template-columns:repeat(2,1fr)}
@@ -152,4 +154,5 @@ hr{border:0;border-top:1px solid var(--line);margin:22px 0}
   .viewtabs{width:100%}.viewtabs button{flex:1}
   .discoveryimages{height:155px}
   .discoverymetrics{grid-template-columns:1fr 1fr}
+  .pagination{font-size:12px;gap:7px}.pagination .soft{padding:8px 10px}
 }
