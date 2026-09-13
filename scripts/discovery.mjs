@@ -10,7 +10,7 @@ import { fetchYahooItemBundle,fetchYahooResult } from './lib/yahoo.mjs';
 import { discoveryDismissalKey,normalizeProductIdentity } from './lib/state.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url)),root=path.resolve(here,'..');
-const DISCOVERY_VERSION=6;
+const DISCOVERY_VERSION=7;
 const readJson=file=>fs.readFile(file,'utf8').then(JSON.parse);
 const exists=file=>fs.access(file).then(()=>true).catch(()=>false);
 const wait=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
@@ -112,6 +112,26 @@ async function expandMercariGrid(page,rounds){
   }
 }
 
+async function waitForMercariGrid(page,timeoutMs=35000){
+  const deadline=Date.now()+timeoutMs;let prior=-1,stablePositive=0,current=0;
+  while(Date.now()<deadline){
+    current=await page.locator('main a[href^="/item/"]').count().catch(()=>0);
+    stablePositive=current>0&&current===prior?stablePositive+1:0;
+    if(stablePositive>=2)return current;
+    prior=current;await page.waitForTimeout(1500);
+  }
+  return current;
+}
+
+async function waitForMercariSearch(page){
+  let count=await waitForMercariGrid(page);
+  if(count)return count;
+  // Mercari occasionally renders its filters first and injects the result grid
+  // 10-25 seconds later. A single reload recovers that state in headless runners.
+  await page.reload({waitUntil:'domcontentloaded',timeout:35000});await settle(page,3000);
+  count=await waitForMercariGrid(page);return count;
+}
+
 async function mercariDetail(page,url){
   await page.goto(url,{waitUntil:'domcontentloaded',timeout:30000});await settle(page,2600);
   await page.locator('[data-testid="item-detail-container"],main article').first().waitFor({state:'attached',timeout:12000}).catch(()=>{});
@@ -136,7 +156,7 @@ async function mercariDetail(page,url){
 
 async function mercariSellerCards(page,url){
   await page.goto(url,{waitUntil:'domcontentloaded',timeout:30000});await settle(page,2500);
-  await page.locator('main a[href^="/item/"]').first().waitFor({state:'attached',timeout:12000}).catch(()=>{});
+  await waitForMercariGrid(page,25000);
   await expandMercariGrid(page,cfg.mercariSellerScrolls);
   const cards=await mercariCards(page,{onlySold:false}),marked=cards.filter(card=>card.sold);
   return (marked.length?marked:cards).slice(0,Number(cfg.sellerCardLimit));
@@ -148,7 +168,8 @@ async function scanMercari(context,errors){
   const sellers=new Map(),groups=[];
   try{
     await page.goto(search,{waitUntil:'domcontentloaded',timeout:35000});await settle(page,4200);
-    await page.locator('main a[href^="/item/"]').first().waitFor({state:'attached',timeout:18000}).catch(()=>{});
+    const initialCards=await waitForMercariSearch(page);
+    console.log(`[选品源] Mercari 页面稳定后卡片 ${initialCards}`);
     await expandMercariGrid(page,cfg.mercariSearchScrolls);
     const excluded=new Set((cfg.excludeMercariSellerIds||[]).map(String));
     const rawSeeds=(await mercariCards(page,{onlySold:false,assumeSold:false}))
