@@ -3,6 +3,9 @@
 body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Noto Sans SC",sans-serif}
 header{background:var(--navy);color:white;padding:28px max(22px,calc((100vw - 1320px)/2));display:flex;justify-content:space-between;align-items:center;gap:18px}
 .headeractions{display:flex;gap:9px;flex-wrap:wrap;justify-content:flex-end}
+.viewtabs{display:flex;gap:8px;margin-bottom:20px;padding:5px;background:#e7e3d9;border-radius:12px;width:max-content}
+.viewtabs button{background:transparent;color:var(--ink);padding:9px 18px}
+.viewtabs button.active{background:var(--navy);color:white;box-shadow:0 3px 10px #172a4025}
 h1{font:700 clamp(30px,5vw,52px)/1.05 Georgia,serif;margin:2px 0 8px}
 .eyebrow{letter-spacing:.18em;font-size:11px;color:#b9c8c1;margin:0}
 #stamp{margin:0;color:#cbd4d0}
@@ -86,6 +89,27 @@ code{background:#eee9df;padding:2px 5px;border-radius:5px}
 .dangersoft{background:#fde5e2;color:var(--red)}
 #accountDialog{width:min(820px,calc(100% - 24px))}
 hr{border:0;border-top:1px solid var(--line);margin:22px 0}
+.eyebrow.dark{color:var(--green)}
+.discoveryhead{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:18px}
+.discoveryhead h2{font:700 clamp(28px,4vw,42px)/1.1 Georgia,serif;margin:3px 0 6px}
+.discoverystats{display:flex;gap:9px;flex-wrap:wrap;justify-content:flex-end}
+.discoverystats span{background:var(--card);border:1px solid var(--line);border-radius:999px;padding:7px 11px}
+.discoverycards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.discoverycard{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:16px;min-width:0}
+.discoveryimages{display:grid;grid-template-columns:2fr 1fr 1fr;gap:5px;height:190px;margin-bottom:14px}
+.discoveryimages a{display:block;min-width:0;min-height:0}
+.discoveryimages a:first-child{grid-row:1/3}
+.discoveryimages img{width:100%;height:100%;object-fit:cover;background:#eee;border-radius:8px;min-width:0}
+.imageplaceholder{grid-column:1/-1;display:grid;place-items:center;background:#ece8de;color:var(--muted);border-radius:8px}
+.discoverycard h3{font-size:18px;line-height:1.35;margin:7px 0}
+.source-title{color:var(--muted);font-size:12px;margin:0 0 10px}
+.discoverymetrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}
+.discoverymetrics div{background:#f0ede4;border-radius:9px;padding:9px}
+.discoverymetrics small{display:block;color:var(--muted)}
+.listingcopy{background:#f0ede4;border-radius:10px;padding:11px;white-space:pre-wrap;max-height:160px;overflow:auto}
+.discoveryactions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.discoveryactions .soft{padding:8px 11px}
+.statusline{display:flex;align-items:center;justify-content:space-between;gap:10px}
 
 @media(max-width:900px){
   .kpis{grid-template-columns:repeat(2,1fr)}
@@ -108,6 +132,9 @@ hr{border:0;border-top:1px solid var(--line);margin:22px 0}
   .accountbar{align-items:stretch}
   .accountbar>div{flex:1}
   .accountbar select{width:100%;min-width:0}
+  .discoverycards{grid-template-columns:1fr}
+  .discoveryhead{align-items:flex-start;flex-direction:column}
+  .discoverystats{justify-content:flex-start}
 }
 @media(max-width:620px){
   header{padding:22px;align-items:flex-start;flex-direction:column}
@@ -122,4 +149,7 @@ hr{border:0;border-top:1px solid var(--line);margin:22px 0}
   .costform{grid-template-columns:1fr}
   .costactions{grid-column:auto}
   .notice{align-items:flex-start;flex-direction:column}
+  .viewtabs{width:100%}.viewtabs button{flex:1}
+  .discoveryimages{height:155px}
+  .discoverymetrics{grid-template-columns:1fr 1fr}
 }

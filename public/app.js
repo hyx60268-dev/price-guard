@@ -8,7 +8,7 @@ const accountKey='priceGuard.localAccounts.v2',legacyAccountKey='priceGuard.loca
 const costKey='priceGuard.manualCosts.v2',legacyCostKey='priceGuard.manualCosts.v1';
 const deletedAccountKey='priceGuard.deletedAccounts.v1';
 
-let data,password,installPrompt,currentAccountId,cloudStatus,refreshingData=false;
+let data,discoveryData,password,installPrompt,currentAccountId,cloudStatus,refreshingData=false;
 const getJson=(key,fallback)=>{try{return JSON.parse(localStorage.getItem(key)||JSON.stringify(fallback))}catch{return fallback}};
 const getLocal=()=>getJson(accountKey,getJson(legacyAccountKey,[]));
 const saveLocal=value=>localStorage.setItem(accountKey,JSON.stringify(value));
@@ -80,6 +80,7 @@ function migrateLocalData(){
 async function loadDashboard(){
   const plain=await decryptFile('data/latest.json.enc',password);
   data=JSON.parse(new TextDecoder().decode(plain));
+  try{const discoveryPlain=await decryptFile('data/discovery.json.enc',password);discoveryData=JSON.parse(new TextDecoder().decode(discoveryPlain))}catch{discoveryData=null}
   if(!data.accounts)data.accounts=[{id:'default',name:data.seller||'默认账号',profileUrl:data.profile||'',profileStatus:'cached',items:data.items||[]}];
   manualCosts=mergeCosts(manualCosts,data.manualCosts||{});migrateLocalData();
   const visible=cloudAccounts();
@@ -135,6 +136,43 @@ function selected(){
   return items().filter(item=>(item.title+(item.xianyuQuery||'')).toLowerCase().includes(query)&&(filter==='all'||filter==='reprice'&&item.recommendedPrice<item.ownPrice||filter==='low'&&item.afterUnder1500||filter==='input'&&item.needsCostInput||filter==='manual'&&item.confidence!=='高'));
 }
 function statusCard(label,value,tone=''){return `<div class="status ${tone}"><small>${escapeHtml(label)}</small><b>${escapeHtml(value)}</b></div>`}
+
+function discoveryProducts(){return discoveryData?.products||[]}
+function discoverySelected(){
+  const query=($('#discoverySearch')?.value||'').toLowerCase(),filter=$('#discoveryFilter')?.value||'all';
+  return discoveryProducts().filter(item=>`${item.proposedTitle||''} ${item.sourceTitle||''} ${item.xianyuQuery||''}`.toLowerCase().includes(query)&&
+    (filter==='all'||filter==='ready'&&item.status==='ready'||filter==='pending'&&item.status!=='ready'||filter===item.sourcePlatform));
+}
+function discoveryPlatform(value){return value==='mercari'?'メルカリ':'Yahoo!フリマ'}
+function renderDiscovery(){
+  const container=$('#discoveryCards');if(!container)return;
+  if(!discoveryData){
+    $('#discoveryStamp').textContent='等待首次云端选品扫描';$('#discoveryStats').innerHTML='<span>尚无数据</span>';container.innerHTML='';$('#discoveryEmpty').hidden=false;return;
+  }
+  const checked=new Date(discoveryData.checkedAt),stats=discoveryData.stats||{},shown=discoverySelected();
+  $('#discoveryStamp').textContent=`最近扫描：${Number.isNaN(checked.valueOf())?'—':checked.toLocaleString('zh-CN')} · 每日更新，其他检查轮次复用结果`;
+  $('#discoveryStats').innerHTML=`<span>候选 <b>${discoveryProducts().length}</b></span><span>已核验 <b>${stats.ready||0}</b></span><span>待复核 <b>${stats.pending||0}</b></span>`;
+  $('#discoveryLogin').hidden=!discoveryData.login?.xianyuRequired;$('#discoveryEmpty').hidden=shown.length>0;
+  container.innerHTML=shown.map(item=>{
+    const ready=item.status==='ready',photos=(ready?item.images:item.sourceImages||[]).slice(0,3),rawYen=Number.isFinite(item.purchaseCNY)?Math.ceil(item.purchaseCNY*(data.settings.exchangeRate||1)):null;
+    const imageGrid=photos.map((url,index)=>`<a href="${escapeHtml(url)}" target="_blank" title="打开/保存图片 ${index+1}"><img src="${escapeHtml(url)}" alt="商品图片 ${index+1}" loading="lazy"></a>`).join('');
+    return `<article class="discoverycard">
+      <div class="discoveryimages ${photos.length<3?'incomplete':''}">${imageGrid||'<div class="imageplaceholder">等待闲鱼图片核验</div>'}</div>
+      <div class="statusline"><span class="pill ${ready?'':'warn'}">${ready?'闲鱼成本及3图已核验':'待闲鱼人工复核'}</span><small>${discoveryPlatform(item.sourcePlatform)}</small></div>
+      <h3>${escapeHtml(item.proposedTitle||item.sourceTitle)}</h3><p class="source-title">原始：${escapeHtml(item.sourceTitle)}</p>
+      <div class="discoverymetrics"><div><small>近30天成交</small><b>${item.salesCount||0} 件</b></div><div><small>商家成交价</small><b>${money(item.sourcePriceJPY)}</b></div><div><small>闲鱼采购价</small><b>${cny(item.purchaseCNY)}</b>${Number.isFinite(rawYen)?`<small>约 ${money(rawYen)}</small>`:''}</div></div>
+      <p class="listingcopy">${escapeHtml(item.proposedDescription||'')}</p>
+      <div class="discoveryactions"><button class="soft" data-copy-title="${escapeHtml(item.id)}">复制标题</button><button class="soft" data-copy-description="${escapeHtml(item.id)}">复制简介</button><a class="soft linkbtn" target="_blank" href="${escapeHtml(item.sourceUrl||'#')}">成交商品</a><a class="soft linkbtn" target="_blank" href="${escapeHtml(item.seller?.url||'#')}">商家主页</a><a class="soft linkbtn" target="_blank" href="${escapeHtml(item.xianyuSearchUrl||'#')}">闲鱼结果</a></div>
+    </article>`;
+  }).join('');
+  document.querySelectorAll('[data-copy-title]').forEach(button=>button.onclick=()=>copyDiscovery(button,discoveryProducts().find(item=>item.id===button.dataset.copyTitle)?.proposedTitle));
+  document.querySelectorAll('[data-copy-description]').forEach(button=>button.onclick=()=>copyDiscovery(button,discoveryProducts().find(item=>item.id===button.dataset.copyDescription)?.proposedDescription));
+}
+async function copyDiscovery(button,value){try{await navigator.clipboard.writeText(value||'');const old=button.textContent;button.textContent='已复制';setTimeout(()=>button.textContent=old,1500)}catch{alert('复制失败，请长按文字复制')}}
+function switchView(view){
+  const discovery=view==='discovery';$('#pricingView').hidden=discovery;$('#discoveryView').hidden=!discovery;
+  $('#showPricing').classList.toggle('active',!discovery);$('#showDiscovery').classList.toggle('active',discovery);if(discovery)renderDiscovery();
+}
 
 function renderAccountOptions(){
   const cloud=cloudAccounts().map(item=>`<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}${item.profileStatus==='pending_sync'?'（待首次扫描）':''}</option>`).join('');
@@ -214,6 +252,8 @@ function renderLocalAccounts(){
 
 $('#detail .close').onclick=()=>$('#detail').close();$('#detail').onclick=event=>{if(event.target===$('#detail'))$('#detail').close()};
 $('#search').oninput=render;$('#filter').onchange=render;$('#accountSelect').onchange=event=>{currentAccountId=event.target.value;render()};
+$('#showPricing').onclick=()=>switchView('pricing');$('#showDiscovery').onclick=()=>switchView('discovery');
+$('#discoverySearch').oninput=renderDiscovery;$('#discoveryFilter').onchange=renderDiscovery;
 $('#manageAccounts').onclick=()=>{renderLocalAccounts();$('#accountDialog').showModal()};$('#accountDialog .close').onclick=()=>$('#accountDialog').close();
 $('#accountForm').onsubmit=event=>{
   event.preventDefault();const name=$('#accountName').value.trim(),profileUrl=$('#accountUrl').value.trim().replace(/\/+$/,'');
@@ -279,7 +319,7 @@ async function checkCloudStatus(reload=true){
     const status=await fetchStatus();cloudStatus=status;
     if(!data){const date=new Date(status.checkedAt);$('#stamp').textContent=`云端检查：${Number.isNaN(date.valueOf())?'等待首次检查':date.toLocaleString('zh-CN')} · 约每 20 分钟`;return}
     if(reload&&status.dataRevision&&status.dataRevision!==data.dataRevision){
-      refreshingData=true;await loadDashboard();renderAccountOptions();render();$('#refreshNotice').hidden=false;$('#refreshText').textContent='云端数据已自动更新，无需重新打开页面。';setTimeout(()=>$('#refreshNotice').hidden=true,8000);
+      refreshingData=true;await loadDashboard();renderAccountOptions();render();if(!$('#discoveryView').hidden)renderDiscovery();$('#refreshNotice').hidden=false;$('#refreshText').textContent='云端数据已自动更新，无需重新打开页面。';setTimeout(()=>$('#refreshNotice').hidden=true,8000);
     }
   }catch{}finally{refreshingData=false}
 }
@@ -289,6 +329,6 @@ addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPro
 if('serviceWorker'in navigator){
   const hadController=Boolean(navigator.serviceWorker.controller);let reloading=false;
   navigator.serviceWorker.addEventListener('controllerchange',()=>{if(hadController&&!reloading){reloading=true;location.reload()}});
-  navigator.serviceWorker.register('sw.js?v=7',{updateViaCache:'none'}).then(registration=>registration.update()).catch(()=>{});
+  navigator.serviceWorker.register('sw.js?v=8',{updateViaCache:'none'}).then(registration=>registration.update()).catch(()=>{});
 }
 checkCloudStatus(false);

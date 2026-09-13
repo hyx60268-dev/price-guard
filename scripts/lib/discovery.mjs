@@ -1,0 +1,126 @@
+import crypto from 'node:crypto';
+import { distinctiveTokens,hasExplicitDefect,hasVariantMismatch,isLikelyVariantOffer,isRejected,productFamily,semanticQuantity,titleScore } from './rules.mjs';
+
+const listingNoise=/(?:中国限定|海外限定|日本未発売|日本非売品|正規品|公式|新品(?:、未使用)?|未使用|未開封|即日発送|匿名配送|送料無料|送料込み|即購入(?:可|可能|ok)?|希少|レア|現品限り|在庫あり|\d+月\d+日(?:まで|以降)?|\d+\/\d+(?:まで|以降)?|発送予定)/gi;
+const rejectSale=/(?:様専用|専用出品|リクエスト|まとめ商品|オーダー|確認用|取り置き|ばら売り|バラ売り|訳あり|ジャンク|破損|欠品|箱潰れ)/i;
+
+export function canonicalSaleTitle(value=''){
+  return String(value).normalize('NFKC').replace(listingNoise,' ')
+    .replace(/[【】\[\]（）()<>《》「」『』#＃]/g,' ').replace(/\s+/g,' ').trim();
+}
+
+function tokenSet(value=''){
+  return new Set(distinctiveTokens(canonicalSaleTitle(value)).map(token=>token.toLowerCase()).filter(token=>token.length>1));
+}
+
+function jaccard(left,right){
+  if(!left.size||!right.size)return 0;
+  let shared=0;for(const token of left)if(right.has(token))shared++;
+  return shared/(left.size+right.size-shared);
+}
+
+export function sameSaleProduct(left={},right={}){
+  const a=canonicalSaleTitle(left.title),b=canonicalSaleTitle(right.title);
+  if(!a||!b||hasVariantMismatch(a,b)||hasVariantMismatch(b,a))return false;
+  const af=productFamily(a),bf=productFamily(b);
+  if(af&&bf&&af!==bf)return false;
+  const aq=semanticQuantity(a),bq=semanticQuantity(b);
+  if(Number.isFinite(aq)&&Number.isFinite(bq)&&aq!==bq)return false;
+  if(a===b)return true;
+  const overlap=jaccard(tokenSet(a),tokenSet(b));
+  return overlap>=.72||titleScore(a,b)>=.86&&titleScore(b,a)>=.72;
+}
+
+export function clusterSellerSales(cards=[]){
+  const groups=[];
+  for(const card of cards){
+    if(!card?.title||rejectSale.test(card.title)||isRejected(card.title,true))continue;
+    let group=groups.find(candidate=>sameSaleProduct(candidate.representative,card));
+    if(!group){group={representative:card,items:[]};groups.push(group)}
+    group.items.push(card);
+    if(Date.parse(card.soldAt||'')>Date.parse(group.representative.soldAt||''))group.representative=card;
+  }
+  return groups.sort((a,b)=>b.items.length-a.items.length);
+}
+
+export function parseListingTime(value='',now=Date.now()){
+  const text=String(value).normalize('NFKC');
+  let match=text.match(/(\d+)\s*分前/);if(match)return new Date(now-Number(match[1])*60_000).toISOString();
+  match=text.match(/(\d+)\s*時間前/);if(match)return new Date(now-Number(match[1])*3_600_000).toISOString();
+  match=text.match(/(\d+)\s*日前/);if(match)return new Date(now-Number(match[1])*86_400_000).toISOString();
+  match=text.match(/(\d+)\s*週間前/);if(match)return new Date(now-Number(match[1])*7*86_400_000).toISOString();
+  match=text.match(/(\d+)\s*ヶ月前/);if(match)return new Date(now-Number(match[1])*30*86_400_000).toISOString();
+  match=text.match(/(?:(\d{4})年)?\s*(\d{1,2})月\s*(\d{1,2})日/);
+  if(match){
+    let year=Number(match[1]||new Date(now).getFullYear()),date=new Date(Date.UTC(year,Number(match[2])-1,Number(match[3]),3));
+    if(!match[1]&&date.getTime()>now+86_400_000)date=new Date(Date.UTC(year-1,Number(match[2])-1,Number(match[3]),3));
+    return date.toISOString();
+  }
+  const parsed=Date.parse(text);return Number.isFinite(parsed)?new Date(parsed).toISOString():null;
+}
+
+export function isWithinDays(value,days=30,now=Date.now()){
+  const time=Date.parse(value||'');return Number.isFinite(time)&&time<=now+3_600_000&&time>=now-days*86_400_000;
+}
+
+export function median(values=[]){
+  const numbers=values.map(Number).filter(Number.isFinite).sort((a,b)=>a-b);
+  if(!numbers.length)return null;const middle=Math.floor(numbers.length/2);
+  return numbers.length%2?numbers[middle]:(numbers[middle-1]+numbers[middle])/2;
+}
+
+export function eligibleDiscoveryCard(card={},settings={},now=Date.now()){
+  return Boolean(card.sold)&&Number(card.price)>=Number(settings.minPriceJPY||4999)&&
+    isWithinDays(card.soldAt,Number(settings.windowDays)||30,now)&&!rejectSale.test(card.title||'')&&
+    !hasExplicitDefect(card.title||'',card.description||'');
+}
+
+export function validDiscoveryXianyu(result={}){
+  const samples=(result.samples||[]).filter(sample=>Number.isFinite(Number(sample.price))&&!isLikelyVariantOffer(`${sample.title||''} ${sample.text||''}`,result.query||''));
+  const richest=samples.map(sample=>({sample,images:[...new Set(sample.detailImages||[])].filter(url=>/^https?:\/\//.test(url))}))
+    .sort((a,b)=>b.images.length-a.images.length)[0];
+  const images=(richest?.images||[]).slice(0,8);
+  return {ready:result.status==='ok'&&samples.length>=2&&Number.isFinite(Number(result.averageCNY))&&images.length>=3,images,sample:richest?.sample||null};
+}
+
+export function discoveryId(platform,sellerId,title=''){
+  return crypto.createHash('sha256').update(`${platform}\n${sellerId}\n${canonicalSaleTitle(title).toLowerCase()}`).digest('hex').slice(0,20);
+}
+
+const chineseNames=new Map([
+  ['鬼滅の刃','鬼灭之刃'],['呪術廻戦','咒术回战'],['進撃の巨人','进击的巨人'],['名探偵コナン','名侦探柯南'],
+  ['あんさんぶるスターズ','偶像梦幻祭'],['あんスタ','偶像梦幻祭'],['ブルーアーカイブ','碧蓝档案'],['アズールレーン','碧蓝航线'],
+  ['ポケットモンスター','宝可梦'],['ポケモン','宝可梦'],['ちいかわ','吉伊卡哇'],['ハチワレ','小八'],['うさぎ','乌萨奇'],
+  ['原神','原神'],['鳴潮','鸣潮'],['第五人格','第五人格'],['ドラゴンボール','龙珠'],['ナルト','火影忍者'],['NARUTO','火影忍者'],
+  ['アクリルスタンド','亚克力立牌'],['アクスタ','亚克力立牌'],['ぬいぐるみ','毛绒玩偶'],['マスコット','挂件'],
+  ['キーホルダー','钥匙扣'],['フィギュア','手办'],['缶バッジ','徽章'],['トレカ','小卡'],['フォトカード','小卡'],
+  ['ポストカード','明信片'],['タンブラー','随行杯'],['ボトル','水杯'],['マグカップ','马克杯']
+]);
+
+export function xianyuQueryFor(title=''){
+  let query=canonicalSaleTitle(title);
+  for(const [japanese,chinese] of chineseNames)query=query.replaceAll(japanese,chinese);
+  return query.replace(/(?:セット|全\d+種|\d+点|限定品)/gi,match=>match.replace('セット','套装').replace('点','件').replace('限定品','限定'))
+    .replace(/\s+/g,' ').trim().slice(0,80);
+}
+
+function compactTitle(value,max=40){
+  const points=Array.from(value.replace(/\s+/g,' ').trim());return points.length<=max?points.join(''):points.slice(0,max).join('');
+}
+
+export function rewriteListing({title='',description='',condition='',saleCount=0}={}){
+  let core=canonicalSaleTitle(title).replace(/^(?:中国|上海|北京|広州|深圳)\s*/,'').trim();
+  const chinaRelated=/(?:中国|上海|北京|広州|深圳|CHINA|MINISO)/i.test(`${title} ${description}`);
+  let proposedTitle=compactTitle(`${chinaRelated?'中国限定 ':''}${core}`);
+  if(!proposedTitle)proposedTitle=compactTitle(title);
+  const state=/新品|未使用|未開封/.test(condition||description)?'新品・未使用':'商品の状態は掲載画像をご確認ください';
+  const body=[
+    chinaRelated?'中国限定で販売された、日本では入手しにくいアイテムです。':'海外で販売された、国内では見かける機会の少ないアイテムです。',
+    '',`【商品名】${core||title}`,`【状態】${state}`,
+    '',saleCount>=3?`同一出品者から直近30日以内に${saleCount}件以上の販売実績が確認された商品です。`:'',
+    '海外製品のため、初期傷・スレ・印刷の個体差などがある場合がございます。',
+    '画像をご確認のうえ、海外製品にご理解いただける方のみご購入ください。',
+    '', '即購入OKです。匿名配送で発送いたします。'
+  ].filter((line,index,array)=>line||array[index-1]!==''&&array[index+1]!=='').join('\n');
+  return {proposedTitle,proposedDescription:body};
+}

@@ -18,7 +18,7 @@ concurrency:
 jobs:
   scan-and-publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 19
+    timeout-minutes: 45
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -47,8 +47,25 @@ jobs:
           XIANYU_STORAGE_STATE_GZIP_B64: ${{ secrets.XIANYU_STORAGE_STATE_GZIP_B64 }}
           XIANYU_STORAGE_STATE_B64: ${{ secrets.XIANYU_STORAGE_STATE_B64 }}
           SCAN_TRIGGER: ${{ github.event_name }}
+      - name: 更新热卖选品（20小时内复用缓存）
+        run: npm run discovery
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          XIANYU_AUTH_PART_1: ${{ secrets.XIANYU_AUTH_PART_1 }}
+          XIANYU_AUTH_PART_2: ${{ secrets.XIANYU_AUTH_PART_2 }}
+          XIANYU_AUTH_PART_3: ${{ secrets.XIANYU_AUTH_PART_3 }}
+          XIANYU_STORAGE_STATE_GZIP_B64: ${{ secrets.XIANYU_STORAGE_STATE_GZIP_B64 }}
+          XIANYU_STORAGE_STATE_B64: ${{ secrets.XIANYU_STORAGE_STATE_B64 }}
+          SCAN_TRIGGER: ${{ github.event_name }}
       - name: 数据变化时发送手机提醒
         run: npm run notify
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DASHBOARD_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+      - name: 新增热卖选品时发送手机提醒
+        run: npm run notify:discovery
         env:
           GITHUB_TOKEN: ${{ github.token }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}

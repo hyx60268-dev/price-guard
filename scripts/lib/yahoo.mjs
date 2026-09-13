@@ -111,11 +111,13 @@ async function fetchHtml(url,attempts=2){
   throw new Error(`Yahoo 请求失败：${String(last)}`);
 }
 
-async function fetchResult(url){
+export async function fetchYahooResult(url,settings={}){
+  applyYahooSettings(settings);
   return searchResult(extractNextData(await fetchHtml(url)));
 }
 
-async function fetchItemBundle(id){
+export async function fetchYahooItemBundle(id,settings={}){
+  applyYahooSettings(settings);
   const nextData=extractNextData(await fetchHtml(`https://paypayfleamarket.yahoo.co.jp/item/${id}`));
   return {detail:extractItemData(nextData),recommendations:extractRecommendationCards(nextData)};
 }
@@ -170,11 +172,11 @@ function recommendationEvidence(card){
 
 export async function discoverYahooProfile(_unusedPage,profileUrl,settings={}){
   applyYahooSettings(settings);
-  const first=await fetchResult(`${profileUrl}?page=1`);
+  const first=await fetchYahooResult(`${profileUrl}?page=1`,settings);
   const pages=Math.max(1,Math.ceil(Number(first.totalResultsAvailable||first.items.length)/100));
   const all=[...first.items];
   for(let page=2;page<=pages;page++){
-    const result=await fetchResult(`${profileUrl}?page=${page}`);
+    const result=await fetchYahooResult(`${profileUrl}?page=${page}`,settings);
     all.push(...result.items);
   }
   const items=[...new Map(all.filter(x=>x.itemStatus==='OPEN').map(x=>[x.id,liveItem(x)])).values()];
@@ -189,9 +191,9 @@ export async function yahooCompare(_unusedPage,item,settings={}){
   let search=null,ownBundle=null,searchError='',itemPageError='';
   // 正常時は検索ページ 1 回だけ。商品ページは検索が失敗した時の推薦候補フォールバックに限定する。
   // これで 89 商品の基礎リクエストを半減し、Yahoo の公開ページ制限内で定期確認できる。
-  try{search=await fetchResult(searchUrl)}catch(error){searchError=String(error)}
+  try{search=await fetchYahooResult(searchUrl,settings)}catch(error){searchError=String(error)}
   if(!search){
-    try{ownBundle=await fetchItemBundle(item.id)}catch(error){itemPageError=String(error)}
+    try{ownBundle=await fetchYahooItemBundle(item.id,settings)}catch(error){itemPageError=String(error)}
   }
   if(!search&&!ownBundle)throw new Error(`搜索与商品页均失败：${searchError}; ${itemPageError}`);
 
@@ -225,7 +227,7 @@ export async function yahooCompare(_unusedPage,item,settings={}){
     const card=preliminary[index];
     detailCheckedCount++;
     try{
-      const bundle=await fetchItemBundle(card.id),detail=bundle.detail;
+      const bundle=await fetchYahooItemBundle(card.id,settings),detail=bundle.detail;
       if(detail.status!=='OPEN'){rejected.push({id:card.id,price:card.price,reason:'not_open'});continue}
       if(hasExplicitDefect(detail.title,detail.description)){rejected.push({id:card.id,price:Number(detail.price),reason:'defect'});continue}
       const detailCategory=categoryText(detail,card);

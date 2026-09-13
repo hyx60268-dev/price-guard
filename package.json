@@ -10,6 +10,8 @@
     "test": "node --test",
     "seed": "node scripts/seed.mjs",
     "notify": "node scripts/notify.mjs"
+    ,"discovery": "node scripts/discovery.mjs"
+    ,"notify:discovery": "node scripts/notify-discovery.mjs"
   },
   "dependencies": {
     "exceljs": "^4.4.0",

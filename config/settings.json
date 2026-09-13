@@ -15,5 +15,15 @@
   "yahooRateLimitCooldownMs": 60000,
   "yahooFreshMinutes": 15,
   "scanBudgetMinutes": 15,
-  "timezone": "Asia/Tokyo"
+  "timezone": "Asia/Tokyo",
+  "discovery": {
+    "keyword": "中国限定",
+    "minPriceJPY": 4999,
+    "windowDays": 30,
+    "freshHours": 20,
+    "seedLimitPerPlatform": 30,
+    "sellerLimitPerPlatform": 6,
+    "sellerCardLimit": 80,
+    "maxProducts": 10
+  }
 }
