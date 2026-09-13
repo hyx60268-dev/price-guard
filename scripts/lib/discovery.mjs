@@ -15,7 +15,10 @@ export function yahooDiscoverySearchUrl({keyword='中国限定',minPriceJPY=4999
 }
 
 export function canonicalSaleTitle(value=''){
-  return String(value).normalize('NFKC').replace(listingNoise,' ')
+  return String(value).normalize('NFKC')
+    // Mercari/Yahoo sellers frequently use the common 富岡 typo for 冨岡義勇.
+    // Treat it as spelling noise so relists and previously-owned goods stay excluded.
+    .replace(/富岡義勇/g,'冨岡義勇').replace(listingNoise,' ')
     .replace(/[【】\[\]（）()<>《》「」『』#＃]/g,' ').replace(/\s+/g,' ').trim();
 }
 
@@ -71,6 +74,29 @@ export function sameDiscoveryProduct(left={},right={}){
   if(na===nb)return true;
   const shorter=na.length<=nb.length?na:nb,longer=na.length<=nb.length?nb:na;
   return shorter.length>=8&&longer.includes(shorter)&&shorter.length/longer.length>=.62;
+}
+
+export function groupDiscoveryCandidates(candidates=[]){
+  const groups=[];
+  for(const candidate of candidates){
+    if(!candidate?.sourceTitle)continue;
+    let group=groups.find(current=>current.members.some(member=>sameDiscoveryProduct(
+      {title:member.sourceTitle},{title:candidate.sourceTitle}
+    )));
+    if(!group){group={members:[]};groups.push(group)}
+    group.members.push(candidate);
+  }
+  return groups.map(group=>group.members);
+}
+
+export function containsDiscoveryKeyword(value='',keyword='中国限定'){
+  const compact=text=>String(text||'').normalize('NFKC').toLowerCase().replace(/\s+/g,'');
+  const wanted=compact(keyword);return Boolean(wanted)&&compact(value).includes(wanted);
+}
+
+export function mercariSoldEvidence({checkoutText='',text=''}={}){
+  return /(?:売り切れ(?:ました)?|sold\s*out)/i.test(String(checkoutText))||
+    /売り切れのためコメントできません/i.test(String(text));
 }
 
 export function clusterSellerSales(cards=[]){

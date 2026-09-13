@@ -4,13 +4,13 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { openContext,settle } from './lib/browser.mjs';
 import { decrypt,encrypt } from './lib/crypto.mjs';
-import { canonicalSaleTitle,clusterSellerSales,discoveryId,eligibleDiscoveryCard,isOwnedDiscoverySource,isWithinDays,median,mercariDiscoverySearchUrl,parseListingTime,rewriteListing,sameDiscoveryProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor,yahooDiscoverySearchUrl } from './lib/discovery.mjs';
+import { canonicalSaleTitle,clusterSellerSales,containsDiscoveryKeyword,discoveryId,eligibleDiscoveryCard,groupDiscoveryCandidates,isOwnedDiscoverySource,isWithinDays,median,mercariDiscoverySearchUrl,mercariSoldEvidence,parseListingTime,rewriteListing,sameDiscoveryProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor,yahooDiscoverySearchUrl } from './lib/discovery.mjs';
 import { xianyuCost } from './lib/xianyu.mjs';
 import { fetchYahooItemBundle,fetchYahooResult } from './lib/yahoo.mjs';
 import { discoveryDismissalKey,normalizeProductIdentity } from './lib/state.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url)),root=path.resolve(here,'..');
-const DISCOVERY_VERSION=5;
+const DISCOVERY_VERSION=6;
 const readJson=file=>fs.readFile(file,'utf8').then(JSON.parse);
 const exists=file=>fs.access(file).then(()=>true).catch(()=>false);
 const wait=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
@@ -114,7 +114,10 @@ async function expandMercariGrid(page,rounds){
 
 async function mercariDetail(page,url){
   await page.goto(url,{waitUntil:'domcontentloaded',timeout:30000});await settle(page,2600);
-  return page.evaluate(()=>{
+  await page.locator('[data-testid="item-detail-container"],main article').first().waitFor({state:'attached',timeout:12000}).catch(()=>{});
+  await page.locator('[data-testid="name"],main h1').first().waitFor({state:'attached',timeout:8000}).catch(()=>{});
+  await page.locator('[data-testid="checkout-button"]').first().waitFor({state:'attached',timeout:8000}).catch(()=>{});
+  const item=await page.evaluate(()=>{
     const article=document.querySelector('main article')||document.querySelector('main');
     const text=(article?.innerText||'').replace(/\n{3,}/g,'\n\n');
     const heading=[...article.querySelectorAll('h2')].find(node=>node.textContent?.trim()==='商品の説明');
@@ -125,15 +128,18 @@ async function mercariDetail(page,url){
     const seller=[...article.querySelectorAll('a[href*="/user/profile/"]')][0];
     const images=[...article.querySelectorAll('[aria-label^="商品画像"] img,[aria-label^="商品サムネイル"] img')].map(image=>image.currentSrc||image.src).filter(Boolean);
     const condition=(text.match(/商品の状態\s*([^\n]+)/)||[])[1]||'';
-    return {title,price,description,text,condition,sellerUrl:seller?.href||'',sellerId:(seller?.href.match(/\/user\/profile\/(\d+)/)||[])[1]||'',sellerName:(seller?.innerText||'').split('\n')[0].trim(),images:[...new Set(images)].slice(0,10)};
+    const checkoutText=(article.querySelector('[data-testid="checkout-button"]')?.innerText||'').trim();
+    return {title,price,description,text,checkoutText,condition,sellerUrl:seller?.href||'',sellerId:(seller?.href.match(/\/user\/profile\/(\d+)/)||[])[1]||'',sellerName:(seller?.innerText||'').split('\n')[0].trim(),images:[...new Set(images)].slice(0,10)};
   });
+  return {...item,sold:mercariSoldEvidence(item)};
 }
 
 async function mercariSellerCards(page,url){
   await page.goto(url,{waitUntil:'domcontentloaded',timeout:30000});await settle(page,2500);
   await page.locator('main a[href^="/item/"]').first().waitFor({state:'attached',timeout:12000}).catch(()=>{});
   await expandMercariGrid(page,cfg.mercariSellerScrolls);
-  return (await mercariCards(page,{onlySold:true})).slice(0,Number(cfg.sellerCardLimit));
+  const cards=await mercariCards(page,{onlySold:false}),marked=cards.filter(card=>card.sold);
+  return (marked.length?marked:cards).slice(0,Number(cfg.sellerCardLimit));
 }
 
 async function scanMercari(context,errors){
@@ -145,17 +151,24 @@ async function scanMercari(context,errors){
     await page.locator('main a[href^="/item/"]').first().waitFor({state:'attached',timeout:18000}).catch(()=>{});
     await expandMercariGrid(page,cfg.mercariSearchScrolls);
     const excluded=new Set((cfg.excludeMercariSellerIds||[]).map(String));
-    const seeds=(await mercariCards(page,{onlySold:true,assumeSold:false})).filter(card=>Number(card.price)>=cfg.minPriceJPY).slice(0,Number(cfg.seedLimitPerPlatform));
+    const rawSeeds=(await mercariCards(page,{onlySold:false,assumeSold:false}))
+      .filter(card=>Number(card.price)>=cfg.minPriceJPY&&containsDiscoveryKeyword(card.title,cfg.keyword));
+    const markedSeeds=rawSeeds.filter(card=>card.sold);
+    const seeds=(markedSeeds.length?markedSeeds:rawSeeds).slice(0,Number(cfg.seedLimitPerPlatform));
+    let verifiedSeeds=0;
     for(const [index,seed] of seeds.entries()){
       if(sellers.size>=Number(cfg.sellerLimitPerPlatform))break;
       try{
         const item=await mercariDetail(detail,cleanItemHref(seed.href,origin));
-        if(item.sellerId&&!excluded.has(String(item.sellerId))&&!sellers.has(item.sellerId))sellers.set(item.sellerId,{id:item.sellerId,name:item.sellerName||item.sellerId,url:item.sellerUrl,seed:item});
+        if(item.sold&&containsDiscoveryKeyword(`${item.title} ${item.description}`,cfg.keyword)){
+          verifiedSeeds++;
+          if(item.sellerId&&!excluded.has(String(item.sellerId))&&!sellers.has(item.sellerId))sellers.set(item.sellerId,{id:item.sellerId,name:item.sellerName||item.sellerId,url:item.sellerUrl,seed:item});
+        }
       }catch(error){errors.push(`Mercari种子${index+1}: ${String(error)}`)}
       await wait(450);
     }
-    sourceScanStats.mercariSeeds=seeds.length;sourceScanStats.mercariSellers=sellers.size;
-    console.log(`[选品源] Mercari 成交种子 ${seeds.length}，检查卖家 ${sellers.size}`);
+    Object.assign(sourceScanStats,{mercariRawCards:rawSeeds.length,mercariMarkedSeeds:markedSeeds.length,mercariSeeds:verifiedSeeds,mercariSellers:sellers.size});
+    console.log(`[选品源] Mercari 关键词卡片 ${rawSeeds.length}，页面标记已售 ${markedSeeds.length}，详情确认已售 ${verifiedSeeds}，检查卖家 ${sellers.size}`);
     for(const seller of sellers.values()){
       try{
         const cards=await mercariSellerCards(page,seller.url);
@@ -165,7 +178,11 @@ async function scanMercari(context,errors){
           for(const card of group.items.slice(0,8)){
             try{
               const item=await mercariDetail(detail,cleanItemHref(card.href,origin));
-              const soldAt=parseListingTime(item.text);if(isWithinDays(soldAt,cfg.windowDays))verified.push({...card,...item,sold:true,soldAt,url:cleanItemHref(card.href,origin)});
+              if(item.sold){
+                const soldAt=parseListingTime(item.text);
+                const verifiedCard={...card,...item,sold:true,soldAt,url:cleanItemHref(card.href,origin)};
+                if(eligibleDiscoveryCard(verifiedCard,cfg))verified.push(verifiedCard);
+              }
             }catch(error){errors.push(`Mercari成交${card.id}: ${String(error)}`)}
             if(verified.length>=6)break;await wait(350);
           }
@@ -236,13 +253,7 @@ function makeSourceCandidate(platform,seller,sales,representative){
 }
 
 function aggregateAcrossPlatforms(candidates=[]){
-  const groups=[];
-  for(const candidate of candidates){
-    let group=groups.find(current=>sameDiscoveryProduct({title:current.sourceTitle},{title:candidate.sourceTitle}));
-    if(!group){group={members:[]};groups.push(group)}
-    group.members.push(candidate);
-  }
-  return groups.map(({members})=>{
+  return groupDiscoveryCandidates(candidates).map(members=>{
     const representative=[...members].sort((a,b)=>b.salesCount-a.salesCount||b.sourcePriceJPY-a.sourcePriceJPY)[0];
     const saleKeys=new Set(),dates=[],prices=[],urls=[];const platformSales={};
     for(const member of members){
@@ -263,7 +274,7 @@ function aggregateAcrossPlatforms(candidates=[]){
 const errors=[],authState=await xianyuStateFromEnv();
 let browser,context,xPage,xianyuAuthRequired=false;
 const sourceCandidates=[];
-const sourceScanStats={mercariSeeds:0,mercariSellers:0,yahooSeeds:0,yahooSellers:0};
+const sourceScanStats={mercariRawCards:0,mercariMarkedSeeds:0,mercariSeeds:0,mercariSellers:0,yahooSeeds:0,yahooSellers:0};
 let ranked=[];
 try{
   const latest=await latestPriceSnapshot(),owned=ownedYahooScope(latest);

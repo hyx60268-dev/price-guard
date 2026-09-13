@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canonicalSaleTitle,clusterSellerSales,eligibleDiscoveryCard,isOwnedDiscoverySource,isWithinDays,mercariDiscoverySearchUrl,parseListingTime,rewriteListing,sameDiscoveryProduct,sameSaleProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor,yahooDiscoverySearchUrl } from '../scripts/lib/discovery.mjs';
+import { canonicalSaleTitle,clusterSellerSales,containsDiscoveryKeyword,eligibleDiscoveryCard,groupDiscoveryCandidates,isOwnedDiscoverySource,isWithinDays,mercariDiscoverySearchUrl,mercariSoldEvidence,parseListingTime,rewriteListing,sameDiscoveryProduct,sameSaleProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor,yahooDiscoverySearchUrl } from '../scripts/lib/discovery.mjs';
 
 test('discovery URLs use the live sold and price filters',()=>{
   const mercari=new URL(mercariDiscoverySearchUrl({keyword:'中国限定',minPriceJPY:4999}));
@@ -31,6 +31,27 @@ test('discovery deduplicates harmless seller wording but keeps variants separate
   assert.equal(sameDiscoveryProduct({title:'あんスタ 瀬名泉 ワイヤレスイヤホン LCD搭載 中国限定 bilibili'},{title:'あんスタ 朱桜司 ワイヤレスイヤホン LCD搭載 中国限定 bilibili'}),false);
   assert.equal(sameDiscoveryProduct({title:'MG ガンダムアストレイ クロスコントラストカラーズ 落桜白'},{title:'MG ガンダムアストレイ クロスコントラストカラーズ 朽木黒'}),false);
   assert.equal(sameDiscoveryProduct({title:'鬼滅の刃 中国限定 新繹シリーズ アクリルスタンド B 全8種 ランダム'},{title:'鬼滅の刃 中国限定 新繹シリーズ アクリルスタンド A 全8種 ランダム'}),false);
+  assert.equal(sameDiscoveryProduct({title:'鬼滅の刃 中国限定 新繹シリーズ 冨岡義勇 アクリルスタンド'},{title:'鬼滅の刃 中国限定 新繹シリーズ 富岡義勇 アクリルスタンド'}),true);
+});
+
+test('cross-platform candidate grouping compares actual group members',()=>{
+  const candidates=[
+    {sourceTitle:'ドラゴンボール VSオムニバス超 一番くじ ラストワン賞 究極神龍',sourcePlatform:'yahoo'},
+    {sourceTitle:'中国限定 ドラゴンボール VSオムニバス超 一番くじ ラストワン賞 究極神龍',sourcePlatform:'mercari'},
+    {sourceTitle:'MG ガンダムアストレイ クロスコントラストカラーズ 朽木黒',sourcePlatform:'yahoo'}
+  ];
+  const groups=groupDiscoveryCandidates(candidates);
+  assert.equal(groups.length,2);
+  assert.equal(groups[0].length,2);
+  assert.equal(groups[1].length,1);
+});
+
+test('Mercari discovery verifies keyword and detail-page sold evidence',()=>{
+  assert.equal(containsDiscoveryKeyword('鬼滅の刃 中国 限定 アクリルスタンド','中国限定'),true);
+  assert.equal(containsDiscoveryKeyword('鬼滅の刃 中国限定 アクリルスタンド','中国限定'),true);
+  assert.equal(mercariSoldEvidence({checkoutText:'売り切れました'}),true);
+  assert.equal(mercariSoldEvidence({text:'※売り切れのためコメントできません'}),true);
+  assert.equal(mercariSoldEvidence({checkoutText:'購入手続きへ',text:'販売中'}),false);
 });
 
 test('relative timestamps and rolling month are handled',()=>{
