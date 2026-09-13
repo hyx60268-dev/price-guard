@@ -4,7 +4,7 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { openContext,settle } from './lib/browser.mjs';
 import { decrypt,encrypt } from './lib/crypto.mjs';
-import { clusterSellerSales,discoveryId,eligibleDiscoveryCard,isWithinDays,median,parseListingTime,rewriteListing,validDiscoveryXianyu,xianyuQueryFor } from './lib/discovery.mjs';
+import { clusterSellerSales,discoveryId,eligibleDiscoveryCard,isOwnedDiscoverySource,isWithinDays,median,parseListingTime,rewriteListing,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor } from './lib/discovery.mjs';
 import { xianyuCost } from './lib/xianyu.mjs';
 import { fetchYahooItemBundle,fetchYahooResult } from './lib/yahoo.mjs';
 
@@ -13,7 +13,8 @@ const readJson=file=>fs.readFile(file,'utf8').then(JSON.parse);
 const exists=file=>fs.access(file).then(()=>true).catch(()=>false);
 const wait=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
 const settings=await readJson(path.join(root,'config','settings.json'));
-const cfg={keyword:'中国限定',minPriceJPY:4999,windowDays:30,freshHours:20,seedLimitPerPlatform:30,sellerLimitPerPlatform:6,sellerCardLimit:80,maxProducts:10,...(settings.discovery||{})};
+const accountsCfg=await readJson(path.join(root,'config','accounts.json'));
+const cfg={keyword:'中国限定',minPriceJPY:4999,windowDays:30,freshHours:6,seedLimitPerPlatform:120,sellerLimitPerPlatform:20,sellerCardLimit:160,sellerPages:2,mercariSearchScrolls:8,mercariSellerScrolls:8,maxProducts:30,...(settings.discovery||{})};
 const password=process.env.DASHBOARD_PASSWORD;
 if(!password||password.length<8)throw new Error('DASHBOARD_PASSWORD 至少需要 8 个字符');
 await Promise.all(['data','public/data','state','.auth'].map(directory=>fs.mkdir(path.join(root,directory),{recursive:true})));
@@ -23,6 +24,25 @@ const publicEnc=path.join(root,'public','data','discovery.json.enc'),publicStatu
 async function priorDiscovery(){
   if(!await exists(stateEnc))return null;
   try{return JSON.parse(decrypt(await fs.readFile(stateEnc),password).toString('utf8'))}catch{return null}
+}
+
+async function latestPriceSnapshot(){
+  for(const file of [path.join(root,'public','data','latest.json.enc'),path.join(root,'state','latest.json.enc')]){
+    if(!await exists(file))continue;
+    try{return JSON.parse(decrypt(await fs.readFile(file),password).toString('utf8'))}catch{}
+  }
+  return null;
+}
+
+function ownedYahooScope(snapshot){
+  const sellerIds=new Set(),itemIds=new Set();
+  const profiles=[settings.profileUrl,...(accountsCfg.accounts||[]).map(account=>account.profileUrl),
+    ...(snapshot?.managedAccounts||[]).map(account=>account.profileUrl),...(snapshot?.accounts||[]).map(account=>account.profileUrl)];
+  for(const profile of profiles){const id=sellerIdFromProfile(profile);if(id)sellerIds.add(id)}
+  for(const item of snapshot?.items||[]){if(item.id)itemIds.add(String(item.id));if(item.sellerId)sellerIds.add(String(item.sellerId))}
+  for(const account of snapshot?.accounts||[])for(const item of account.items||[]){if(item.id)itemIds.add(String(item.id));if(item.sellerId)sellerIds.add(String(item.sellerId))}
+  for(const id of cfg.excludeYahooSellerIds||[])sellerIds.add(String(id));
+  return {sellerIds,itemIds};
 }
 
 async function publishExisting(prior){
@@ -57,13 +77,14 @@ function cleanItemHref(href='',origin){
   const url=new URL(href,origin);url.search='';return url.href;
 }
 
-async function mercariCards(page,{onlySold=true}={}){
-  return page.locator('main a[href^="/item/"]').evaluateAll((links,onlySold)=>{
+async function mercariCards(page,{onlySold=true,assumeSold=false}={}){
+  return page.locator('main a[href^="/item/"]').evaluateAll((links,options)=>{
     const output=[],seen=new Set();
     for(const link of links){
       const href=link.getAttribute('href')||'';if(!href||seen.has(href.split('?')[0]))continue;
-      const sold=Boolean(link.querySelector('[aria-label="売り切れ"],img[alt="売り切れ"]'))||/売り切れ/.test(link.getAttribute('aria-label')||'');
-      if(onlySold&&!sold)continue;
+      const scope=link.closest('li')||link.parentElement?.parentElement||link.parentElement||link;
+      const sold=options.assumeSold||Boolean(scope.querySelector('[aria-label*="売り切れ"],[aria-label*="SOLD"],[data-testid*="sold" i],img[alt*="売り切れ"],img[alt*="SOLD" i]'))||/(?:売り切れ|売却済み|SOLD)/i.test(`${scope.innerText||''} ${scope.getAttribute?.('aria-label')||''}`);
+      if(options.onlySold&&!sold)continue;
       const lines=(link.innerText||'').split(/\n+/).map(value=>value.trim()).filter(Boolean);
       const priceLine=lines.find(value=>/^[¥￥]?\s*[\d,]+円?$/.test(value.replace(/^現在\s*/,'')))||'';
       const priceMatch=priceLine.match(/[\d,]+/),price=priceMatch?Number(priceMatch[0].replaceAll(',','')):null;
@@ -73,7 +94,19 @@ async function mercariCards(page,{onlySold=true}={}){
       seen.add(href.split('?')[0]);output.push({id:(href.match(/\/item\/(m\d+)/)||[])[1],href,title,price,sold,image:image?.currentSrc||image?.src||''});
     }
     return output;
-  },onlySold);
+  },{onlySold,assumeSold});
+}
+
+async function expandMercariGrid(page,rounds){
+  let prior=0,stable=0;
+  for(let index=0;index<Number(rounds||0);index++){
+    const button=page.getByRole('button',{name:'もっと見る',exact:true});
+    if(await button.count()&&await button.first().isVisible())await button.first().click().catch(()=>{});
+    else await page.evaluate(()=>window.scrollTo(0,document.body.scrollHeight));
+    await page.waitForTimeout(850);
+    const count=await page.locator('main a[href^="/item/"]').count();
+    stable=count===prior?stable+1:0;prior=count;if(stable>=2)break;
+  }
 }
 
 async function mercariDetail(page,url){
@@ -95,29 +128,28 @@ async function mercariDetail(page,url){
 
 async function mercariSellerCards(page,url){
   await page.goto(url,{waitUntil:'domcontentloaded',timeout:30000});await settle(page,2500);
-  for(let index=0;index<4;index++){
-    const button=page.getByRole('button',{name:'もっと見る',exact:true});
-    if(!await button.count()||!await button.first().isVisible())break;
-    await button.first().click().catch(()=>{});await page.waitForTimeout(900);
-  }
+  await expandMercariGrid(page,cfg.mercariSellerScrolls);
   return (await mercariCards(page,{onlySold:true})).slice(0,Number(cfg.sellerCardLimit));
 }
 
 async function scanMercari(context,errors){
   const page=await context.newPage(),detail=await context.newPage(),origin='https://jp.mercari.com';
-  const search=`${origin}/search?keyword=${encodeURIComponent(cfg.keyword)}&status=sold_out%7Ctrading&sort=created_time&order=desc&price_min=${cfg.minPriceJPY}`;
+  const search=`${origin}/search?keyword=${encodeURIComponent(cfg.keyword)}&status=sold_out&sort=created_time&order=desc&price_min=${cfg.minPriceJPY}`;
   const sellers=new Map(),groups=[];
   try{
     await page.goto(search,{waitUntil:'domcontentloaded',timeout:35000});await settle(page,4200);
-    const seeds=(await mercariCards(page,{onlySold:true})).filter(card=>Number(card.price)>=cfg.minPriceJPY).slice(0,Number(cfg.seedLimitPerPlatform));
+    await expandMercariGrid(page,cfg.mercariSearchScrolls);
+    const excluded=new Set((cfg.excludeMercariSellerIds||[]).map(String));
+    const seeds=(await mercariCards(page,{onlySold:true,assumeSold:true})).filter(card=>Number(card.price)>=cfg.minPriceJPY).slice(0,Number(cfg.seedLimitPerPlatform));
     for(const [index,seed] of seeds.entries()){
       if(sellers.size>=Number(cfg.sellerLimitPerPlatform))break;
       try{
         const item=await mercariDetail(detail,cleanItemHref(seed.href,origin));
-        if(item.sellerId&&!sellers.has(item.sellerId))sellers.set(item.sellerId,{id:item.sellerId,name:item.sellerName||item.sellerId,url:item.sellerUrl,seed:item});
+        if(item.sellerId&&!excluded.has(String(item.sellerId))&&!sellers.has(item.sellerId))sellers.set(item.sellerId,{id:item.sellerId,name:item.sellerName||item.sellerId,url:item.sellerUrl,seed:item});
       }catch(error){errors.push(`Mercari种子${index+1}: ${String(error)}`)}
       await wait(450);
     }
+    console.log(`[选品源] Mercari 成交种子 ${seeds.length}，检查卖家 ${sellers.size}`);
     for(const seller of sellers.values()){
       try{
         const cards=await mercariSellerCards(page,seller.url);
@@ -147,17 +179,24 @@ function yahooCard(raw){
     image:raw.thumbnailImageUrl||'',sellerId:raw.sellerId||'',url:`https://paypayfleamarket.yahoo.co.jp/item/${raw.id}`};
 }
 
-async function scanYahoo(errors){
+async function scanYahoo(errors,owned){
   const search=`https://paypayfleamarket.yahoo.co.jp/search/${encodeURIComponent(cfg.keyword)}?open=0&sort=openTime&order=desc`;
   const sellers=new Map(),groups=[];
   try{
-    const result=await fetchYahooResult(search,settings);
-    const seeds=(result.items||[]).map(yahooCard).filter(card=>card.sold&&card.price>=cfg.minPriceJPY).slice(0,Number(cfg.seedLimitPerPlatform));
-    for(const card of seeds){if(card.sellerId&&!sellers.has(card.sellerId)&&sellers.size<Number(cfg.sellerLimitPerPlatform))sellers.set(card.sellerId,{id:card.sellerId,name:card.sellerId,url:`https://paypayfleamarket.yahoo.co.jp/user/${card.sellerId}`})}
+    const first=await fetchYahooResult(search,settings),results=[first];
+    const searchPages=Math.min(Number(cfg.searchPages||2),Math.max(1,Math.ceil(Number(first.totalResultsAvailable||first.items?.length||0)/100)));
+    for(let page=2;page<=searchPages;page++)results.push(await fetchYahooResult(`${search}&page=${page}`,settings));
+    const seeds=results.flatMap(result=>result.items||[]).map(yahooCard)
+      .filter(card=>card.sold&&card.price>=cfg.minPriceJPY&&!isOwnedDiscoverySource(card,owned)).slice(0,Number(cfg.seedLimitPerPlatform));
+    for(const card of seeds){if(card.sellerId&&!owned.sellerIds.has(String(card.sellerId))&&!sellers.has(card.sellerId)&&sellers.size<Number(cfg.sellerLimitPerPlatform))sellers.set(card.sellerId,{id:card.sellerId,name:card.sellerId,url:`https://paypayfleamarket.yahoo.co.jp/user/${card.sellerId}`})}
+    console.log(`[选品源] Yahoo 成交种子 ${seeds.length}，排除自有卖家 ${owned.sellerIds.size}，检查卖家 ${sellers.size}`);
     for(const seller of sellers.values()){
       try{
-        const profile=await fetchYahooResult(`${seller.url}?page=1&sort=openTime&order=desc`,settings),cards=(profile.items||[]).map(yahooCard)
-          .filter(card=>eligibleDiscoveryCard(card,cfg)).slice(0,Number(cfg.sellerCardLimit));
+        const firstProfile=await fetchYahooResult(`${seller.url}?page=1&sort=openTime&order=desc`,settings),profileResults=[firstProfile];
+        const profilePages=Math.min(Number(cfg.sellerPages||1),Math.max(1,Math.ceil(Number(firstProfile.totalResultsAvailable||firstProfile.items?.length||0)/100)));
+        for(let page=2;page<=profilePages;page++)profileResults.push(await fetchYahooResult(`${seller.url}?page=${page}&sort=openTime&order=desc`,settings));
+        const cards=profileResults.flatMap(profile=>profile.items||[]).map(yahooCard)
+          .filter(card=>eligibleDiscoveryCard(card,cfg)&&!isOwnedDiscoverySource(card,owned)).slice(0,Number(cfg.sellerCardLimit));
         const likely=clusterSellerSales(cards).filter(group=>group.items.length>=3);
         for(const group of likely){
           const verified=group.items.filter(card=>eligibleDiscoveryCard(card,cfg));if(verified.length<3)continue;
@@ -193,8 +232,9 @@ const errors=[],authState=await xianyuStateFromEnv();
 let browser,context,xPage,xianyuAuthRequired=false;
 const sourceCandidates=[];
 try{
+  const owned=ownedYahooScope(await latestPriceSnapshot());
   const opened=await openContext(authState);browser=opened.browser;context=opened.context;
-  const [mercari,yahoo]=await Promise.all([scanMercari(context,errors),scanYahoo(errors)]);sourceCandidates.push(...mercari,...yahoo);
+  const [mercari,yahoo]=await Promise.all([scanMercari(context,errors),scanYahoo(errors,owned)]);sourceCandidates.push(...mercari,...yahoo);
   const ranked=sourceCandidates.sort((a,b)=>b.salesCount-a.salesCount||b.sourcePriceJPY-a.sourcePriceJPY).slice(0,Number(cfg.maxProducts));
   xPage=await context.newPage();
   for(const [index,item] of ranked.entries()){

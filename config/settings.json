@@ -20,10 +20,14 @@
     "keyword": "中国限定",
     "minPriceJPY": 4999,
     "windowDays": 30,
-    "freshHours": 20,
-    "seedLimitPerPlatform": 30,
-    "sellerLimitPerPlatform": 6,
-    "sellerCardLimit": 80,
-    "maxProducts": 10
+    "freshHours": 6,
+    "seedLimitPerPlatform": 120,
+    "sellerLimitPerPlatform": 20,
+    "sellerCardLimit": 160,
+    "searchPages": 2,
+    "sellerPages": 2,
+    "mercariSearchScrolls": 8,
+    "mercariSellerScrolls": 8,
+    "maxProducts": 30
   }
 }

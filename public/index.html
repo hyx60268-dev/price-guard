@@ -1,7 +1,7 @@
 <!doctype html><html lang="zh-CN"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#13211b">
-<title>价格守卫</title><link rel="manifest" href="manifest.webmanifest?v=8"><link rel="icon" href="favicon.svg"><link rel="stylesheet" href="styles.css?v=8">
+<title>价格守卫</title><link rel="manifest" href="manifest.webmanifest?v=9"><link rel="icon" href="favicon.svg"><link rel="stylesheet" href="styles.css?v=9">
 </head><body>
 <header><div><p class="eyebrow">YAHOO!フリマ × 闲鱼</p><h1>价格守卫</h1><p id="stamp">读取最近一次云端检查…</p></div><div class="headeractions"><button id="cloudSync" class="ghost" hidden>同步云端</button><button id="help" class="ghost">手机与通知</button><button id="install" class="ghost" hidden>安装到桌面</button></div></header>
 <main>
@@ -36,5 +36,5 @@
 <dialog id="accountDialog"><button class="close" aria-label="关闭">×</button><h2>账号与数据</h2><p class="muted">新增主页先保存在本机；同步云端后会自动加入每 20 分钟扫描。成本和账号使用仪表盘密码加密，公开仓库中不会出现明文。</p><form id="accountForm" class="accountform"><input id="accountName" placeholder="账号名称，例如 メロン" required><input id="accountUrl" placeholder="Yahoo!フリマ 主页链接" required><button>保存账号</button></form><div id="localAccounts"></div><div class="syncbox"><button id="syncAll">同步成本和账号到云端</button><p id="cloudSyncStatus" class="muted">同步时会打开 GitHub；最后需要点一次绿色“Submit new issue”。后台发布后本页会自动刷新。</p></div><button id="exportAccounts" class="soft">复制账号备份</button><p id="copyStatus" class="muted"></p><hr><h3>离线备份</h3><p class="muted">云端同步之外，也可导出 JSON 留作自己的备份。</p><div class="transfer"><button id="exportCosts" class="soft">导出手工成本</button><button id="importCosts" class="soft">导入手工成本</button><input id="costFile" type="file" accept="application/json,.json" hidden></div><p id="costTransferStatus" class="muted"></p></dialog>
 <dialog id="detail"><button class="close" aria-label="关闭">×</button><div id="detailBody"></div></dialog>
 <dialog id="helpDialog"><button class="close" aria-label="关闭">×</button><h2>手机使用、同步与通知</h2><ol class="helpsteps"><li><b>打开仪表盘</b><span>手机 Safari 或 Chrome 打开当前网址，输入同一个仪表盘密码。</span></li><li><b>放到手机桌面</b><span>iPhone：Safari“分享 → 添加到主屏幕”；Android：浏览器菜单“安装应用/添加到主屏幕”。</span></li><li><b>同步输入</b><span>录入成本或账号后点“同步云端”，在打开的 GitHub 页面点绿色“Submit new issue”。工作流完成后，本页会自动出现新数据。</span></li><li><b>接收手机提醒</b><span>安装 GitHub App 并登录；价格变化会创建 Issue。若 App 仓库页没有 Watch 设置，可直接关注 <a target="_blank" href="https://github.com/hyx60268-dev/price-guard/issues">Issues 页面</a>，或配置 Telegram 获得更稳定的私聊提醒。</span></li></ol><p class="muted">通知只显示变化数量；商品、成本和利润始终在密码解锁后的仪表盘查看。</p></dialog>
-<footer>价格检查约每20分钟 · 热卖选品每日更新 · 闲鱼按正文、规格和多图核验 · 可跨设备加密同步</footer><script type="module" src="app.js?v=8"></script>
+<footer>价格检查约每20分钟 · 热卖选品每6小时深度更新 · 闲鱼按正文、规格和多图核验 · 可跨设备加密同步</footer><script type="module" src="app.js?v=9"></script>
 </body></html>

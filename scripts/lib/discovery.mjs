@@ -75,6 +75,16 @@ export function eligibleDiscoveryCard(card={},settings={},now=Date.now()){
     !hasExplicitDefect(card.title||'',card.description||'');
 }
 
+export function sellerIdFromProfile(value=''){
+  return (String(value).match(/\/user\/(?:profile\/)?([^/?#]+)/i)||[])[1]||'';
+}
+
+export function isOwnedDiscoverySource(card={},owned={}){
+  const sellerIds=owned.sellerIds instanceof Set?owned.sellerIds:new Set(owned.sellerIds||[]);
+  const itemIds=owned.itemIds instanceof Set?owned.itemIds:new Set(owned.itemIds||[]);
+  return Boolean(card.sellerId&&sellerIds.has(String(card.sellerId)))||Boolean(card.id&&itemIds.has(String(card.id)));
+}
+
 export function validDiscoveryXianyu(result={}){
   const samples=(result.samples||[]).filter(sample=>Number.isFinite(Number(sample.price))&&!isLikelyVariantOffer(`${sample.title||''} ${sample.text||''}`,result.query||''));
   const richest=samples.map(sample=>({sample,images:[...new Set(sample.detailImages||[])].filter(url=>/^https?:\/\//.test(url))}))

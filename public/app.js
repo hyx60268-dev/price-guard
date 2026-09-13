@@ -150,7 +150,7 @@ function renderDiscovery(){
     $('#discoveryStamp').textContent='等待首次云端选品扫描';$('#discoveryStats').innerHTML='<span>尚无数据</span>';container.innerHTML='';$('#discoveryEmpty').hidden=false;return;
   }
   const checked=new Date(discoveryData.checkedAt),stats=discoveryData.stats||{},shown=discoverySelected();
-  $('#discoveryStamp').textContent=`最近扫描：${Number.isNaN(checked.valueOf())?'—':checked.toLocaleString('zh-CN')} · 每日更新，其他检查轮次复用结果`;
+  $('#discoveryStamp').textContent=`最近扫描：${Number.isNaN(checked.valueOf())?'—':checked.toLocaleString('zh-CN')} · 每6小时深度更新，其他检查轮次复用结果`;
   $('#discoveryStats').innerHTML=`<span>候选 <b>${discoveryProducts().length}</b></span><span>已核验 <b>${stats.ready||0}</b></span><span>待复核 <b>${stats.pending||0}</b></span>`;
   $('#discoveryLogin').hidden=!discoveryData.login?.xianyuRequired;$('#discoveryEmpty').hidden=shown.length>0;
   container.innerHTML=shown.map(item=>{
