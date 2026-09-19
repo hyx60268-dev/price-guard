@@ -41,12 +41,13 @@ jobs:
           PUBLISHED_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data
           PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
       - run: npm ci
-      - name: 合并加密成本、账号和已上传记录
+      - name: 按顺序合并全部待处理请求
         id: sync
-        run: node scripts/sync-input.mjs
+        run: node scripts/process-sync-queue.mjs
         env:
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
           PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
+          GITHUB_TOKEN: ${{ github.token }}
       - name: 保存最新加密数据
         run: mkdir -p state && cp public/data/latest.json.enc state/latest.json.enc
       - name: 准备手机以图搜索图片
@@ -69,19 +70,3 @@ jobs:
         uses: actions/deploy-pages@v4
         with:
           artifact_name: github-pages-${{ github.run_attempt }}
-      - name: 确认并关闭同步请求
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: `已安全同步并发布：${{ steps.sync.outputs.accounts }} 个账号、${{ steps.sync.outputs.costs }} 条加密成本记录、${{ steps.sync.outputs.dismissed }} 个已上传选品。仪表盘会自动刷新。`
-            });
-            await github.rest.issues.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              state: 'closed'
-            });

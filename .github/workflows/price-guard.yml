@@ -44,6 +44,12 @@ jobs:
           PUBLISHED_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data
           PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
       - run: npm ci
+      - name: 合并等待中的多人同步请求
+        run: node scripts/process-sync-queue.mjs
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
+          GITHUB_TOKEN: ${{ github.token }}
       - run: npx playwright install --with-deps chromium
       - name: 检查 Yahoo 与闲鱼
         run: npm run scan
