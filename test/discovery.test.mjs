@@ -32,6 +32,7 @@ test('discovery deduplicates harmless seller wording but keeps variants separate
   assert.equal(sameDiscoveryProduct({title:'MG ガンダムアストレイ クロスコントラストカラーズ 落桜白'},{title:'MG ガンダムアストレイ クロスコントラストカラーズ 朽木黒'}),false);
   assert.equal(sameDiscoveryProduct({title:'鬼滅の刃 中国限定 新繹シリーズ アクリルスタンド B 全8種 ランダム'},{title:'鬼滅の刃 中国限定 新繹シリーズ アクリルスタンド A 全8種 ランダム'}),false);
   assert.equal(sameDiscoveryProduct({title:'鬼滅の刃 中国限定 新繹シリーズ 冨岡義勇 アクリルスタンド'},{title:'鬼滅の刃 中国限定 新繹シリーズ 富岡義勇 アクリルスタンド'}),true);
+  assert.equal(sameDiscoveryProduct({title:'雪肌精×モンチッチ ペアぬいぐるみ セット 限定'},{title:'日本非売品 雪肌精×モンチッチ キーホルダー 2点セット'}),true);
 });
 
 test('cross-platform candidate grouping compares actual group members',()=>{

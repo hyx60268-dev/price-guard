@@ -10,7 +10,11 @@
   "xianyuRetryHours": 24,
   "scanDelayMs": 1200,
   "maxYahooDetailChecks": 3,
+  "yahooRecommendationFallbackMaxCards": 20,
+  "yahooUnderpriceRatio": 0.7,
+  "yahooUnderpriceMinimumGapJPY": 1500,
   "yahooImageMatchThreshold": 0.8,
+  "maxYahooImages": 8,
   "yahooConcurrency": 3,
   "yahooRequestIntervalMs": 5500,
   "yahooRateLimitCooldownMs": 60000,
@@ -30,6 +34,7 @@
     "sellerPages": 1,
     "mercariSearchScrolls": 12,
     "mercariSellerScrolls": 5,
+    "mercariKeywords": ["中国限定", "上海限定", "bilibili 限定"],
     "maxProducts": 30
   }
 }

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { distinctiveTokens,hasExplicitDefect,hasVariantMismatch,isLikelyVariantOffer,isRejected,productFamily,semanticQuantity,titleScore } from './rules.mjs';
 
-const listingNoise=/(?:中国限定|海外限定|日本未発売|日本非売品|正規品|公式|新品(?:、未使用)?|未使用|未開封|即日発送|当日発送|翌日発送|国内発送|即納|スピード発送|匿名配送|送料無料|送料込み|即購入(?:可|可能|ok)?|希少|レア|現品限り|ラスト\s*1点|残り\s*1点|在庫あり|在庫複数|複数在庫|早い者勝ち|お?値下げ不可|\d+月\d+日(?:まで|以降)?|\d+\/\d+(?:まで|以降)?|発送予定)/gi;
+const listingNoise=/(?:中国限定|海外限定|日本未発売|日本非売品|限定|正規品|公式|新品(?:、未使用)?|未使用|未開封|即日発送|当日発送|翌日発送|国内発送|即納|スピード発送|匿名配送|送料無料|送料込み|即購入(?:可|可能|ok)?|希少|レア|現品限り|ラスト\s*1点|残り\s*1点|在庫あり|在庫複数|複数在庫|早い者勝ち|お?値下げ不可|\d+月\d+日(?:まで|以降)?|\d+\/\d+(?:まで|以降)?|発送予定)/gi;
 const rejectSale=/(?:様専用|専用出品|リクエスト|まとめ商品|オーダー|確認用|取り置き|ばら売り|バラ売り|訳あり|ジャンク|破損|欠品|箱潰れ)/i;
 
 export function mercariDiscoverySearchUrl({keyword='中国限定',minPriceJPY=4999}={}){
@@ -67,8 +67,16 @@ export function sameSaleProduct(left={},right={}){
 export function sameDiscoveryProduct(left={},right={}){
   const a=canonicalSaleTitle(left.title),b=canonicalSaleTitle(right.title);
   if(!a||!b||hasVariantMismatch(a,b)||hasVariantMismatch(b,a))return false;
-  const af=productFamily(a),bf=productFamily(b);if(af&&bf&&af!==bf)return false;
+  const af=productFamily(a),bf=productFamily(b);
+  const evidence=distinctiveTokenEvidence(a,b);
+  // 毛绒挂件在日文标题中会被卖家分别写成「ぬいぐるみ」或「キーホルダー」。
+  // 只在两侧无冲突词、至少两个强锚点和数量一致时允许这一个品类交叉，
+  // 避免把普通塑料钥匙扣与毛绒玩偶泛化合并。
+  const plushKeychain=new Set([af,bf]).size===2&&new Set([af,bf]).has('plush')&&new Set([af,bf]).has('keychain')&&
+    evidence.onlyA.length===0&&evidence.onlyB.length===0&&evidence.shared.length>=2&&evidence.sharedLength>=6;
+  if(af&&bf&&af!==bf&&!plushKeychain)return false;
   const aq=semanticQuantity(a),bq=semanticQuantity(b);if(Number.isFinite(aq)&&Number.isFinite(bq)&&aq!==bq)return false;
+  if(plushKeychain)return true;
   if(sameSaleProduct(left,right))return true;
   const na=a.toLowerCase().replace(/[^\p{L}\p{N}]/gu,''),nb=b.toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
   if(na===nb)return true;

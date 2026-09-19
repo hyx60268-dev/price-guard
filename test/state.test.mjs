@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateManualFields,discoveryDismissalKey,manualCostFor,manualCostKey,mergeAccountConfigs,mergeDismissedDiscoveries,mergeManualCosts } from '../scripts/lib/state.mjs';
+import { calculateManualFields,discoveryDismissalKey,manualCostFor,manualCostKey,mergeAccountConfigs,mergeDiscoveryReviews,mergeDismissedDiscoveries,mergeManualCosts,reconcileDurableState } from '../scripts/lib/state.mjs';
 
 const item={accountId:'m',id:'new',title:'中国限定 商品 A 新品',xianyuQuery:'商品A 中国版',ownPrice:5000,recommendedPrice:4500,averageCNY:20};
 
@@ -34,4 +34,18 @@ test('uploaded discovery products keep a stable cross-device dismissal key',()=>
   const merged=mergeDismissedDiscoveries(older,{[key]:{productKey:key,title:item.sourceTitle,updatedAt:'2026-01-02T00:00:00Z'}});
   assert.equal(discoveryDismissalKey({...item,productKey:key}),key);
   assert.equal(merged[key].updatedAt,'2026-01-02T00:00:00Z');
+});
+
+test('published sync state cannot be lost to a newer scan cache',()=>{
+  const cache={dataRevision:'2026-01-03T00:00:00Z',managedAccounts:[],manualCosts:{a:{purchaseCNY:10,updatedAt:'2026-01-01T00:00:00Z'}}};
+  const published={dataRevision:'2026-01-02T00:00:00Z',managedAccounts:[{id:'momoka',name:'桃香',profileUrl:'https://paypayfleamarket.yahoo.co.jp/user/p2',updatedAt:'2026-01-02T00:00:00Z'}],manualCosts:{a:{purchaseCNY:20,updatedAt:'2026-01-02T00:00:00Z'}}};
+  const merged=reconcileDurableState(cache,published);
+  assert.equal(merged.managedAccounts[0].name,'桃香');
+  assert.equal(merged.manualCosts.a.purchaseCNY,20);
+});
+
+test('manual discovery review keeps verified price and image set',()=>{
+  const merged=mergeDiscoveryReviews({}, {p:{productKey:'p',purchaseCNY:'28',images:['https://a/1','bad','https://a/2','https://a/3'],updatedAt:'2026-01-01T00:00:00Z'}});
+  assert.equal(merged.p.purchaseCNY,28);
+  assert.deepEqual(merged.p.images,['https://a/1','https://a/2','https://a/3']);
 });

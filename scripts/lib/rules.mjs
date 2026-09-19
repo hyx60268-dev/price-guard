@@ -37,6 +37,21 @@ export function listingTextEquivalent(ownTitle='',ownDescription='',candidateTit
   return longer.includes(shorter)&&shorter.length/longer.length>=.75;
 }
 
+// 同一套装常见「10ピース入り / 10体セット」等表记差异。标题不必逐字接近，
+// 但品牌/系列锚点、商品类型和明确数量都一致时，可作为图片不同情况下的规格证据。
+export function listingSpecificationEquivalent(ownTitle='',candidateTitle='',ownCategory='',candidateCategory=''){
+  if(hasVariantMismatch(ownTitle,candidateTitle)||hasVariantMismatch(candidateTitle,ownTitle))return false;
+  const forward=semanticSameItem({query:ownTitle,candidate:candidateTitle,queryCategory:ownCategory,candidateCategory});
+  const backward=semanticSameItem({query:candidateTitle,candidate:ownTitle,queryCategory:candidateCategory,candidateCategory:ownCategory});
+  if(!forward.accepted||!backward.accepted)return false;
+  const ownFamily=productFamily(ownTitle,ownCategory),candidateFamily=productFamily(candidateTitle,candidateCategory);
+  if(!ownFamily||ownFamily!==candidateFamily)return false;
+  const ownQuantity=semanticQuantity(ownTitle),candidateQuantity=semanticQuantity(candidateTitle);
+  if(!Number.isFinite(ownQuantity)||ownQuantity!==candidateQuantity)return false;
+  return Math.min(forward.matchedLength,backward.matchedLength)>=8&&
+    Math.min(forward.matchedCount,backward.matchedCount)>=2;
+}
+
 function normalizedJapanese(value='') {
   return String(value).normalize('NFKC').toLowerCase();
 }

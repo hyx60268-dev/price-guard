@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { extractCategoryIds,extractItemData,extractNextData,extractRecommendationCards,queryFor } from '../scripts/lib/yahoo.mjs';
+import { extractCategoryIds,extractItemData,extractNextData,extractRecommendationCards,marketPriceDecision,queryFor } from '../scripts/lib/yahoo.mjs';
 
 test('extractNextData accepts Yahoo nonce attribute',()=>{
   const value={props:{initialState:{searchState:{search:{result:{items:[]}}}}}};
@@ -38,4 +38,13 @@ test('uses broad recall wording while preserving distinctive product terms',()=>
   assert.equal(queryFor('【中国限定】雪肌精×モンチッチ ペアぬいぐるみ セット 新品'),'雪肌精 モンチッチ');
   assert.equal(queryFor('鬼滅の刃 中国限定 新繹シリーズ 時透無一郎 アクリルスタンド'),'鬼滅の刃 新繹シリーズ 時透無一郎');
   assert.equal(queryFor('中国限定 MG ガンダムアストレイ クロスコントラストカラーズ 朽木黒'),'MG ガンダムアストレイ クロスコントラストカラーズ 朽木黒');
+  assert.equal(queryFor('POPMART正規品 NARUTO暁フィギュア 1BOX 10ピース入り'),'POPMART NARUTO暁');
+});
+
+test('warns and raises an abnormally low own price from verified market samples',()=>{
+  const result=marketPriceDecision(3000,[9800,10000,10200],{yahooUnderpriceRatio:.7,yahooUnderpriceMinimumGapJPY:1500});
+  assert.equal(result.underpriced,true);
+  assert.equal(result.marketMedianPrice,10000);
+  assert.equal(result.recommendedPrice,9799);
+  assert.equal(marketPriceDecision(9000,[9800,10000],{}).underpriced,false);
 });

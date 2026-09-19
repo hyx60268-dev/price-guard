@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateCost,advice,coherentPrices,conditionCompatible,distinctiveCoverage,hasExplicitDefect,hasVariantMismatch,isLikelyVariantOffer,listingTextEquivalent,productFamily,semanticQuantity,semanticSameItem,titleScore } from '../scripts/lib/rules.mjs';
+import { calculateCost,advice,coherentPrices,conditionCompatible,distinctiveCoverage,hasExplicitDefect,hasVariantMismatch,isLikelyVariantOffer,listingSpecificationEquivalent,listingTextEquivalent,productFamily,semanticQuantity,semanticSameItem,titleScore } from '../scripts/lib/rules.mjs';
 import { encrypt,decrypt } from '../scripts/lib/crypto.mjs';
 const settings={exchangeRate:22.99,costMultiplier:1.05};
 test('manual cost formula',()=>assert.equal(calculateCost(90.5,30,210,settings),3130));
@@ -16,6 +16,11 @@ test('identical title and description can verify a product despite a different f
   assert.equal(listingTextEquivalent(title,description,title,description),true);
   assert.equal(listingTextEquivalent(title,'正規品の未開封商品です',title,'正規品の未開封商品です'),true);
   assert.equal(listingTextEquivalent(title,description,title.replace('不死川実弥','冨岡義勇'),description.replace('不死川実弥','冨岡義勇')),false);
+});
+
+test('same branded box accepts piece-versus-figure quantity wording',()=>{
+  assert.equal(listingSpecificationEquivalent('POPMART正規品 NARUTO暁フィギュア 1BOX 10ピース入り','POPMART NARUTO 暁 フィギュア 1BOX 10体セット 新品未開封'),true);
+  assert.equal(listingSpecificationEquivalent('POPMART NARUTO 暁 フィギュア 1BOX 10体セット','POPMART NARUTO 暁 フィギュア 1BOX 8体セット'),false);
 });
 test('rejects extra set or version markers',()=>{
   assert.equal(hasVariantMismatch('時透無一郎 アクリルスタンド','時透無一郎 アクリルスタンド 2点セット'),true);

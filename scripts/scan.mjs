@@ -63,6 +63,7 @@ function cachedYahoo(prior,item,reason='fresh_cache'){
 const previous=await previousSnapshot();
 const manualCosts=previous?.manualCosts||{};
 const dismissedDiscoveries=previous?.dismissedDiscoveries||{};
+const discoveryReviews=previous?.discoveryReviews||{};
 const managedAccounts=previous?.managedAccounts||[];
 const accounts=mergeAccountConfigs(accountsCfg.accounts||[],managedAccounts);
 const defaultAccountId=accounts[0]?.id;
@@ -188,7 +189,7 @@ for(const context of contexts){
     const ownPrice=item.ownPrice;
     const lowestPrice=Number.isFinite(yc.lowestPrice)?yc.lowestPrice:(prior.lowestPrice??item.cachedYahoo?.lowestPrice??ownPrice);
     const lowestUrl=yc.lowestUrl||prior.lowestUrl||item.cachedYahoo?.lowestUrl||item.url||'';
-    const recommendedPrice=Number.isFinite(lowestPrice)&&lowestPrice<ownPrice?Math.max(1,Math.floor(lowestPrice)-1):ownPrice;
+    const recommendedPrice=Number.isFinite(yc.recommendedPrice)?yc.recommendedPrice:Number.isFinite(lowestPrice)&&lowestPrice<ownPrice?Math.max(1,Math.floor(lowestPrice)-1):ownPrice;
     const needsXianyu=Number.isFinite(lowestPrice)&&lowestPrice<ownPrice;
     const manual=manualCostFor(manualCosts,{...item,accountId:context.account.id},relistAliases);
     const yahooSource=yc.status==='ok'?'live':yc.status==='cached'?'cached':Number.isFinite(prior.lowestPrice)?'cached':'own_baseline';
@@ -199,7 +200,9 @@ for(const context of contexts){
       averageCNY,confidence,yahooSource,costSource,needsXianyu,needsManualPurchase:needsXianyu&&!Number.isFinite(averageCNY)&&!Number.isFinite(manual?.purchaseCNY),
       yahoo:{...(prior.yahoo||{}),...yc,lowestPrice,lowestUrl},xianyu:{...(prior.xianyu||{}),...xc,averageCNY,samples},
       xianyuSearchUrl:xc.searchUrl||prior.xianyuSearchUrl||`https://www.goofish.com/search?q=${encodeURIComponent(item.xianyuQuery||item.title||'')}`};
-    return {...base,...calculateManualFields(base,manual,settings)};
+    const calculated=calculateManualFields(base,manual,settings);
+    if(yc.underpriced)calculated.advice='售价明显低于同款市场，建议提价';
+    return {...base,...calculated};
   });
   const yahooValues=[...context.yahooById.values()];
   const xianyuValues=[...context.xianyuById.values()];
@@ -229,7 +232,7 @@ const ownedTitleHistory=[...new Set([
 ].map(value=>String(value||'').trim()).filter(Boolean))].slice(-5000);
 const result={
   version:5,checkedAt,dataRevision:checkedAt,settings,accounts:accountResults,managedAccounts,
-  manualCosts,dismissedDiscoveries,ownedTitleHistory,relistAliases,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode},items:allItems,
+  manualCosts,dismissedDiscoveries,discoveryReviews,ownedTitleHistory,relistAliases,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode},items:allItems,
   scanMeta:{trigger:process.env.SCAN_TRIGGER||'local',startedAt:new Date(startedAt).toISOString(),durationSeconds:Math.round((Date.now()-startedAt)/1000),
     budgetMinutes:Number(settings.scanBudgetMinutes)||12,yahooConcurrency,xianyuLimit}
 };

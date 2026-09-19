@@ -74,6 +74,44 @@ export function mergeDismissedDiscoveries(base={},incoming={}){
   return output;
 }
 
+export function mergeDiscoveryReviews(base={},incoming={}){
+  const output={...base};
+  for(const [key,value] of Object.entries(incoming||{})){
+    if(!value||typeof value!=='object')continue;
+    const images=[...new Set((value.images||[]).map(String).filter(url=>/^https?:\/\//i.test(url)))].slice(0,12);
+    const purchaseCNY=finite(value.purchaseCNY);
+    const next={...value,productKey:String(value.productKey||key),title:String(value.title||''),purchaseCNY,images,
+      notes:String(value.notes||'').slice(0,1000),updatedAt:value.updatedAt||new Date(0).toISOString()};
+    const current=output[key];
+    if(!current||timestamp(next)>=timestamp(current))output[key]=next;
+  }
+  return output;
+}
+
+export function mergeManagedAccounts(base=[],incoming=[]){
+  const output=new Map();
+  for(const account of [...(base||[]),...(incoming||[])]){
+    if(!account?.id||!account?.profileUrl)continue;
+    const current=output.get(account.id);
+    if(!current||timestamp(account)>=timestamp(current))output.set(account.id,{...current,...account});
+  }
+  return [...output.values()];
+}
+
+export function reconcileDurableState(cache={},published={}){
+  const revision=value=>Date.parse(value?.dataRevision||value?.cloudSyncedAt||value?.checkedAt||'')||0;
+  const base=revision(published)>revision(cache)?published:cache;
+  return {
+    ...base,
+    manualCosts:mergeManualCosts(cache.manualCosts||{},published.manualCosts||{}),
+    dismissedDiscoveries:mergeDismissedDiscoveries(cache.dismissedDiscoveries||{},published.dismissedDiscoveries||{}),
+    discoveryReviews:mergeDiscoveryReviews(cache.discoveryReviews||{},published.discoveryReviews||{}),
+    managedAccounts:mergeManagedAccounts(cache.managedAccounts||[],published.managedAccounts||[]),
+    ownedTitleHistory:[...new Set([...(cache.ownedTitleHistory||[]),...(published.ownedTitleHistory||[])])].slice(-5000),
+    relistAliases:{...(cache.relistAliases||{}),...(published.relistAliases||{})}
+  };
+}
+
 export function discoveryDismissalKey(item={}){
   return String(item.productKey||normalizeProductIdentity(item.sourceTitle||item.proposedTitle||item.title||'')||item.id||'');
 }

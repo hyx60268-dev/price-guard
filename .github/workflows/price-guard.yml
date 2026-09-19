@@ -35,6 +35,11 @@ jobs:
         with:
           node-version: '20'
           cache: npm
+      - name: 合并网页已发布状态，防止账号和成本被旧缓存覆盖
+        run: node scripts/restore-published-state.mjs
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          PUBLISHED_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - name: 检查 Yahoo 与闲鱼

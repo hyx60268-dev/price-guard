@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decrypt } from './lib/crypto.mjs';
 import { writeOutputs } from './lib/publish.mjs';
-import { accountIdFromProfile,calculateManualFields,manualCostFor,mergeDismissedDiscoveries,mergeManualCosts } from './lib/state.mjs';
+import { accountIdFromProfile,calculateManualFields,manualCostFor,mergeDiscoveryReviews,mergeDismissedDiscoveries,mergeManualCosts } from './lib/state.mjs';
 import { decodeSyncBody } from './lib/sync-payload.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url)),root=path.resolve(here,'..');
@@ -24,6 +24,9 @@ const manualCosts=mergeManualCosts(previous.manualCosts||{},incomingCosts);
 const incomingDismissed=payload.dismissedDiscoveries&&typeof payload.dismissedDiscoveries==='object'&&!Array.isArray(payload.dismissedDiscoveries)?payload.dismissedDiscoveries:{};
 if(Object.keys(incomingDismissed).length>3000)throw new Error('已上传记录数量异常');
 const dismissedDiscoveries=mergeDismissedDiscoveries(previous.dismissedDiscoveries||{},incomingDismissed);
+const incomingReviews=payload.discoveryReviews&&typeof payload.discoveryReviews==='object'&&!Array.isArray(payload.discoveryReviews)?payload.discoveryReviews:{};
+if(Object.keys(incomingReviews).length>3000)throw new Error('人工核验记录数量异常');
+const discoveryReviews=mergeDiscoveryReviews(previous.discoveryReviews||{},incomingReviews);
 
 const settings=previous.settings||JSON.parse(await fs.readFile(path.join(root,'config','settings.json'),'utf8'));
 const configured=JSON.parse(await fs.readFile(path.join(root,'config','accounts.json'),'utf8')).accounts||[];
@@ -62,7 +65,7 @@ for(const account of managedAccounts.filter(account=>account.enabled!==false))if
 }
 
 const cloudSyncedAt=new Date().toISOString();
-const result={...previous,version:5,cloudSyncedAt,dataRevision:cloudSyncedAt,settings,manualCosts,dismissedDiscoveries,managedAccounts,accounts,items};
+const result={...previous,version:5,cloudSyncedAt,dataRevision:cloudSyncedAt,settings,manualCosts,dismissedDiscoveries,discoveryReviews,managedAccounts,accounts,items};
 const {summary}=await writeOutputs({root,result,previous,password});
 // A cost/account/upload sync also deploys the static site. Preserve the latest
 // encrypted discovery payload so that this lightweight deployment cannot blank
