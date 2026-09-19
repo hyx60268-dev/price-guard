@@ -193,13 +193,15 @@ function renderDiscovery(){
       <section class="reviewbox"><h4>来源商家图片与找图入口</h4>
         <p class="muted">下面保留发现该商品时使用的商家图片和搜索入口，便于继续找不同来源的可用图片。</p>
         ${referencePhotos.length?`<div class="referencephotos">${referencePhotos.slice(0,3).map(url=>`<a href="${escapeHtml(url)}" target="_blank"><img src="${escapeHtml(url)}" alt="来源商家参考图" loading="lazy"></a>`).join('')}</div>`:''}
-        <div class="websearches"><a target="_blank" href="https://www.bing.com/images/search?q=${webQuery}">全网图片</a><a target="_blank" href="https://search.yahoo.co.jp/image/search?p=${webQuery}">Yahoo图片</a><a target="_blank" href="https://www.google.com/search?tbm=isch&q=${webQuery}">Google图片</a><a target="_blank" href="${escapeHtml(item.xianyuSearchUrl||'#')}">闲鱼</a><a target="_blank" href="https://www.xiaohongshu.com/search_result?keyword=${webQuery}">小红书</a><a target="_blank" href="https://s.taobao.com/search?q=${webQuery}">淘宝</a></div>
+        <div class="websearches"><a target="_blank" href="https://www.bing.com/images/search?q=${webQuery}">全网图片</a><a target="_blank" href="https://search.yahoo.co.jp/image/search?p=${webQuery}">Yahoo图片</a><a target="_blank" href="https://www.google.com/search?tbm=isch&q=${webQuery}">Google图片</a><a target="_blank" href="https://s.taobao.com/search?q=${webQuery}">淘宝</a><button type="button" class="linklike" data-share-discovery="${escapeHtml(item.id)}">准备图片给手机 App 搜图</button></div>
+        <p class="muted appsearchnote">会优先把来源首图作为图片文件交给手机分享面板；图片站点不允许跨域下载时，则分享原图链接。iPhone 不允许网页替你点击闲鱼或小红书 App 内的相机按钮。</p>
       </section>
     </article>`;
   }).join('');
   document.querySelectorAll('[data-copy-title]').forEach(button=>button.onclick=()=>copyDiscovery(button,discoveryProducts().find(item=>item.id===button.dataset.copyTitle)?.proposedTitle));
   document.querySelectorAll('[data-copy-description]').forEach(button=>button.onclick=()=>copyDiscovery(button,discoveryProducts().find(item=>item.id===button.dataset.copyDescription)?.proposedDescription));
   document.querySelectorAll('[data-uploaded]').forEach(button=>button.onclick=()=>markDiscoveryUploaded(discoveryData.products.find(item=>item.id===button.dataset.uploaded)));
+  document.querySelectorAll('[data-share-discovery]').forEach(button=>button.onclick=()=>shareDiscoveryImage(button,discoveryProducts().find(item=>item.id===button.dataset.shareDiscovery)));
 }
 function markDiscoveryUploaded(item){
   if(!item||!confirm(`确认“${item.proposedTitle||item.sourceTitle}”已经上传？\n\n确认后会隐藏该同款；同步云端后所有设备和以后扫描都不再显示。`))return;const key=discoveryProductKey(item);
@@ -207,6 +209,21 @@ function markDiscoveryUploaded(item){
   saveDismissedDiscoveries();renderDiscovery();$('#refreshNotice').hidden=false;$('#refreshText').textContent='已从本机永久隐藏；点“同步云端”后手机和电脑都会排除该同款。';
 }
 async function copyDiscovery(button,value){try{await navigator.clipboard.writeText(value||'');const old=button.textContent;button.textContent='已复制';setTimeout(()=>button.textContent=old,1500)}catch{alert('复制失败，请长按文字复制')}}
+async function shareDiscoveryImage(button,item){
+  const image=[...(item?.sourceImages||[]),...(item?.images||[])].find(Boolean),title=item?.proposedTitle||item?.sourceTitle||'候选商品';
+  if(!image){button.textContent='没有可用图片';return}
+  const old=button.textContent;button.disabled=true;button.textContent='正在准备图片…';
+  try{
+    const response=await fetch(image),blob=response.ok?await response.blob():null;
+    if(blob){
+      const extension=(blob.type.split('/')[1]||'jpg').replace('jpeg','jpg'),file=new File([blob],`price-guard-${item.id}.${extension}`,{type:blob.type||'image/jpeg'});
+      if(navigator.canShare?.({files:[file]})){await navigator.share({title,text:`${title}\n请在闲鱼或小红书 App 中使用以图搜索`,files:[file]});button.textContent='图片已交给手机';return}
+    }
+    if(navigator.share){await navigator.share({title,text:`${title}\n请在闲鱼或小红书 App 中使用以图搜索`,url:image});button.textContent='原图链接已交给手机';return}
+    await navigator.clipboard?.writeText(image);window.open(image,'_blank','noopener');button.textContent='已打开并复制原图链接';
+  }catch(error){if(error?.name!=='AbortError'){window.open(image,'_blank','noopener');button.textContent='已打开来源图片'}}
+  finally{setTimeout(()=>{button.disabled=false;button.textContent=old},2200)}
+}
 function switchView(view){
   const discovery=view==='discovery';$('#pricingView').hidden=discovery;$('#discoveryView').hidden=!discovery;
   $('#showPricing').classList.toggle('active',!discovery);$('#showDiscovery').classList.toggle('active',discovery);if(discovery)renderDiscovery();
