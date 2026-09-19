@@ -12,9 +12,25 @@ if(summary.firstRun || !summary.hasChanges){
 const fingerprint=crypto.createHash('sha256').update(JSON.stringify((summary.changes||[]).map(change=>({
   type:change.type,id:change.id,fields:change.fields||[],before:change.before||null,after:change.after||null
 })).sort((a,b)=>`${a.type}:${a.id}`.localeCompare(`${b.type}:${b.id}`)))).digest('hex');
+const notificationMarker=`<!-- PRICE_GUARD_NOTIFICATION:${fingerprint} -->`;
 const fingerprintFile='state/last-notification-hash.txt';
 const priorFingerprint=await fs.readFile(fingerprintFile,'utf8').catch(()=>'');
 if(priorFingerprint.trim()===fingerprint){console.log('与上一条提醒完全相同，跳过重复通知');process.exit(0)}
+
+async function githubNotificationExists(){
+  if(!process.env.GITHUB_TOKEN||!process.env.GITHUB_REPOSITORY)return false;
+  const endpoint=`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/issues?state=all&per_page=100&sort=created&direction=desc`;
+  const response=await fetch(endpoint,{headers:{authorization:`Bearer ${process.env.GITHUB_TOKEN}`,'user-agent':'price-guard','x-github-api-version':'2022-11-28'}});
+  if(!response.ok){console.warn(`重复提醒查询失败：HTTP ${response.status}`);return false}
+  const issues=await response.json();
+  return Array.isArray(issues)&&issues.some(issue=>String(issue.body||'').includes(notificationMarker));
+}
+
+if(await githubNotificationExists()){
+  console.log('GitHub 中已记录完全相同的变化，跳过重复通知');
+  await fs.mkdir('state',{recursive:true});await fs.writeFile(fingerprintFile,fingerprint);
+  process.exit(0);
+}
 
 const dashboard=process.env.DASHBOARD_URL||`https://${(process.env.GITHUB_REPOSITORY_OWNER||'').toLowerCase()}.github.io/${(process.env.GITHUB_REPOSITORY||'/price-guard').split('/')[1]||'price-guard'}/`;
 const message=`价格守卫发现 ${summary.total} 项变化：新增 ${summary.added}、下架 ${summary.removed}、价格/成本变化 ${summary.updated}。\n${dashboard}`;
@@ -70,7 +86,7 @@ if(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID){
 if(!sent && process.env.GITHUB_TOKEN && process.env.GITHUB_REPOSITORY){
   const endpoint=`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/issues`,owner=process.env.GITHUB_REPOSITORY_OWNER;
   const headers={authorization:`Bearer ${process.env.GITHUB_TOKEN}`,'content-type':'application/json','user-agent':'price-guard','x-github-api-version':'2022-11-28'};
-  const payload={title:`价格变动提醒：${summary.total} 项`,body:`${owner?`@${owner} `:''}${message}\n\n这是自动提醒。商品明细和利润只在加密仪表盘中显示。`,labels:[],assignees:owner?[owner]:[]};
+  const payload={title:`价格变动提醒：${summary.total} 项`,body:`${owner?`@${owner} `:''}${message}\n\n这是自动提醒。商品明细和利润只在加密仪表盘中显示。\n${notificationMarker}`,labels:[],assignees:owner?[owner]:[]};
   let response=await fetch(endpoint,{
     method:'POST',headers,body:JSON.stringify(payload)
   });
