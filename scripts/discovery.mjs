@@ -108,7 +108,10 @@ function isFresh(prior){
 }
 
 const prior=await priorDiscovery();
-const force=process.env.FORCE_DISCOVERY==='1'||['push','workflow_dispatch'].includes(process.env.SCAN_TRIGGER);
+// Code pushes should not restart a several-minute marketplace crawl when a fresh
+// six-hour discovery snapshot already exists. Use the explicit flag (or a manual
+// workflow dispatch) when a full refresh is actually required.
+const force=process.env.FORCE_DISCOVERY==='1'||process.env.SCAN_TRIGGER==='workflow_dispatch';
 if(prior&&!force&&isFresh(prior)){
   await publishExisting(prior);console.log(`选品发现使用 ${prior.checkedAt} 的缓存，共 ${prior.products?.length||0} 个候选`);process.exit(0);
 }
