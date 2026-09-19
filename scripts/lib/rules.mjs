@@ -123,7 +123,7 @@ export function conditionCompatible(query='',candidate=''){
 const descriptorPattern=/(?:日本非売品|日本未発売|非売品|中国限定|海外限定|国内限定|正規品|新品|未使用|未開封|公式|限定|希少|レア|コラボレーション|コラボ|シリーズ|セット|まとめ売り|ペア|pair|単品|ランダム|random|全\s*\d+\s*種|\d+\s*(?:点|個|体|枚|本|箱|ピース|個入|入り|件)|ぬいぐるみ|マスコット|キーホルダー|キーチェーン|ストラップ|アクリルスタンド|アクスタ|アクリルブロック|フィギュア|プラモデル|フォトカード|ポストカード|カード|缶バッジ|タンブラー|ボトル|マグ|カップ)/gi;
 
 export function distinctiveTokens(value='') {
-  return normalizedJapanese(value).split(/[\s×&＆/／・·,:：，。!！?？【】\[\]()（）<>《》“”"'‘’+＋\-_]+/)
+  return normalizedJapanese(value).split(/[\s×&＆/／・·,:：，。!！?？【】\[\]()（）<>《》「」『』“”"'‘’+＋\-_]+/)
     .map(part=>part.replace(descriptorPattern,'').trim())
     .filter(part=>part.length>1);
 }
@@ -171,23 +171,16 @@ export function isLikelyVariantOffer(text='',query='') {
   return multiOfferPattern.test(text) && !wantsWholeSet;
 }
 
-export function hasVariantMismatch(query='',candidate='') {
+function hasVariantMarkerMismatch(query='',candidate='') {
   const q=normalize(query),title=String(candidate);
   const standaloneMarkers=value=>new Set([...normalizedJapanese(value).toUpperCase().matchAll(/\b[A-H]\b/g)].map(match=>match[0]));
   const queryMarkers=standaloneMarkers(query),candidateMarkers=standaloneMarkers(candidate);
   if([...candidateMarkers].some(marker=>!queryMarkers.has(marker)))return true;
-  const queryQuantity=semanticQuantity(query),candidateQuantity=semanticQuantity(candidate);
-  if(Number.isFinite(candidateQuantity)&&candidateQuantity>1&&!Number.isFinite(queryQuantity))return true;
-  // 元商品がペア/複数セットなら、候補側にも同じ個数の明記が必要。
-  // 個数不明の単品を安い「同款」として採用しない。
-  if(Number.isFinite(queryQuantity)&&queryQuantity>1&&!Number.isFinite(candidateQuantity))return true;
-  if(Number.isFinite(queryQuantity)&&Number.isFinite(candidateQuantity)&&queryQuantity!==candidateQuantity)return true;
   const querySets=setMultiplier(query),candidateSets=setMultiplier(candidate);
   if(Number.isFinite(candidateSets)&&candidateSets>1&&candidateSets!==querySets)return true;
   const extraPatterns=[
     /(?:\d+\s*(?:box|セット))/gi,
-    /(?:まとめ売り|おまけ|おまけ付き|抱き合わせ)/gi,
-    /(?:ホログラムチケット|ポストカード|特典カード|缶バッジ)/gi,
+    /(?:まとめ売り|抱き合わせ)/gi,
     /(?:[A-HＡ-Ｈ]\s*(?:タイプ|type|賞|カラー|色|版|ver(?:sion)?\.?))/gi,
     /(?:(?:タイプ|type|カラー|色|版|ver(?:sion)?\.?)\s*[A-HＡ-Ｈ])/gi
   ];
@@ -199,6 +192,36 @@ export function hasVariantMismatch(query='',candidate='') {
     }
   }
   return false;
+}
+
+// “未写数量”只是未知，不是明确冲突。它可以进入详情图片核验，但不能仅靠文字
+// 直接成为同款；明确写了单品/2体、A/B版或不同套数时仍是硬冲突。
+export function hasExplicitVariantMismatch(query='',candidate=''){
+  const queryQuantity=semanticQuantity(query),candidateQuantity=semanticQuantity(candidate);
+  if(Number.isFinite(queryQuantity)&&Number.isFinite(candidateQuantity)&&queryQuantity!==candidateQuantity)return true;
+  return hasVariantMarkerMismatch(query,candidate);
+}
+
+export function hasVariantMismatch(query='',candidate='') {
+  if(hasExplicitVariantMismatch(query,candidate))return true;
+  const queryQuantity=semanticQuantity(query),candidateQuantity=semanticQuantity(candidate);
+  if(Number.isFinite(candidateQuantity)&&candidateQuantity>1&&!Number.isFinite(queryQuantity))return true;
+  // 文字判定时，元商品がペア/複数セットなら候補にも同じ個数の明記を要求する。
+  // 图片强证据会使用上面的 explicit 版本，把“未写数量”留给详情核验。
+  if(Number.isFinite(queryQuantity)&&queryQuantity>1&&!Number.isFinite(candidateQuantity))return true;
+  return false;
+}
+
+// 同じ本体に「特典カード付き」「おまけ付き」と書かれた競合は、購入者から見れば
+// より条件のよい同款であり、別商品として捨ててはいけない。一方、数量・版・本体の
+// 種類が食い違う候補は、画像が流用されていても同款にしない。
+export function visualListingEquivalent({query='',candidate='',queryCategory='',candidateCategory='',imageScore=null,threshold=.86}={}) {
+  if(!Number.isFinite(imageScore)||imageScore<threshold)return false;
+  if(hasExplicitVariantMismatch(query,candidate)||hasExplicitVariantMismatch(candidate,query))return false;
+  const queryFamily=productFamily(query,queryCategory),candidateFamily=productFamily(candidate,candidateCategory);
+  if(!queryFamily||queryFamily!==candidateFamily)return false;
+  const forward=distinctiveCoverage(query,candidate),backward=distinctiveCoverage(candidate,query);
+  return Math.max(forward.matchedCount,backward.matchedCount)>=2&&Math.max(forward.matchedLength,backward.matchedLength)>=4;
 }
 
 export function inferSize(title='') {

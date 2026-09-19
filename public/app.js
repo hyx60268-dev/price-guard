@@ -11,19 +11,22 @@ const dismissedDiscoveryKey='priceGuard.dismissedDiscoveries.v1';
 const discoveryReviewKey='priceGuard.discoveryReviews.v1';
 const notificationEmailKey=username=>`priceGuard.notificationEmail.v1.${username}`;
 
-let data,discoveryData,password,currentUsername='admin',dataPrefix='data',installPrompt,currentAccountId,cloudStatus,discoveryCloudStatus,refreshingData=false,pricingPage=1;
+let data,discoveryData,password,currentUsername='admin',dataPrefix='data',installPrompt,currentAccountId,cloudStatus,discoveryCloudStatus,refreshingData=false,pricingPage=1,imageSearchState=null;
 const PAGE_SIZE=10;
 const getJson=(key,fallback)=>{try{return JSON.parse(localStorage.getItem(key)||JSON.stringify(fallback))}catch{return fallback}};
-const getLocal=()=>getJson(accountKey,getJson(legacyAccountKey,[]));
-const saveLocal=value=>localStorage.setItem(accountKey,JSON.stringify(value));
-const getDeleted=()=>getJson(deletedAccountKey,[]);
-const saveDeleted=value=>localStorage.setItem(deletedAccountKey,JSON.stringify([...new Set(value)]));
-let manualCosts={...getJson(legacyCostKey,{}),...getJson(costKey,{})};
-const saveManualCosts=()=>localStorage.setItem(costKey,JSON.stringify(manualCosts));
-let dismissedDiscoveries=getJson(dismissedDiscoveryKey,{});
-const saveDismissedDiscoveries=()=>localStorage.setItem(dismissedDiscoveryKey,JSON.stringify(dismissedDiscoveries));
-let discoveryReviews=getJson(discoveryReviewKey,{});
-const saveDiscoveryReviews=()=>localStorage.setItem(discoveryReviewKey,JSON.stringify(discoveryReviews));
+const scopedKey=key=>currentUsername==='admin'?key:`${key}.${currentUsername}`;
+const getLocal=()=>getJson(scopedKey(accountKey),currentUsername==='admin'?getJson(legacyAccountKey,[]):[]);
+const saveLocal=value=>localStorage.setItem(scopedKey(accountKey),JSON.stringify(value));
+const getDeleted=()=>getJson(scopedKey(deletedAccountKey),[]);
+const saveDeleted=value=>localStorage.setItem(scopedKey(deletedAccountKey),JSON.stringify([...new Set(value)]));
+let manualCosts={},dismissedDiscoveries={},discoveryReviews={};
+const saveManualCosts=()=>localStorage.setItem(scopedKey(costKey),JSON.stringify(manualCosts));
+const saveDismissedDiscoveries=()=>localStorage.setItem(scopedKey(dismissedDiscoveryKey),JSON.stringify(dismissedDiscoveries));
+const saveDiscoveryReviews=()=>localStorage.setItem(scopedKey(discoveryReviewKey),JSON.stringify(discoveryReviews));
+function loadLocalState(){
+  manualCosts=currentUsername==='admin'?{...getJson(legacyCostKey,{}),...getJson(costKey,{})}:getJson(scopedKey(costKey),{});
+  dismissedDiscoveries=getJson(scopedKey(dismissedDiscoveryKey),{});discoveryReviews=getJson(scopedKey(discoveryReviewKey),{});
+}
 
 function normalizeIdentity(value=''){
   return String(value).normalize('NFKC').toLowerCase().replace(/中国限定|海外限定|日本未発売|日本非売品|正規品|新品|未使用|未開封|公式|送料無料|匿名配送/gi,'')
@@ -93,7 +96,7 @@ async function loadDashboard(){
   manualCosts=mergeCosts(manualCosts,data.manualCosts||{});dismissedDiscoveries=mergeCosts(dismissedDiscoveries,data.dismissedDiscoveries||{});saveDismissedDiscoveries();
   discoveryReviews=mergeCosts(discoveryReviews,data.discoveryReviews||{});saveDiscoveryReviews();migrateLocalData();
   const visible=cloudAccounts();
-  if(!currentAccountId||currentAccountId!=='__all__'&&![...visible,...localOnlyAccounts()].some(item=>item.id===currentAccountId))currentAccountId=visible[0]?.id||localOnlyAccounts()[0]?.id;
+  if(!currentAccountId||currentAccountId!=='__all__'&&![...visible,...localOnlyAccounts()].some(item=>item.id===currentAccountId))currentAccountId=visible[0]?.id||localOnlyAccounts()[0]?.id||'__all__';
 }
 
 async function loadDiscovery(){
@@ -103,17 +106,17 @@ async function loadDiscovery(){
 $('#unlockForm').addEventListener('submit',async event=>{
   event.preventDefault();const button=event.submitter;button.disabled=true;$('#unlockError').textContent='正在解密…';
   try{
-    currentUsername=String($('#username').value||'admin').trim().toLowerCase().replace(/[^a-z0-9_-]/g,'')||'admin';
+    currentUsername=String($('#username').value||'admin').trim().toLowerCase().replace(/[^a-z0-9_-]/g,'')||'admin';loadLocalState();
     dataPrefix=currentUsername==='admin'?'data':`data/users/${currentUsername}`;
     password=$('#password').value;await loadDashboard();$('#unlock').hidden=true;$('#dashboard').hidden=false;$('#cloudSync').hidden=false;
-    if(data.portalUser?.role==='member'){$('#accountForm').hidden=true;$('#exportAccounts').hidden=true}
+    $('#userAdminSection').hidden=currentUsername!=='admin';
     renderAccountOptions();render();await checkCloudStatus(false);
   }catch(error){$('#unlockError').textContent='密码不正确，或云端尚未生成数据。'}
   finally{button.disabled=false}
 });
 
 function cloudAccounts(){const deleted=new Set(getDeleted());return (data?.accounts||[]).filter(item=>!deleted.has(item.id))}
-function localOnlyAccounts(){return data?.portalUser?.role==='member'?[]:getLocal().filter(item=>!cloudAccounts().some(cloud=>cloud.profileUrl===item.profileUrl))}
+function localOnlyAccounts(){return getLocal().filter(item=>!cloudAccounts().some(cloud=>cloud.profileUrl===item.profileUrl))}
 function account(){return cloudAccounts().find(item=>item.id===currentAccountId)||cloudAccounts()[0]}
 function allAccountsSelected(){return currentAccountId==='__all__'}
 function rawItems(){return allAccountsSelected()?(data?.items||[]):(account()?.items||[])}
@@ -193,15 +196,18 @@ function renderDiscovery(){
       <section class="reviewbox"><h4>来源商家图片与找图入口</h4>
         <p class="muted">下面保留发现该商品时使用的商家图片和搜索入口，便于继续找不同来源的可用图片。</p>
         ${referencePhotos.length?`<div class="referencephotos">${referencePhotos.slice(0,3).map(url=>`<a href="${escapeHtml(url)}" target="_blank"><img src="${escapeHtml(url)}" alt="来源商家参考图" loading="lazy"></a>`).join('')}</div>`:''}
-        <div class="websearches"><a target="_blank" href="https://www.bing.com/images/search?q=${webQuery}">全网图片</a><a target="_blank" href="https://search.yahoo.co.jp/image/search?p=${webQuery}">Yahoo图片</a><a target="_blank" href="https://www.google.com/search?tbm=isch&q=${webQuery}">Google图片</a><a target="_blank" href="https://s.taobao.com/search?q=${webQuery}">淘宝</a><button type="button" class="linklike" data-share-discovery="${escapeHtml(item.id)}">准备图片给手机 App 搜图</button></div>
-        <p class="muted appsearchnote">会优先把来源首图作为图片文件交给手机分享面板；图片站点不允许跨域下载时，则分享原图链接。iPhone 不允许网页替你点击闲鱼或小红书 App 内的相机按钮。</p>
+        <div class="websearches"><a target="_blank" href="https://www.bing.com/images/search?q=${webQuery}">全网图片</a><a target="_blank" href="https://search.yahoo.co.jp/image/search?p=${webQuery}">Yahoo图片</a><a target="_blank" href="https://www.google.com/search?tbm=isch&q=${webQuery}">Google图片</a><a target="_blank" href="https://s.taobao.com/search?q=${webQuery}">淘宝</a><button type="button" class="linklike" data-search-discovery="${escapeHtml(item.id)}" data-search-app="xianyu">闲鱼搜图</button><button type="button" class="linklike" data-search-discovery="${escapeHtml(item.id)}" data-search-app="xhs">小红书搜图</button></div>
+        <p class="muted appsearchnote">系统已在云端准备同源首图；点按钮后先保存到手机，再自动尝试打开对应 App。</p>
       </section>
     </article>`;
   }).join('');
   document.querySelectorAll('[data-copy-title]').forEach(button=>button.onclick=()=>copyDiscovery(button,discoveryProducts().find(item=>item.id===button.dataset.copyTitle)?.proposedTitle));
   document.querySelectorAll('[data-copy-description]').forEach(button=>button.onclick=()=>copyDiscovery(button,discoveryProducts().find(item=>item.id===button.dataset.copyDescription)?.proposedDescription));
   document.querySelectorAll('[data-uploaded]').forEach(button=>button.onclick=()=>markDiscoveryUploaded(discoveryData.products.find(item=>item.id===button.dataset.uploaded)));
-  document.querySelectorAll('[data-share-discovery]').forEach(button=>button.onclick=()=>shareDiscoveryImage(button,discoveryProducts().find(item=>item.id===button.dataset.shareDiscovery)));
+  document.querySelectorAll('[data-search-discovery]').forEach(button=>button.onclick=()=>{
+    const item=discoveryProducts().find(value=>value.id===button.dataset.searchDiscovery),image=[...(item?.sourceImages||[]),...(item?.images||[])].find(Boolean);
+    openImageSearch({kind:'discovery',id:item?.id,title:item?.proposedTitle||item?.sourceTitle||'候选商品',image},button.dataset.searchApp);
+  });
 }
 function markDiscoveryUploaded(item){
   if(!item||!confirm(`确认“${item.proposedTitle||item.sourceTitle}”已经上传？\n\n确认后会隐藏该同款；同步云端后所有设备和以后扫描都不再显示。`))return;const key=discoveryProductKey(item);
@@ -209,20 +215,48 @@ function markDiscoveryUploaded(item){
   saveDismissedDiscoveries();renderDiscovery();$('#refreshNotice').hidden=false;$('#refreshText').textContent='已从本机永久隐藏；点“同步云端”后手机和电脑都会排除该同款。';
 }
 async function copyDiscovery(button,value){try{await navigator.clipboard.writeText(value||'');const old=button.textContent;button.textContent='已复制';setTimeout(()=>button.textContent=old,1500)}catch{alert('复制失败，请长按文字复制')}}
-async function shareDiscoveryImage(button,item){
-  const image=[...(item?.sourceImages||[]),...(item?.images||[])].find(Boolean),title=item?.proposedTitle||item?.sourceTitle||'候选商品';
-  if(!image){button.textContent='没有可用图片';return}
-  const old=button.textContent;button.disabled=true;button.textContent='正在准备图片…';
+function safeImageKey(value=''){return String(value||'').replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,120)||'image'}
+function localSearchImage(kind,id){return `data/share-images/${kind}-${safeImageKey(id)}.jpg`}
+function marketplaceUrl(app){return app==='xhs'?'https://www.xiaohongshu.com/explore':'https://www.goofish.com/'}
+function marketplaceName(app){return app==='xhs'?'小红书':'闲鱼'}
+function openMarketplace(app){
+  const url=marketplaceUrl(app);
+  if(/Android|iPhone|iPad|iPod/i.test(navigator.userAgent))location.assign(url);else window.open(url,'_blank','noopener');
+}
+async function prepareSearchImage(state){
+  const button=$('#saveSearchImage');button.disabled=true;button.textContent='正在准备图片…';
+  for(const url of [state.localUrl,state.image]){
+    if(!url)continue;
+    try{
+      const response=await fetch(url,{cache:'no-store'}),blob=response.ok?await response.blob():null;
+      if(blob?.type?.startsWith('image/')){
+        const type=blob.type||'image/jpeg',extension=type.includes('png')?'png':type.includes('webp')?'webp':'jpg';
+        state.blob=blob;state.file=new File([blob],`price-guard-${safeImageKey(state.id)}.${extension}`,{type});break
+      }
+    }catch{}
+  }
+  button.disabled=false;button.textContent=state.file?'① 保存图片到手机':'① 打开原图并保存';
+  $('#imageSearchStatus').textContent=state.file?'图片已准备好。点“保存图片到手机”，在系统面板选择“存储图像”；完成后会尝试打开对应 App。':'云端图片暂不可下载；点按钮打开原图，长按保存后再打开 App。';
+}
+function openImageSearch(payload,preferredApp='xianyu'){
+  if(!payload?.image||!payload?.id){alert('这件商品暂时没有可用图片');return}
+  const state={...payload,preferredApp,localUrl:localSearchImage(payload.kind,payload.id),blob:null,file:null};imageSearchState=state;
+  const preview=$('#imageSearchPreview');preview.onerror=()=>{preview.onerror=null;preview.src=state.image};preview.src=state.localUrl;
+  $('#imageSearchTitle').textContent=state.title;$('#imageSearchStatus').textContent='正在准备可保存的同源首图…';
+  $('#saveSearchImage').textContent='正在准备图片…';$('#saveSearchImage').disabled=true;
+  if(!$('#imageSearchDialog').open)$('#imageSearchDialog').showModal();prepareSearchImage(state);
+}
+async function saveSearchImage(){
+  const state=imageSearchState;if(!state)return;
   try{
-    const response=await fetch(image),blob=response.ok?await response.blob():null;
-    if(blob){
-      const extension=(blob.type.split('/')[1]||'jpg').replace('jpeg','jpg'),file=new File([blob],`price-guard-${item.id}.${extension}`,{type:blob.type||'image/jpeg'});
-      if(navigator.canShare?.({files:[file]})){await navigator.share({title,text:`${title}\n请在闲鱼或小红书 App 中使用以图搜索`,files:[file]});button.textContent='图片已交给手机';return}
+    if(state.file&&navigator.canShare?.({files:[state.file]})){
+      await navigator.share({title:state.title,text:'保存此图后，请在 App 内选择以图搜索',files:[state.file]});
+      $('#imageSearchStatus').textContent=`系统图片面板已完成，正在打开${marketplaceName(state.preferredApp)}；若没有自动打开，请点下面按钮。`;
+      openMarketplace(state.preferredApp);return;
     }
-    if(navigator.share){await navigator.share({title,text:`${title}\n请在闲鱼或小红书 App 中使用以图搜索`,url:image});button.textContent='原图链接已交给手机';return}
-    await navigator.clipboard?.writeText(image);window.open(image,'_blank','noopener');button.textContent='已打开并复制原图链接';
-  }catch(error){if(error?.name!=='AbortError'){window.open(image,'_blank','noopener');button.textContent='已打开来源图片'}}
-  finally{setTimeout(()=>{button.disabled=false;button.textContent=old},2200)}
+    const link=document.createElement('a');link.href=state.localUrl||state.image;link.download=`price-guard-${safeImageKey(state.id)}.jpg`;link.target='_blank';link.rel='noopener';link.click();
+    $('#imageSearchStatus').textContent=`图片已下载或打开；保存后点“打开${marketplaceName(state.preferredApp)}”。`;
+  }catch(error){if(error?.name!=='AbortError'){$('#imageSearchStatus').textContent='保存面板没有打开，请点原图后长按保存。';window.open(state.image,'_blank','noopener')}}
 }
 function switchView(view){
   const discovery=view==='discovery';$('#pricingView').hidden=discovery;$('#discoveryView').hidden=!discovery;
@@ -242,7 +276,11 @@ function render(){
     $('#statusGrid').innerHTML=statusCard('Yahoo主页','等待云端同步','warn')+statusCard('Yahoo比价','未运行','warn')+statusCard('闲鱼成本','未运行','warn')+statusCard('手工成本','可先录入已有商品','good');
     $('#kpis').innerHTML='';$('#rows').innerHTML='';$('#cards').innerHTML='';$('#pagination').innerHTML='';$('#empty').hidden=false;return;
   }
-  const current=account();if(!current)return;
+  const current=account();if(!current){
+    $('#profileLink').removeAttribute('href');$('#accountSync').textContent='还没有绑定店铺';
+    $('#statusGrid').innerHTML=statusCard('Yahoo店铺','等待你添加','warn')+statusCard('自动比价','绑定后启用','warn')+statusCard('通知邮箱','可先设置','good')+statusCard('账号隔离','已启用','good');
+    $('#kpis').innerHTML='';$('#rows').innerHTML='';$('#cards').innerHTML='';$('#pagination').innerHTML='';$('#empty').hidden=false;$('#empty').textContent='还没有商品。点“账号管理”添加你的 Yahoo!フリマ 卖家主页并同步。';return;
+  }
   const list=items(),scan=current.scanStats||{},date=new Date(data.checkedAt);
   $('#stamp').textContent=`最近检查：${Number.isNaN(date.valueOf())?'等待首次扫描':date.toLocaleString('zh-CN')} · 页面会自动接收新结果`;
   const login=data.login||{};$('#loginNotice').hidden=!(login.xianyuRequired||login.xianyuAuthExpired);
@@ -286,8 +324,8 @@ function detail(id){
     <section class="manualbox"><h3>由你确认成本</h3><p class="muted">采购价可使用闲鱼验证均价或由你填写；人肉费和日本物流费始终由你填写。保存后本机立即计算，再点“同步云端”让手机、电脑和 Excel 共用。</p>
       <form id="manualCostForm" class="costform"><label><span>采购价（人民币）</span><input id="purchaseCNY" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(saved.purchaseCNY??'')}" placeholder="${Number.isFinite(item.averageCNY)?item.averageCNY.toFixed(1):'必须填写'}"></label><label><span>人肉费（人民币）</span><input id="manualFeeCNY" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(saved.manualFeeCNY??'')}" placeholder="由你填写"></label><label><span>日本物流费（日元）</span><input id="shippingJPY" type="number" min="0" step="1" inputmode="numeric" value="${escapeHtml(saved.shippingJPY??'')}" placeholder="由你填写"></label><div class="costactions"><button type="submit">保存本机并计算</button><button type="button" id="saveAndSync">保存并同步云端</button><button type="button" id="clearCost" class="soft">清空</button><span id="costSaveStatus"></span></div></form>
       <p><small>公式：((采购价 + 人肉费) × ${data.settings.exchangeRate} + 日本物流费) × ${data.settings.costMultiplier}，向上取整。</small></p></section>
-    <p class="links"><a target="_blank" href="${escapeHtml(item.ownUrl)}">我的 Yahoo 商品</a><a target="_blank" href="${escapeHtml(item.lowestUrl||item.yahoo?.searchUrl)}">最低价/搜索结果</a><a target="_blank" href="${escapeHtml(item.xianyuSearchUrl)}">闲鱼文字搜索</a><button type="button" id="shareMainImage" class="linklike">准备主图给闲鱼 App 以图搜</button></p>
-    <p><small>系统自动核验方式：文字召回候选，再逐个核对详情标题、正文、规格及多张图片。原生闲鱼 App 的以图搜索不能由 GitHub 云端代为操作；上面的按钮可把 Yahoo 主图交给手机分享/保存后手动搜图。</small></p>
+    <p class="links"><a target="_blank" href="${escapeHtml(item.ownUrl)}">我的 Yahoo 商品</a><a target="_blank" href="${escapeHtml(item.lowestUrl||item.yahoo?.searchUrl)}">最低价/搜索结果</a><a target="_blank" href="${escapeHtml(item.xianyuSearchUrl)}">闲鱼文字搜索</a><button type="button" id="searchMainXianyu" class="linklike">闲鱼搜图</button><button type="button" id="searchMainXhs" class="linklike">小红书搜图</button></p>
+    <p><small>系统自动核验方式：商品页相似区与定期宽搜召回候选，再逐个核对详情标题、正文、规格及多张图片。手机搜图会先交给系统保存图片，再打开对应 App。</small></p>
     <p><small>Yahoo来源：${escapeHtml(item.yahooSource||'—')} · 搜索候选 ${escapeHtml(item.yahoo?.searchCardCount??'—')} 件 · 推荐候选 ${escapeHtml(item.yahoo?.recommendationCardCount??'—')} 件 · 详情核验 ${escapeHtml(item.yahoo?.detailCheckedCount??0)} 件 · 成本来源：${escapeHtml(item.effectiveCostSource)}</small></p>
     <h3>采用的闲鱼样本（${samples.length}）</h3><ul class="samples">${samples.map(sample=>`<li><a target="_blank" href="${escapeHtml(sample.url||'#')}">${escapeHtml(sample.detailTitle||sample.title||'同款样本')}</a><span>图片 ${(Number(sample.imageScore||0)*100).toFixed(0)}%　<b>${cny(sample.price)}</b></span></li>`).join('')||'<li>没有达到“至少 2 个详情、图片与价格区间均一致”的标准，请人工填写采购价。</li>'}</ul>${rejected.length?`<p class="muted">已排除 ${rejected.length} 个多规格、低价钩子、正文或图片不一致候选。</p>`:''}`;
 
@@ -298,19 +336,25 @@ function detail(id){
   $('#manualCostForm').onsubmit=event=>{event.preventDefault();save();detail(id);$('#costSaveStatus').textContent='已保存在本机，等待云端同步'};
   $('#saveAndSync').onclick=async()=>{save();await startCloudSync($('#costSaveStatus'))};
   $('#clearCost').onclick=()=>{manualCosts[itemKey(raw)]=fullRecord(raw,{deleted:true,updatedAt:new Date().toISOString()});saveManualCosts();render();detail(id);$('#costSaveStatus').textContent='已在本机清空；点同步云端后其他设备也会清空'};
-  $('#shareMainImage').onclick=()=>shareMainImage(item);
+  $('#searchMainXianyu').onclick=()=>openImageSearch({kind:'item',id:item.id,title:item.title,image:item.image},'xianyu');
+  $('#searchMainXhs').onclick=()=>openImageSearch({kind:'item',id:item.id,title:item.title,image:item.image},'xhs');
   if(!$('#detail').open)$('#detail').showModal();
 }
 
-async function shareMainImage(item){
-  try{
-    const response=await fetch(item.image),blob=await response.blob(),file=new File([blob],`price-guard-${item.id}.jpg`,{type:blob.type||'image/jpeg'});
-    if(navigator.canShare?.({files:[file]})){await navigator.share({title:item.title,files:[file]});return}
-  }catch{}
-  window.open(item.image,'_blank','noopener');
-}
-
 function accountId(profileUrl){const id=profileUrl.match(/\/user\/([^/?#]+)/i)?.[1];return id?`account-${id.toLowerCase()}`:`account-${Date.now()}`}
+function activePortalUsers(){return (data?.portalUsers||[]).filter(user=>user?.enabled!==false)}
+function renderPortalUsers(){
+  const section=$('#userAdminSection');section.hidden=currentUsername!=='admin';if(section.hidden)return;
+  const users=activePortalUsers();
+  $('#portalUsersList').innerHTML=users.length?users.map(user=>`<div class="userrow"><div><b>${escapeHtml(user.displayName)}</b> <code>${escapeHtml(user.username)}</code><small>${(user.accountIds||[]).length} 个店铺 · ${user.githubLogin?`已绑定 GitHub @${escapeHtml(user.githubLogin)}`:'首次同步时绑定 GitHub'}</small></div><div class="useractions">${user.githubLogin?`<button type="button" class="soft" data-unbind-user="${escapeHtml(user.username)}">解除 GitHub 绑定</button>`:''}<button type="button" class="dangersoft" data-delete-user="${escapeHtml(user.username)}">删除</button></div></div>`).join(''):'<p class="muted">还没有普通使用者。</p>';
+  document.querySelectorAll('[data-unbind-user]').forEach(button=>button.onclick=async()=>{
+    const username=button.dataset.unbindUser,now=new Date().toISOString();data.portalUsers=(data.portalUsers||[]).map(user=>user.username===username?{...user,githubLogin:'',updatedAt:now}:user);renderPortalUsers();$('#userStatus').textContent='正在生成解除绑定的加密同步请求…';await startCloudSync($('#userStatus'));
+  });
+  document.querySelectorAll('[data-delete-user]').forEach(button=>button.onclick=async()=>{
+    const username=button.dataset.deleteUser,user=activePortalUsers().find(value=>value.username===username);if(!user||!confirm(`确认删除使用者“${user.displayName}（${username}）”？\n不会删除其 Yahoo 店铺，管理员仍可查看店铺数据。`))return;
+    const now=new Date().toISOString();data.portalUsers=(data.portalUsers||[]).map(value=>value.username===username?{username,displayName:value.displayName,password:'',accountIds:value.accountIds||[],githubLogin:'',enabled:false,updatedAt:now}:value);renderPortalUsers();$('#userStatus').textContent='正在生成删除用户的加密同步请求…';await startCloudSync($('#userStatus'));
+  });
+}
 function renderLocalAccounts(){
   const values=getLocal(),cloudManaged=new Set((data.managedAccounts||[]).map(item=>item.id));
   $('#localAccounts').innerHTML=values.length?values.map((item,index)=>`<div class="localrow"><div><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.profileUrl)}</small><small>${cloudManaged.has(item.id)?'已在云端':'等待同步'}</small></div><button data-remove="${index}" class="dangersoft">删除</button></div>`).join(''):'<p class="muted">还没有新增账号。</p>';
@@ -318,14 +362,24 @@ function renderLocalAccounts(){
 }
 
 $('#detail .close').onclick=()=>$('#detail').close();$('#detail').onclick=event=>{if(event.target===$('#detail'))$('#detail').close()};
+$('#imageSearchDialog .close').onclick=()=>$('#imageSearchDialog').close();$('#imageSearchDialog').onclick=event=>{if(event.target===$('#imageSearchDialog'))$('#imageSearchDialog').close()};
+$('#saveSearchImage').onclick=saveSearchImage;$('#openXianyu').onclick=()=>openMarketplace('xianyu');$('#openXhs').onclick=()=>openMarketplace('xhs');
 $('#search').oninput=()=>{pricingPage=1;render()};$('#filter').onchange=()=>{pricingPage=1;render()};$('#accountSelect').onchange=event=>{currentAccountId=event.target.value;pricingPage=1;render()};
 $('#showPricing').onclick=()=>switchView('pricing');$('#showDiscovery').onclick=()=>switchView('discovery');
 $('#discoverySearch').oninput=renderDiscovery;$('#discoveryFilter').onchange=renderDiscovery;
 $('#manageAccounts').onclick=()=>{
-  renderLocalAccounts();
+  renderLocalAccounts();renderPortalUsers();
   $('#notificationEmail').value=localStorage.getItem(notificationEmailKey(currentUsername))||data?.portalUser?.notificationEmail||data?.portalPreferences?.[currentUsername]?.notificationEmail||'';
   $('#accountDialog').showModal();
 };$('#accountDialog .close').onclick=()=>$('#accountDialog').close();
+$('#userForm').onsubmit=async event=>{
+  event.preventDefault();if(currentUsername!=='admin')return;
+  const displayName=$('#userDisplayName').value.trim(),username=$('#newUsername').value.trim().toLowerCase(),userPassword=$('#newUserPassword').value;
+  if(!/^[a-z0-9_-]{1,48}$/.test(username)||username==='admin'){alert('用户名只能使用英文小写、数字、下划线或短横线，且不能使用 admin');return}
+  if(userPassword.length<8){alert('密码至少需要 8 位');return}
+  const existing=(data.portalUsers||[]).find(user=>user.username===username),record={...existing,username,displayName,password:userPassword,accountIds:existing?.accountIds||[],githubLogin:existing?.githubLogin||'',enabled:true,updatedAt:new Date().toISOString()};
+  data.portalUsers=[...(data.portalUsers||[]).filter(user=>user.username!==username),record];event.target.reset();renderPortalUsers();$('#userStatus').textContent='用户已在本机加密，正在生成云端同步请求…';await startCloudSync($('#userStatus'));
+};
 $('#accountForm').onsubmit=event=>{
   event.preventDefault();const name=$('#accountName').value.trim(),profileUrl=$('#accountUrl').value.trim().replace(/\/+$/,'');
   if(!/^https:\/\/paypayfleamarket\.yahoo\.co\.jp\/user\/[^/?#]+$/i.test(profileUrl)){alert('请输入完整的 Yahoo!フリマ 卖家主页链接');return}
@@ -362,7 +416,8 @@ async function startCloudSync(statusElement=$('#cloudSyncStatus')){
     const deleted=new Set(getDeleted()),byProfile=new Map();
     for(const item of [...(data.managedAccounts||[]),...getLocal()])if(item?.profileUrl&&!deleted.has(item.id))byProfile.set(item.profileUrl,{...item,enabled:true});
     const notificationEmail=String(localStorage.getItem(notificationEmailKey(currentUsername))||data?.portalUser?.notificationEmail||data?.portalPreferences?.[currentUsername]?.notificationEmail||'').trim().toLowerCase();
-    const payload={version:1,issuedAt:new Date().toISOString(),notificationEmail,manualCosts:syncCosts(),dismissedDiscoveries,discoveryReviews,managedAccounts:[...byProfile.values()],deletedAccountIds:[...deleted]};
+    const payload={version:1,issuedAt:new Date().toISOString(),notificationEmail,manualCosts:syncCosts(),dismissedDiscoveries,discoveryReviews,managedAccounts:[...byProfile.values()],deletedAccountIds:[...deleted],
+      ...(currentUsername==='admin'?{portalUsers:data.portalUsers||[]}:{})};
     const ciphertext=await encryptPayload(payload),body=`<!-- PRICE_GUARD_SYNC_V1\n${ciphertext}\n-->\n\n这是一份由价格守卫生成的端到端加密同步数据。请勿修改上方密文。`;
     const title=`[Price Guard Sync:${currentUsername}] ${new Date().toLocaleString('zh-CN')}`;
     await navigator.clipboard?.writeText(body).catch(()=>{});
@@ -411,6 +466,6 @@ addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPro
 if('serviceWorker'in navigator){
   const hadController=Boolean(navigator.serviceWorker.controller);let reloading=false;
   navigator.serviceWorker.addEventListener('controllerchange',()=>{if(hadController&&!reloading){reloading=true;location.reload()}});
-  navigator.serviceWorker.register('sw.js?v=13',{updateViaCache:'none'}).then(registration=>registration.update()).catch(()=>{});
+  navigator.serviceWorker.register('sw.js?v=16',{updateViaCache:'none'}).then(registration=>registration.update()).catch(()=>{});
 }
 checkCloudStatus(false);

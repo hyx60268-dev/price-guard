@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import { decrypt } from './lib/crypto.mjs';
-import { portalUsersFromEnv } from './lib/publish.mjs';
+import { portalUsersForResult } from './lib/publish.mjs';
 
 const summary=JSON.parse(await fs.readFile('data/change-summary.json','utf8'));
 if(summary.firstRun || !summary.hasChanges){
@@ -42,7 +42,8 @@ function safeEmail(value=''){
 }
 function html(value=''){return String(value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]))}
 function changeText(change){
-  const action=change.type==='added'?'新增':change.type==='removed'?'下架':'价格/利润变化';
+  const signal=change.signal||change.after?.priceSignal;
+  const action=change.type==='added'?'新增':change.type==='removed'?'下架':signal==='raise'?'建议提价':signal==='lower'?'建议降价':'价格/利润变化';
   return `${action}｜${change.title||change.id}`;
 }
 async function sendEmail(to,name,changes){
@@ -61,7 +62,7 @@ async function sendEmail(to,name,changes){
 if(process.env.DASHBOARD_PASSWORD&&process.env.RESEND_API_KEY&&process.env.NOTIFY_FROM_EMAIL){
   const encrypted=await fs.readFile('public/data/latest.json.enc');
   const latest=JSON.parse(decrypt(encrypted,process.env.DASHBOARD_PASSWORD).toString('utf8'));
-  const preferences=latest.portalPreferences||{},changes=summary.changes||[],users=portalUsersFromEnv();
+  const preferences=latest.portalPreferences||{},changes=summary.changes||[],users=portalUsersForResult(latest);
   const recipients=[
     {username:'admin',displayName:'总管理员',notificationEmail:safeEmail(preferences.admin?.notificationEmail),accountIds:null},
     ...users.map(user=>({...user,notificationEmail:safeEmail(preferences[user.username]?.notificationEmail||user.notificationEmail)}))
@@ -86,7 +87,8 @@ if(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID){
 if(!sent && process.env.GITHUB_TOKEN && process.env.GITHUB_REPOSITORY){
   const endpoint=`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/issues`,owner=process.env.GITHUB_REPOSITORY_OWNER;
   const headers={authorization:`Bearer ${process.env.GITHUB_TOKEN}`,'content-type':'application/json','user-agent':'price-guard','x-github-api-version':'2022-11-28'};
-  const payload={title:`价格变动提醒：${summary.total} 项`,body:`${owner?`@${owner} `:''}${message}\n\n这是自动提醒。商品明细和利润只在加密仪表盘中显示。\n${notificationMarker}`,labels:[],assignees:owner?[owner]:[]};
+  const lines=(summary.changes||[]).slice(0,20).map(changeText),remaining=Math.max(0,(summary.changes||[]).length-lines.length);
+  const payload={title:`价格变动提醒：${summary.total} 项`,body:`${owner?`@${owner} `:''}${message}\n\n${lines.map(line=>`- ${line}`).join('\n')}${remaining?`\n- 以及另外 ${remaining} 项`:''}\n\n这是自动提醒。商品明细和利润只在加密仪表盘中显示。\n${notificationMarker}`,labels:[],assignees:owner?[owner]:[]};
   let response=await fetch(endpoint,{
     method:'POST',headers,body:JSON.stringify(payload)
   });

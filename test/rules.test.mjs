@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateCost,advice,coherentPrices,conditionCompatible,distinctiveCoverage,hasExplicitDefect,hasVariantMismatch,isLikelyVariantOffer,listingSpecificationEquivalent,listingTextEquivalent,productFamily,semanticQuantity,semanticSameItem,titleScore } from '../scripts/lib/rules.mjs';
+import { calculateCost,advice,coherentPrices,conditionCompatible,distinctiveCoverage,hasExplicitDefect,hasExplicitVariantMismatch,hasVariantMismatch,isLikelyVariantOffer,listingSpecificationEquivalent,listingTextEquivalent,productFamily,semanticQuantity,semanticSameItem,titleScore,visualListingEquivalent } from '../scripts/lib/rules.mjs';
 import { encrypt,decrypt } from '../scripts/lib/crypto.mjs';
 const settings={exchangeRate:22.99,costMultiplier:1.05};
 test('manual cost formula',()=>assert.equal(calculateCost(90.5,30,210,settings),3130));
@@ -27,6 +27,24 @@ test('rejects extra set or version markers',()=>{
   assert.equal(hasVariantMismatch('時透無一郎 アクリルスタンド','時透無一郎 アクリルスタンド Bタイプ'),true);
   assert.equal(hasVariantMismatch('bilibili 鬼滅の刃 アクリルスタンド A','bilibili 鬼滅の刃 アクリルスタンド B'),true);
   assert.equal(hasVariantMismatch('全8種 セット','全8種 セット'),false);
+});
+test('same primary product with a bonus card remains a competitor',()=>{
+  const own='鳴潮 薪火シリーズ 長離「振り返れば傘の向こうにVer.」 1/7スケール フィギュア 正規品';
+  const competitor='新品未開封 鳴潮 Metheus Series 長離 1/7スケール フィギュア 特典カード付き';
+  assert.equal(hasVariantMismatch(own,competitor),false);
+  assert.equal(visualListingEquivalent({query:own,candidate:competitor,imageScore:.887}),true);
+});
+test('same-looking image cannot override pair, version, or product-family conflicts',()=>{
+  assert.equal(visualListingEquivalent({query:'雪肌精×モンチッチ ペアぬいぐるみ',candidate:'雪肌精×モンチッチ 単品ぬいぐるみ',imageScore:.99}),false);
+  assert.equal(visualListingEquivalent({query:'鳴潮 長離 フィギュア Aタイプ',candidate:'鳴潮 長離 フィギュア Bタイプ',imageScore:.99}),false);
+  assert.equal(visualListingEquivalent({query:'鳴潮 長離 フィギュア',candidate:'鳴潮 長離 アクリルスタンド',imageScore:.99}),false);
+});
+test('an omitted quantity may reach visual verification but an explicit single cannot',()=>{
+  const pair='雪肌精×モンチッチ ペアぬいぐるみ セット';
+  assert.equal(hasVariantMismatch(pair,'雪肌精×モンチッチ 限定ぬいぐるみ'),true);
+  assert.equal(hasExplicitVariantMismatch(pair,'雪肌精×モンチッチ 限定ぬいぐるみ'),false);
+  assert.equal(visualListingEquivalent({query:pair,candidate:'雪肌精×モンチッチ 限定ぬいぐるみ',imageScore:.95}),true);
+  assert.equal(visualListingEquivalent({query:pair,candidate:'雪肌精×モンチッチ 単品ぬいぐるみ',imageScore:.95}),false);
 });
 test('treats pair and two-piece one-set wording as the same quantity',()=>{
   const own='雪肌精×モンチッチ ペアぬいぐるみ セット 限定';

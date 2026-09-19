@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { inventoryDelta,isFresh,isFreshMinutes,reconcileLiveItems,shouldScanXianyu,verifiedXianyuCache } from '../scripts/lib/planner.mjs';
+import { fairRoundRobin,inventoryDelta,isFresh,isFreshMinutes,reconcileLiveItems,shouldScanXianyu,verifiedXianyuCache } from '../scripts/lib/planner.mjs';
 
 test('Yahoo minute cache does not accidentally last for hours',()=>{
   const now=Date.parse('2026-09-12T12:00:00Z');
@@ -50,4 +50,8 @@ test('ambiguous duplicate title does not inherit the wrong cost metadata',()=>{
   const merged=reconcileLiveItems([],previous,[{id:'new',title:'同名商品',ownPrice:3000}],'m');
   assert.equal(merged[0].relistedFrom,undefined);
   assert.equal(merged[0].xianyuQuery,'');
+});
+
+test('multi-shop Yahoo work is interleaved fairly',()=>{
+  assert.deepEqual(fairRoundRobin([['a1','a2','a3'],['b1'],['c1','c2']]),['a1','b1','c1','a2','c2','a3']);
 });

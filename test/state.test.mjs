@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateManualFields,discoveryDismissalKey,manualCostFor,manualCostKey,mergeAccountConfigs,mergeDiscoveryReviews,mergeDismissedDiscoveries,mergeManualCosts,reconcileDurableState } from '../scripts/lib/state.mjs';
-import { portalUsersFromEnv,scopeResultForPortalUser } from '../scripts/lib/publish.mjs';
+import { mergePortalUserRecords,portalUsersForResult,portalUsersFromEnv,scopeResultForPortalUser } from '../scripts/lib/publish.mjs';
 
 const item={accountId:'m',id:'new',title:'中国限定 商品 A 新品',xianyuQuery:'商品A 中国版',ownPrice:5000,recommendedPrice:4500,averageCNY:20};
 
@@ -61,4 +61,21 @@ test('portal user sees only assigned shops and costs',()=>{
   assert.equal(scoped.portalUser.role,'member');
   assert.equal(scoped.portalUser.notificationEmail,'new@example.com');
   assert.equal(scoped.portalPreferences,undefined);
+  assert.equal(scoped.portalUsers,undefined);
+});
+
+test('admin can create a login before the user adds a shop',()=>{
+  const users=portalUsersFromEnv(JSON.stringify([{username:'new-user',displayName:'新人',password:'12345678'}]));
+  assert.deepEqual(users[0].accountIds,[]);
+  const scoped=scopeResultForPortalUser({accounts:[],items:[],manualCosts:{},managedAccounts:[]},users[0]);
+  assert.equal(scoped.portalUser.displayName,'新人');
+  assert.deepEqual(scoped.accounts,[]);
+});
+
+test('encrypted portal records override legacy env users and keep deletion tombstones',()=>{
+  const env=JSON.stringify([{username:'staff',displayName:'旧昵称',password:'old-pass-123',accountIds:['old']}]);
+  const result={portalUsers:[{username:'staff',displayName:'新昵称',password:'new-pass-123',accountIds:[],enabled:true,updatedAt:'2026-09-19T00:00:00Z'}]};
+  assert.equal(portalUsersForResult(result,env)[0].displayName,'新昵称');
+  const deleted=mergePortalUserRecords(result.portalUsers,[{username:'staff',displayName:'新昵称',password:'',enabled:false,updatedAt:'2026-09-20T00:00:00Z'}]);
+  assert.equal(portalUsersForResult({portalUsers:deleted},env).length,0);
 });

@@ -9,7 +9,8 @@ permissions:
   id-token: write
 concurrency:
   group: pages
-  cancel-in-progress: true
+  # 多人同时提交账号/成本时必须排队合并，不能让后一份取消前一份。
+  cancel-in-progress: false
 jobs:
   sync-and-publish:
     if: startsWith(github.event.issue.title, '[Price Guard Sync')
@@ -23,7 +24,9 @@ jobs:
       - name: 恢复最新加密数据
         uses: actions/cache/restore@v4
         with:
-          path: state
+          path: |
+            state
+            public/data/share-images
           key: price-guard-state-${{ github.run_id }}
           restore-keys: |
             price-guard-state-
@@ -46,9 +49,15 @@ jobs:
           PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
       - name: 保存最新加密数据
         run: mkdir -p state && cp public/data/latest.json.enc state/latest.json.enc
+      - name: 准备手机以图搜索图片
+        run: npm run prepare:share-images
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
       - uses: actions/cache/save@v4
         with:
-          path: state
+          path: |
+            state
+            public/data/share-images
           key: price-guard-state-${{ github.run_id }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

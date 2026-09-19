@@ -10,22 +10,40 @@ function safeEmail(value=''){
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)&&email.length<=254?email:'';
 }
 
+function normalizePortalUserRecords(values=[]){
+  const seen=new Map();
+  for(const raw of values){
+    const username=safeUsername(raw?.username);
+    if(!username||username==='admin')throw new Error(`多人账号名称无效：${raw?.username||''}`);
+    const enabled=raw?.enabled!==false;
+    if(enabled&&String(raw?.password||'').length<8)throw new Error(`多人账号 ${username} 的密码至少需要 8 位`);
+    const record={username,displayName:String(raw?.displayName||username).slice(0,80),password:enabled?String(raw.password):'',
+      githubLogin:String(raw?.githubLogin||'').trim(),notificationEmail:safeEmail(raw?.notificationEmail),
+      accountIds:[...new Set((raw?.accountIds||[]).map(String).filter(Boolean))],enabled,updatedAt:raw?.updatedAt||new Date(0).toISOString()};
+    const current=seen.get(username),nextTime=Date.parse(record.updatedAt)||0,currentTime=Date.parse(current?.updatedAt||'')||0;
+    if(!current||nextTime>=currentTime)seen.set(username,record);
+  }
+  return [...seen.values()];
+}
+
+export function mergePortalUserRecords(base=[],incoming=[]){
+  return normalizePortalUserRecords([...(base||[]),...(incoming||[])]);
+}
+
 export function portalUsersFromEnv(value=process.env.PORTAL_USERS_JSON||''){
   if(!value)return [];
   let parsed;
   try{parsed=JSON.parse(value)}catch{throw new Error('PORTAL_USERS_JSON 不是有效 JSON')}
   if(!Array.isArray(parsed))throw new Error('PORTAL_USERS_JSON 必须是数组');
-  const seen=new Set();
-  return parsed.map(raw=>{
-    const username=safeUsername(raw?.username);
-    if(!username||username==='admin'||seen.has(username))throw new Error(`多人账号名称无效或重复：${raw?.username||''}`);
-    if(String(raw?.password||'').length<8)throw new Error(`多人账号 ${username} 的密码至少需要 8 位`);
-    const accountIds=[...new Set((raw?.accountIds||[]).map(String).filter(Boolean))];
-    if(!accountIds.length)throw new Error(`多人账号 ${username} 没有分配店铺`);
-    seen.add(username);
-    return {username,displayName:String(raw?.displayName||username).slice(0,80),password:String(raw.password),
-      githubLogin:String(raw?.githubLogin||'').trim(),notificationEmail:safeEmail(raw?.notificationEmail),accountIds};
-  });
+  return normalizePortalUserRecords(parsed).filter(user=>user.enabled!==false);
+}
+
+export function portalUserRecordsForResult(result={},envValue=process.env.PORTAL_USERS_JSON||''){
+  return mergePortalUserRecords(portalUsersFromEnv(envValue),result.portalUsers||[]);
+}
+
+export function portalUsersForResult(result={},envValue=process.env.PORTAL_USERS_JSON||''){
+  return portalUserRecordsForResult(result,envValue).filter(user=>user.enabled!==false);
 }
 
 export function scopeResultForPortalUser(result,user){
@@ -35,7 +53,7 @@ export function scopeResultForPortalUser(result,user){
   const manualCosts=Object.fromEntries(Object.entries(result.manualCosts||{}).filter(([,record])=>allowed.has(record?.accountId)));
   const managedAccounts=(result.managedAccounts||[]).filter(account=>allowed.has(account.id));
   const notificationEmail=safeEmail(result.portalPreferences?.[user.username]?.notificationEmail||user.notificationEmail);
-  return {...result,portalPreferences:undefined,portalUser:{username:user.username,displayName:user.displayName,role:'member',notificationEmail},accounts,items,manualCosts,managedAccounts,
+  return {...result,portalUsers:undefined,portalPreferences:undefined,portalUser:{username:user.username,displayName:user.displayName,role:'member',notificationEmail},accounts,items,manualCosts,managedAccounts,
     ownedTitleHistory:items.map(item=>item.title).filter(Boolean)};
 }
 
@@ -69,6 +87,8 @@ export function dashboardSummary(result,changeSummary){
 export async function writeOutputs({root,result,previous,password}){
   await Promise.all(['data','public/data'].map(directory=>fs.mkdir(path.join(root,directory),{recursive:true})));
   result.dataRevision=result.dataRevision||result.cloudSyncedAt||result.checkedAt||new Date().toISOString();
+  result.portalUsers=portalUserRecordsForResult(result);
+  const portalUsers=result.portalUsers.filter(user=>user.enabled!==false);
   const changeSummary=compareSnapshots(previous,result);
   result.changes={...changeSummary,changes:changeSummary.changes.slice(0,100)};
   const jsonPath=path.join(root,'data','latest.json'),xlsxPath=path.join(root,'data','latest.xlsx');
@@ -83,7 +103,6 @@ export async function writeOutputs({root,result,previous,password}){
     fs.writeFile(path.join(root,'public','data','status.json'),JSON.stringify(summary,null,2)),
     fs.writeFile(path.join(root,'data','change-summary.json'),JSON.stringify(changeSummary,null,2))
   ]);
-  const portalUsers=portalUsersFromEnv();
   const usersDir=path.join(root,'public','data','users');
   await fs.mkdir(usersDir,{recursive:true});
   const manifest=[{username:'admin',displayName:'总管理员',role:'admin'},...portalUsers.map(user=>({username:user.username,displayName:user.displayName,role:'member'}))];

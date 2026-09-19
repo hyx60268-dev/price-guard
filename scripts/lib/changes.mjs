@@ -1,4 +1,4 @@
-const trackedFields=['ownPrice','lowestPrice','recommendedPrice','averageCNY','costJPY','currentProfitJPY','afterProfitJPY','advice'];
+const trackedFields=['ownPrice','lowestPrice','recommendedPrice','priceSignal','averageCNY','costJPY','currentProfitJPY','afterProfitJPY','advice'];
 
 const same=(a,b)=>Number.isFinite(a)&&Number.isFinite(b)?Math.round(a*100)===Math.round(b*100):a===b;
 
@@ -11,8 +11,14 @@ export function compareSnapshots(previous,current){
   for(const [id,item] of after){
     const old=before.get(id);
     if(!old){changes.push({type:'added',id,title:item.title,accountId:item.accountId});continue}
-    const fields=trackedFields.filter(field=>!same(old[field],item[field]));
-    if(fields.length) changes.push({type:'updated',id,title:item.title,accountId:item.accountId,fields,
+    const fields=trackedFields.filter(field=>{
+      // priceSignal was introduced in v7. Do not turn that schema migration into
+      // an "all listings changed" notification; accompanying price/advice fields
+      // still surface any genuinely new raise/lower action.
+      if(field==='priceSignal'&&!['raise','lower','hold'].includes(old[field])) return false;
+      return !same(old[field],item[field]);
+    });
+    if(fields.length) changes.push({type:'updated',id,title:item.title,accountId:item.accountId,signal:item.priceSignal||null,fields,
       before:Object.fromEntries(fields.map(field=>[field,old[field]??null])),after:Object.fromEntries(fields.map(field=>[field,item[field]??null]))});
   }
   for(const [id,item] of before) if(!after.has(id)) changes.push({type:'removed',id,title:item.title,accountId:item.accountId});

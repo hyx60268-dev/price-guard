@@ -13,8 +13,8 @@ permissions:
   id-token: write
 concurrency:
   group: pages
-  # 新代码或手工检查优先，定时任务之间仍顺序执行。
-  cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+  # 扫描、用户同步和发布共用一条队列，避免多人输入或加密状态被取消覆盖。
+  cancel-in-progress: false
 jobs:
   scan-and-publish:
     runs-on: ubuntu-latest
@@ -27,7 +27,9 @@ jobs:
       - name: 恢复上次加密基准
         uses: actions/cache/restore@v4
         with:
-          path: state
+          path: |
+            state
+            public/data/share-images
           key: price-guard-state-${{ github.run_id }}
           restore-keys: |
             price-guard-state-
@@ -64,6 +66,10 @@ jobs:
           XIANYU_STORAGE_STATE_GZIP_B64: ${{ secrets.XIANYU_STORAGE_STATE_GZIP_B64 }}
           XIANYU_STORAGE_STATE_B64: ${{ secrets.XIANYU_STORAGE_STATE_B64 }}
           SCAN_TRIGGER: ${{ github.event_name }}
+      - name: 准备手机以图搜索图片
+        run: npm run prepare:share-images
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
       - name: 数据变化时发送手机提醒
         run: npm run notify
         env:
@@ -86,7 +92,9 @@ jobs:
         run: mkdir -p state && cp public/data/latest.json.enc state/latest.json.enc
       - uses: actions/cache/save@v4
         with:
-          path: state
+          path: |
+            state
+            public/data/share-images
           key: price-guard-state-${{ github.run_id }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

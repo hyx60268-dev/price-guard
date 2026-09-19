@@ -61,6 +61,9 @@ dialog::backdrop{background:#07130c99}
 .costactions{grid-column:1/-1;display:flex;align-items:center;gap:9px;flex-wrap:wrap}
 .costactions span{color:var(--green);font-weight:700}
 .links{display:flex;gap:16px;flex-wrap:wrap}
+.imagehandoff{display:flex;gap:14px;align-items:center;margin:14px 0}
+.imagehandoff img{width:112px;height:112px;object-fit:cover;border-radius:12px;background:#eee}
+.imagehandoffactions{display:flex;gap:9px;flex-wrap:wrap;margin:16px 0}
 .transfer{display:flex;gap:8px;flex-wrap:wrap}
 .syncbox{margin:16px 0;padding:14px;border-radius:11px;background:#eaf4ee;border:1px solid #cfe1d7}
 .syncbox p{margin:8px 0 0}
@@ -85,6 +88,11 @@ footer{text-align:center;color:var(--muted);padding:20px}
 code{background:#eee9df;padding:2px 5px;border-radius:5px}
 .accountform{display:grid;grid-template-columns:1fr 2fr auto;gap:8px;margin:18px 0}
 .accountform input{border:1px solid var(--line);border-radius:9px;padding:10px}
+.userform{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;margin:14px 0}
+.userform input{min-width:0;border:1px solid var(--line);border-radius:9px;padding:10px}
+.userrow{display:flex;justify-content:space-between;gap:12px;align-items:center;border-top:1px solid var(--line);padding:10px 0}
+.userrow small{display:block;color:var(--muted)}
+.useractions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
 .localrow{display:flex;justify-content:space-between;gap:12px;align-items:center;border-top:1px solid var(--line);padding:10px 0}
 .localrow small{display:block;color:var(--muted);word-break:break-all}
 .dangersoft{background:#fde5e2;color:var(--red)}
@@ -143,6 +151,7 @@ hr{border:0;border-top:1px solid var(--line);margin:22px 0}
   .detailgrid{grid-template-columns:1fr 1fr}
   .statusgrid{grid-template-columns:1fr 1fr}
   .accountform{grid-template-columns:1fr}
+  .userform{grid-template-columns:1fr}
   .accountbar{align-items:stretch}
   .accountbar>div{flex:1}
   .accountbar select{width:100%;min-width:0}

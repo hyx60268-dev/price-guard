@@ -20,3 +20,18 @@ test('does not alert when the checked price stays exactly the same',()=>{
   assert.equal(compareSnapshots(old,same).hasChanges,false);
   assert.equal(compareSnapshots(old,changed).hasChanges,true);
 });
+
+test('alerts when market direction changes from hold to raise',()=>{
+  const old={items:[{accountId:'m',id:'a',title:'A',ownPrice:8000,recommendedPrice:8000,priceSignal:'hold'}]};
+  const now={items:[{accountId:'m',id:'a',title:'A',ownPrice:8000,recommendedPrice:9999,priceSignal:'raise'}]};
+  const result=compareSnapshots(old,now);
+  assert.equal(result.hasChanges,true);
+  assert.equal(result.changes[0].signal,'raise');
+  assert.deepEqual(result.changes[0].fields.sort(),['priceSignal','recommendedPrice']);
+});
+
+test('does not alert every listing when priceSignal is first introduced',()=>{
+  const old={items:[{accountId:'m',id:'a',title:'A',ownPrice:8000,recommendedPrice:8000}]};
+  const now={items:[{accountId:'m',id:'a',title:'A',ownPrice:8000,recommendedPrice:8000,priceSignal:'hold'}]};
+  assert.equal(compareSnapshots(old,now).hasChanges,false);
+});

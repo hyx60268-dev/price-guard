@@ -3,3 +3,4 @@ node_modules/
 state/
 data/
 public/data/*.enc
+public/data/share-images/

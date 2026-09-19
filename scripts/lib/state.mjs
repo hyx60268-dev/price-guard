@@ -98,6 +98,15 @@ export function mergeManagedAccounts(base=[],incoming=[]){
   return [...output.values()];
 }
 
+export function mergePortalUserRecords(base=[],incoming=[]){
+  const output=new Map();
+  for(const user of [...(base||[]),...(incoming||[])]){
+    const username=String(user?.username||'').trim().toLowerCase();if(!username)continue;
+    const current=output.get(username);if(!current||timestamp(user)>=timestamp(current))output.set(username,{...current,...user,username});
+  }
+  return [...output.values()];
+}
+
 export function reconcileDurableState(cache={},published={}){
   const revision=value=>Date.parse(value?.dataRevision||value?.cloudSyncedAt||value?.checkedAt||'')||0;
   const base=revision(published)>revision(cache)?published:cache;
@@ -107,6 +116,7 @@ export function reconcileDurableState(cache={},published={}){
     dismissedDiscoveries:mergeDismissedDiscoveries(cache.dismissedDiscoveries||{},published.dismissedDiscoveries||{}),
     discoveryReviews:mergeDiscoveryReviews(cache.discoveryReviews||{},published.discoveryReviews||{}),
     managedAccounts:mergeManagedAccounts(cache.managedAccounts||[],published.managedAccounts||[]),
+    portalUsers:mergePortalUserRecords(cache.portalUsers||[],published.portalUsers||[]),
     ownedTitleHistory:[...new Set([...(cache.ownedTitleHistory||[]),...(published.ownedTitleHistory||[])])].slice(-5000),
     relistAliases:{...(cache.relistAliases||{}),...(published.relistAliases||{})}
   };

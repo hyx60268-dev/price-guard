@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { openContext } from './lib/browser.mjs';
 import { discoverYahooProfile,yahooCompare } from './lib/yahoo.mjs';
 import { xianyuCost } from './lib/xianyu.mjs';
-import { inventoryDelta,isFresh,isFreshMinutes,reconcileLiveItems,verifiedXianyuCache } from './lib/planner.mjs';
+import { fairRoundRobin,inventoryDelta,isFresh,isFreshMinutes,reconcileLiveItems,verifiedXianyuCache } from './lib/planner.mjs';
 import { decrypt } from './lib/crypto.mjs';
 import { writeOutputs } from './lib/publish.mjs';
 import { calculateManualFields,manualCostFor,mergeAccountConfigs } from './lib/state.mjs';
@@ -66,9 +66,11 @@ const portalPreferences=previous?.portalPreferences||{};
 const dismissedDiscoveries=previous?.dismissedDiscoveries||{};
 const discoveryReviews=previous?.discoveryReviews||{};
 const managedAccounts=previous?.managedAccounts||[];
+const portalUsers=previous?.portalUsers||[];
 const accounts=mergeAccountConfigs(accountsCfg.accounts||[],managedAccounts);
 const defaultAccountId=accounts[0]?.id;
-const contexts=await mapLimit(accounts,Math.min(2,accounts.length),async(account,accountIndex)=>{
+const profileConcurrency=Math.max(1,Math.min(4,Number(settings.profileConcurrency)||3));
+const contexts=await mapLimit(accounts,Math.min(profileConcurrency,accounts.length),async(account,accountIndex)=>{
   let catalogItems=[];
   if(account.catalogFile){
     try{catalogItems=(await readJson(path.join(root,account.catalogFile))).items||[]}
@@ -100,12 +102,14 @@ for(const context of contexts)for(const relisted of context.profileDelta.reliste
 const forceYahoo=process.env.FORCE_FULL_SCAN==='1';
 const yahooFreshMinutes=Number(settings.yahooFreshMinutes)||15;
 const deadline=startedAt+(Number(settings.scanBudgetMinutes)||12)*60_000;
-const yahooTasks=contexts.flatMap(context=>context.activeItems.map((item,itemIndex)=>{
+const yahooBuckets=contexts.map(context=>context.activeItems.map((item,itemIndex)=>{
   const prior=priorFor(context,item),added=context.profileDelta.added.includes(item.id)||Boolean(item.relistedFrom);
   const priceChanged=Number.isFinite(prior.ownPrice)&&prior.ownPrice!==item.ownPrice;
   const checked=Date.parse(prior.yahoo?.checkedAt||'');
   return {context,item,itemIndex,prior,priority:added?0:priceChanged?1:Number.isFinite(checked)?3:2,lastChecked:Number.isFinite(checked)?checked:0};
-})).sort((a,b)=>a.priority-b.priority||a.lastChecked-b.lastChecked||a.itemIndex-b.itemIndex||a.context.accountIndex-b.context.accountIndex);
+}).sort((a,b)=>a.priority-b.priority||a.lastChecked-b.lastChecked||a.itemIndex-b.itemIndex));
+// 每个店铺轮流取一件，不让商品多或旧缓存多的账号占满整轮预算。
+const yahooTasks=fairRoundRobin(yahooBuckets);
 
 const yahooConcurrency=Math.max(1,Math.min(4,Number(settings.yahooConcurrency)||3));
 await mapLimit(yahooTasks,yahooConcurrency,async(task,taskIndex)=>{
@@ -118,7 +122,7 @@ await mapLimit(yahooTasks,yahooConcurrency,async(task,taskIndex)=>{
     context.yahooById.set(item.id,cachedYahoo(prior,item,'scan_budget')||{status:'deferred_budget',lowestPrice:null,recommendedPrice:item.ownPrice,candidates:[]});return;
   }
   try{
-    const result=await yahooCompare(null,item,settings);context.yahooById.set(item.id,result);
+    const result=await yahooCompare(null,item,{...settings,forceYahooBroadSearch:forceYahoo||task.priority<=1});context.yahooById.set(item.id,result);
     console.log(`[Yahoo ${taskIndex+1}/${yahooTasks.length}] ${context.account.name} ${item.id} cards=${result.cardCount} matches=${result.competitorCount} lowest=${result.lowestPrice} source=${result.sourceStatus?.search||'unknown'}`);
   }catch(error){
     console.error(`[Yahoo ERROR][${context.account.id}:${item.id}]`,String(error));
@@ -198,7 +202,9 @@ for(const context of contexts){
     const costSource=Number.isFinite(manual?.purchaseCNY)?'manual':xc.status==='ok'&&Number.isFinite(xc.averageCNY)?'live':Number.isFinite(averageCNY)?'cached':'missing';
     const samples=xc.samples?.length?xc.samples:(priorVerified?.samples||[]);
     const confidence=yc.status==='ok'&&(!needsXianyu||xc.status==='ok'||Number.isFinite(manual?.purchaseCNY))?'高':(yahooSource==='cached'||costSource==='cached')?'参考缓存':'需人工';
-    const base={...item,accountId:context.account.id,accountName:context.account.name,ownUrl:item.url,lowestPrice,lowestUrl,recommendedPrice,difference:ownPrice-lowestPrice,
+    const priceSignal=yc.underpriced&&recommendedPrice>ownPrice?'raise':recommendedPrice<ownPrice?'lower':'hold';
+    const base={...item,accountId:context.account.id,accountName:context.account.name,ownUrl:item.url,lowestPrice,lowestUrl,recommendedPrice,priceSignal,difference:ownPrice-lowestPrice,
+      marketMedianPrice:yc.marketMedianPrice??prior.marketMedianPrice??null,marketSampleCount:yc.marketSampleCount??prior.marketSampleCount??0,
       averageCNY,confidence,yahooSource,costSource,needsXianyu,needsManualPurchase:needsXianyu&&!Number.isFinite(averageCNY)&&!Number.isFinite(manual?.purchaseCNY),
       yahoo:{...(prior.yahoo||{}),...yc,lowestPrice,lowestUrl},xianyu:{...(prior.xianyu||{}),...xc,averageCNY,samples},
       xianyuSearchUrl:xc.searchUrl||prior.xianyuSearchUrl||`https://www.goofish.com/search?q=${encodeURIComponent(item.xianyuQuery||item.title||'')}`};
@@ -233,10 +239,10 @@ const ownedTitleHistory=[...new Set([
   ...allItems.map(item=>item.title)
 ].map(value=>String(value||'').trim()).filter(Boolean))].slice(-5000);
 const result={
-  version:5,checkedAt,dataRevision:checkedAt,settings,accounts:accountResults,managedAccounts,
+  version:6,checkedAt,dataRevision:checkedAt,settings,accounts:accountResults,managedAccounts,portalUsers,
   manualCosts,portalPreferences,dismissedDiscoveries,discoveryReviews,ownedTitleHistory,relistAliases,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode},items:allItems,
   scanMeta:{trigger:process.env.SCAN_TRIGGER||'local',startedAt:new Date(startedAt).toISOString(),durationSeconds:Math.round((Date.now()-startedAt)/1000),
-    budgetMinutes:Number(settings.scanBudgetMinutes)||12,yahooConcurrency,xianyuLimit}
+    budgetMinutes:Number(settings.scanBudgetMinutes)||12,profileConcurrency,yahooConcurrency,xianyuLimit}
 };
 const {summary}=await writeOutputs({root,result,previous,password});
 console.log(summary);

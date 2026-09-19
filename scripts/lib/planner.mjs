@@ -72,3 +72,11 @@ export function isFreshMinutes(value,minutes,now=Date.now()){
   const timestamp=Date.parse(value||'');
   return Number.isFinite(timestamp)&&now-timestamp<Math.max(0,minutes)*60*1000;
 }
+
+export function fairRoundRobin(buckets=[]){
+  const output=[],cursors=buckets.map(()=>0);
+  while(cursors.some((cursor,index)=>cursor<(buckets[index]?.length||0)))for(let index=0;index<buckets.length;index++){
+    const bucket=buckets[index]||[],cursor=cursors[index];if(cursor<bucket.length){output.push(bucket[cursor]);cursors[index]++}
+  }
+  return output;
+}
