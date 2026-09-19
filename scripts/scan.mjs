@@ -62,6 +62,7 @@ function cachedYahoo(prior,item,reason='fresh_cache'){
 
 const previous=await previousSnapshot();
 const manualCosts=previous?.manualCosts||{};
+const portalPreferences=previous?.portalPreferences||{};
 const dismissedDiscoveries=previous?.dismissedDiscoveries||{};
 const discoveryReviews=previous?.discoveryReviews||{};
 const managedAccounts=previous?.managedAccounts||[];
@@ -94,8 +95,9 @@ const contexts=await mapLimit(accounts,Math.min(2,accounts.length),async(account
 const relistAliases={};
 for(const context of contexts)for(const relisted of context.profileDelta.relisted||[])relistAliases[`${context.account.id}:${relisted.to}`]=relisted.from;
 
-// 代码部署必须用新规则完整验一次；日常 schedule 仍可复用 15 分钟内的结果。
-const forceYahoo=['push','workflow_dispatch'].includes(process.env.SCAN_TRIGGER)||process.env.FORCE_FULL_SCAN==='1';
+// 只有明确设置 FORCE_FULL_SCAN 才从头强制重扫。部署/手工重跑也沿用轮转缓存，
+// 否则每次都会在时间预算耗尽前反复检查前半段，后半段商品长期得不到核验。
+const forceYahoo=process.env.FORCE_FULL_SCAN==='1';
 const yahooFreshMinutes=Number(settings.yahooFreshMinutes)||15;
 const deadline=startedAt+(Number(settings.scanBudgetMinutes)||12)*60_000;
 const yahooTasks=contexts.flatMap(context=>context.activeItems.map((item,itemIndex)=>{
@@ -232,7 +234,7 @@ const ownedTitleHistory=[...new Set([
 ].map(value=>String(value||'').trim()).filter(Boolean))].slice(-5000);
 const result={
   version:5,checkedAt,dataRevision:checkedAt,settings,accounts:accountResults,managedAccounts,
-  manualCosts,dismissedDiscoveries,discoveryReviews,ownedTitleHistory,relistAliases,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode},items:allItems,
+  manualCosts,portalPreferences,dismissedDiscoveries,discoveryReviews,ownedTitleHistory,relistAliases,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode},items:allItems,
   scanMeta:{trigger:process.env.SCAN_TRIGGER||'local',startedAt:new Date(startedAt).toISOString(),durationSeconds:Math.round((Date.now()-startedAt)/1000),
     budgetMinutes:Number(settings.scanBudgetMinutes)||12,yahooConcurrency,xianyuLimit}
 };

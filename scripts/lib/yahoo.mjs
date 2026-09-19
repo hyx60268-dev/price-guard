@@ -171,6 +171,16 @@ function recommendationEvidence(card){
   return false;
 }
 
+function candidateEvidenceOrder(a,b){
+  const aRecommended=a.fromRecommendation?1:0,bRecommended=b.fromRecommendation?1:0;
+  if(aRecommended!==bRecommended)return bRecommended-aRecommended;
+  const aVector=Number.isFinite(a.recommendationScore)?a.recommendationScore:-1;
+  const bVector=Number.isFinite(b.recommendationScore)?b.recommendationScore:-1;
+  if(aVector!==bVector)return bVector-aVector;
+  if(a.titleScore!==b.titleScore)return b.titleScore-a.titleScore;
+  return a.price-b.price;
+}
+
 export async function discoverYahooProfile(_unusedPage,profileUrl,settings={}){
   applyYahooSettings(settings);
   const first=await fetchYahooResult(`${profileUrl}?page=1`,settings);
@@ -238,12 +248,18 @@ export async function yahooCompare(_unusedPage,item,settings={}){
     }catch(error){itemPageError=String(error)}
   }
 
-  // 出现可能同款候选时读取自己的详情全文和全部商品图。后续必须同时通过实物类型、
-  // 规格数量、详情文字和图片验证；标题相似不再能单独成为最低价证据。
+  // 出现可能同款候选时读取自己的详情全文和全部商品图。商品页同时返回 Yahoo 自己的
+  // 「相似商品 / 看过此商品的人也推荐」候选；读取后必须重新合并并筛选，不能只拿详情
+  // 而丢掉这些候选。
   if(preliminary.length&&!ownDetail){
-    try{ownBundle=await fetchYahooItemBundle(item.id,settings);ownDetail=ownBundle.detail;ownCategory=categoryText(ownDetail,ownSearchCard)||ownCategory}
+    try{
+      ownBundle=await fetchYahooItemBundle(item.id,settings);ownDetail=ownBundle.detail;ownCategory=categoryText(ownDetail,ownSearchCard)||ownCategory;
+      recommendationCards=ownBundle.recommendations||[];cards=mergeCards([searchCards,recommendationCards]);
+      rejected.length=0;preliminary=screenCards(cards);
+    }
     catch(error){itemPageError=String(error)}
   }
+  preliminary.sort(candidateEvidenceOrder);
   const ownImages=[...(ownDetail?.images||[]).map(image=>typeof image==='string'?image:image?.url).filter(Boolean),ownDetail?.thumbnailImageUrl,...(item.yahoo?.ownImages||[]),item.image].filter(Boolean);
   const maxImages=Math.max(3,Math.min(10,Number(settings.maxYahooImages)||8));
   const ownFingerprints=(await Promise.all([...new Set(ownImages)].slice(0,maxImages).map(imageFingerprints))).filter(Boolean);
@@ -269,7 +285,9 @@ export async function yahooCompare(_unusedPage,item,settings={}){
       const queryFamily=productFamily(item.title,ownCategory),candidateFamily=productFamily(`${detail.title}\n${detail.description||''}`,detailCategory);
       const familyConfirmed=queryFamily&&candidateFamily?queryFamily===candidateFamily:!queryFamily&&!candidateFamily&&detailTitleScore>=.95;
       if(!familyConfirmed){rejected.push({id:card.id,price:Number(detail.price),reason:'physical_product_type_unconfirmed',queryFamily,candidateFamily,titleScore:detailTitleScore});continue}
-      const specificationEquivalent=listingSpecificationEquivalent(ownDetail?.title||item.title,detail.title||'',ownCategory,detailCategory);
+      const ownFullText=`${ownDetail?.title||item.title}\n${ownDetail?.description||''}`;
+      const candidateFullText=`${detail.title||''}\n${detail.description||''}`;
+      const specificationEquivalent=listingSpecificationEquivalent(ownFullText,candidateFullText,ownCategory,detailCategory);
       // 官网拆盒角色图、实物端盒图可能完全不同。只要详情全文中的品牌、系列、
       // 商品类型和明确数量规格一致，就允许规格证据补足标题相似度；不同角色、
       // 数量、版本和商品形态仍会在 specificationEquivalent/semantic 中被拒绝。
@@ -279,14 +297,16 @@ export async function yahooCompare(_unusedPage,item,settings={}){
       const detailFingerprints=(await Promise.all([...new Set(detailImages)].slice(0,maxImages).map(imageFingerprints))).filter(Boolean);
       const imageScore=imageSetSimilarity(ownFingerprints,detailFingerprints);
       const imageThreshold=Math.max(.75,Number(settings.yahooImageMatchThreshold)||.80);
-      const textEquivalent=listingTextEquivalent(ownDetail?.title||item.title,ownDetail?.description||'',detail.title||'',detail.description||'')||specificationEquivalent;
+      const recommendationCorroborated=card.fromRecommendation&&Number(card.recommendationScore)>=.9&&semantic.accepted&&familyConfirmed;
+      const textEquivalent=listingTextEquivalent(ownDetail?.title||item.title,ownDetail?.description||'',detail.title||'',detail.description||'')||specificationEquivalent||recommendationCorroborated;
       if(!textEquivalent&&(!ownFingerprints.length||!detailFingerprints.length||!Number.isFinite(imageScore)||imageScore<imageThreshold)){
         rejected.push({id:card.id,price:Number(detail.price),reason:'physical_image_unconfirmed',titleScore:detailTitleScore,imageScore});continue
       }
       const detailImage=detailImages[0]||card.image;
       competitors.push({...card,url:`https://paypayfleamarket.yahoo.co.jp/item/${detail.id}`,title:detail.title,
         text:`${detail.title}\n${detail.description||''}`,image:detailImage,price:Number(detail.price),itemStatus:detail.status,
-        titleScore:detailTitleScore,imageScore,semantic,queryFamily,candidateFamily,matchMethod:textEquivalent?'detail_type_quantity_equivalent_text':'detail_type_quantity_text_images'});
+        titleScore:detailTitleScore,imageScore,semantic,queryFamily,candidateFamily,
+        matchMethod:recommendationCorroborated?'yahoo_recommendation_full_text_verified':textEquivalent?'detail_type_quantity_equivalent_text':'detail_type_quantity_text_images'});
     }catch(error){rejected.push({id:card.id,price:card.price,reason:'detail_error',error:String(error)})}
   }
 

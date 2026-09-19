@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decrypt } from './lib/crypto.mjs';
-import { writeOutputs } from './lib/publish.mjs';
+import { portalUsersFromEnv,writeOutputs } from './lib/publish.mjs';
 import { accountIdFromProfile,calculateManualFields,manualCostFor,mergeDiscoveryReviews,mergeDismissedDiscoveries,mergeManualCosts } from './lib/state.mjs';
 import { decodeSyncBody } from './lib/sync-payload.mjs';
 
@@ -12,34 +12,46 @@ if(!password||password.length<8)throw new Error('DASHBOARD_PASSWORD 至少需要
 
 const event=JSON.parse(await fs.readFile(process.env.GITHUB_EVENT_PATH,'utf8'));
 const issue=event.issue||{},owner=event.repository?.owner?.login||process.env.GITHUB_REPOSITORY_OWNER;
-if(issue.user?.login!==owner)throw new Error('只接受仓库所有者提交的同步请求');
-if(!String(issue.title||'').startsWith('[Price Guard Sync]'))throw new Error('不是价格守卫同步请求');
-const payload=decodeSyncBody(issue.body,password);
+const title=String(issue.title||''),userMatch=title.match(/^\[Price Guard Sync(?::([a-z0-9_-]+))?\]/i);
+if(!userMatch)throw new Error('不是价格守卫同步请求');
+const username=(userMatch[1]||'admin').toLowerCase(),portalUser=portalUsersFromEnv().find(user=>user.username===username);
+if(username==='admin'){
+  if(issue.user?.login!==owner)throw new Error('总管理员同步只接受仓库所有者提交');
+}else{
+  if(!portalUser)throw new Error(`未配置的多人账号：${username}`);
+  if(!portalUser.githubLogin||String(issue.user?.login||'').toLowerCase()!==portalUser.githubLogin.toLowerCase())throw new Error(`GitHub 身份无权同步 ${username}`);
+}
+const payload=decodeSyncBody(issue.body,username==='admin'?password:portalUser.password);
+const allowedAccountIds=username==='admin'?null:new Set(portalUser.accountIds);
+const email=String(payload.notificationEmail||'').trim().toLowerCase();
+if(email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw new Error('通知邮箱格式不正确');
 
 const statePath=path.join(root,'state','latest.json.enc');
 const previous=JSON.parse(decrypt(await fs.readFile(statePath),password).toString('utf8'));
-const incomingCosts=payload.manualCosts&&typeof payload.manualCosts==='object'&&!Array.isArray(payload.manualCosts)?payload.manualCosts:{};
+const rawIncomingCosts=payload.manualCosts&&typeof payload.manualCosts==='object'&&!Array.isArray(payload.manualCosts)?payload.manualCosts:{};
+const incomingCosts=allowedAccountIds?Object.fromEntries(Object.entries(rawIncomingCosts).filter(([,record])=>allowedAccountIds.has(record?.accountId))):rawIncomingCosts;
 if(Object.keys(incomingCosts).length>1500)throw new Error('成本记录数量异常');
 const manualCosts=mergeManualCosts(previous.manualCosts||{},incomingCosts);
-const incomingDismissed=payload.dismissedDiscoveries&&typeof payload.dismissedDiscoveries==='object'&&!Array.isArray(payload.dismissedDiscoveries)?payload.dismissedDiscoveries:{};
+const incomingDismissed=username==='admin'&&payload.dismissedDiscoveries&&typeof payload.dismissedDiscoveries==='object'&&!Array.isArray(payload.dismissedDiscoveries)?payload.dismissedDiscoveries:{};
 if(Object.keys(incomingDismissed).length>3000)throw new Error('已上传记录数量异常');
 const dismissedDiscoveries=mergeDismissedDiscoveries(previous.dismissedDiscoveries||{},incomingDismissed);
-const incomingReviews=payload.discoveryReviews&&typeof payload.discoveryReviews==='object'&&!Array.isArray(payload.discoveryReviews)?payload.discoveryReviews:{};
+const incomingReviews=username==='admin'&&payload.discoveryReviews&&typeof payload.discoveryReviews==='object'&&!Array.isArray(payload.discoveryReviews)?payload.discoveryReviews:{};
 if(Object.keys(incomingReviews).length>3000)throw new Error('人工核验记录数量异常');
 const discoveryReviews=mergeDiscoveryReviews(previous.discoveryReviews||{},incomingReviews);
+const portalPreferences={...(previous.portalPreferences||{}),[username]:{notificationEmail:email,updatedAt:payload.issuedAt||new Date().toISOString()}};
 
 const settings=previous.settings||JSON.parse(await fs.readFile(path.join(root,'config','settings.json'),'utf8'));
 const configured=JSON.parse(await fs.readFile(path.join(root,'config','accounts.json'),'utf8')).accounts||[];
 const staticIds=new Set(configured.map(account=>account.id));
 const existing=new Map((previous.managedAccounts||[]).map(account=>[account.id,account]));
-for(const raw of payload.managedAccounts||[]){
+for(const raw of username==='admin'?(payload.managedAccounts||[]):[]){
   const profileUrl=String(raw?.profileUrl||'').trim().replace(/\/+$/,'');
   if(!/^https:\/\/paypayfleamarket\.yahoo\.co\.jp\/user\/[^/?#]+$/i.test(profileUrl))continue;
   const id=String(raw.id||accountIdFromProfile(profileUrl)).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,80)||accountIdFromProfile(profileUrl);
   if(staticIds.has(id))continue;
   existing.set(id,{id,name:String(raw.name||id).trim().slice(0,80),profileUrl,enabled:raw.enabled!==false,managed:true,updatedAt:raw.updatedAt||payload.issuedAt||new Date().toISOString()});
 }
-for(const id of payload.deletedAccountIds||[])if(!staticIds.has(id))existing.delete(id);
+for(const id of username==='admin'?(payload.deletedAccountIds||[]):[])if(!staticIds.has(id))existing.delete(id);
 if(existing.size>30)throw new Error('云端账号数量超过 30 个');
 const managedAccounts=[...existing.values()];
 const managedById=new Map(managedAccounts.map(account=>[account.id,account]));
@@ -65,7 +77,7 @@ for(const account of managedAccounts.filter(account=>account.enabled!==false))if
 }
 
 const cloudSyncedAt=new Date().toISOString();
-const result={...previous,version:5,cloudSyncedAt,dataRevision:cloudSyncedAt,settings,manualCosts,dismissedDiscoveries,discoveryReviews,managedAccounts,accounts,items};
+const result={...previous,version:5,cloudSyncedAt,dataRevision:cloudSyncedAt,settings,manualCosts,portalPreferences,dismissedDiscoveries,discoveryReviews,managedAccounts,accounts,items};
 const {summary}=await writeOutputs({root,result,previous,password});
 // A cost/account/upload sync also deploys the static site. Preserve the latest
 // encrypted discovery payload so that this lightweight deployment cannot blank

@@ -40,6 +40,7 @@ jobs:
         env:
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
           PUBLISHED_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data
+          PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - name: 检查 Yahoo 与闲鱼
@@ -52,6 +53,7 @@ jobs:
           XIANYU_STORAGE_STATE_GZIP_B64: ${{ secrets.XIANYU_STORAGE_STATE_GZIP_B64 }}
           XIANYU_STORAGE_STATE_B64: ${{ secrets.XIANYU_STORAGE_STATE_B64 }}
           SCAN_TRIGGER: ${{ github.event_name }}
+          PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
       - name: 更新热卖选品（6小时内复用缓存）
         run: npm run discovery
         env:
@@ -66,6 +68,10 @@ jobs:
         run: npm run notify
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          NOTIFY_FROM_EMAIL: ${{ secrets.NOTIFY_FROM_EMAIL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           DASHBOARD_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
@@ -86,6 +92,9 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public
+          name: github-pages-${{ github.run_attempt }}
       - name: 发布网页
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}

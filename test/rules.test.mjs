@@ -35,6 +35,9 @@ test('treats pair and two-piece one-set wording as the same quantity',()=>{
   assert.equal(semanticQuantity(competitor),2);
   assert.equal(hasVariantMismatch(own,competitor),false);
 });
+test('reads character-count wording from a full Yahoo description',()=>{
+  assert.equal(semanticQuantity('ホワイトとグレー、2キャラクター仕様のぬいぐるみマスコットです。'),2);
+});
 test('matches the Monchhichi pair by distinctive names, quantity, and plush category',()=>{
   const own='雪肌精×モンチッチ ペアぬいぐるみ セット 限定';
   const competitor='日本非売品 雪肌精×モンチッチ キーホルダー 2点 1セット';
@@ -59,6 +62,7 @@ test('new sealed full products reject opened, no-box, and box-only listings',()=
   assert.equal(conditionCompatible('新品、未使用 箱あり','中古 本体のみ 箱なし'),false);
   assert.equal(conditionCompatible('新品未開封 MASTERLISE フィギュア','MASTERLISE 外箱のみ'),false);
   assert.equal(conditionCompatible('新品未開封 フィギュア','新品未開封 フィギュア'),true);
+  assert.equal(conditionCompatible('未使用品です','新品・未開封品（OPP袋入り）'),true);
 });
 test('rejects xianyu multi-variant bait but allows a whole-set query',()=>{
   assert.equal(isLikelyVariantOffer('全系列多款可选，标价为最低款价格','角色A 徽章'),true);

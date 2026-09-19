@@ -19,7 +19,7 @@
   "yahooRequestIntervalMs": 5500,
   "yahooRateLimitCooldownMs": 60000,
   "yahooFreshMinutes": 15,
-  "scanBudgetMinutes": 15,
+  "scanBudgetMinutes": 18,
   "timezone": "Asia/Tokyo",
   "discovery": {
     "keyword": "中国限定",

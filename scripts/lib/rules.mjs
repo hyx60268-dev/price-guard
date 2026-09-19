@@ -63,7 +63,7 @@ export function semanticQuantity(value='') {
   const random=/(?:ランダム|random|随机)/i.test(text);
   const complete=/全\s*\d+\s*種\s*(?:セット|コンプ)|(?:コンプリート|complete)\s*(?:セット)?/i.test(text);
   if(random&&!complete)return 1;
-  const explicit=[...text.matchAll(/(\d+)\s*(?:点|個|体|枚|本|箱|ピース|個入|入り|件)/gi)]
+  const explicit=[...text.matchAll(/(\d+)\s*(?:点|個|体|枚|本|箱|ピース|個入|入り|件|キャラクター|キャラ)/gi)]
     .map(match=>Number(match[1])).filter(Number.isFinite);
   if(explicit.length)return Math.max(...explicit);
   const allKinds=text.match(/全\s*(\d+)\s*種/i);
@@ -102,7 +102,8 @@ export function conditionProfile(value=''){
   return {
     boxOnly:/(?:外箱のみ|箱のみ|空箱|パッケージのみ|ボックスのみ|箱だけ|仅外盒|只有盒|空盒)/i.test(text),
     noBox:/(?:箱なし|箱無し|外箱なし|箱はありません|本体のみ|无盒|没有盒)/i.test(text),
-    openedOrUsed:/(?:中古|開封済|開封品|開封しています|飾って|展示品|使用済|使用感|組立済|二手|已开封|展示过)/i.test(text),
+    // 「未開封品」の中の「開封品」を中古扱いしない。
+    openedOrUsed:/(?:中古|開封済|(?<!未)開封品|開封しています|飾って|展示品|使用済|使用感|組立済|二手|已开封|展示过)/i.test(text),
     sealedNew:/(?:新品未開封|新品・未開封|未開封|未拆封|全新未拆)/i.test(text),
     newUnused:/(?:新品[、・]?未使用|新品、未使用|新品未使用|未使用品|全新未使用)/i.test(text)
   };

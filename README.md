@@ -51,6 +51,34 @@
 4. 在打开的 GitHub 页面点一次绿色 **Submit new issue**；
 5. 后台完成后会关闭该 Issue，已打开的仪表盘会自动刷新。
 
+## 多人分店管理
+
+总管理员用户名固定为 `admin`，密码就是现有的 `DASHBOARD_PASSWORD`；程序不会读取或公开这个密码。员工账号通过仓库 Secret `PORTAL_USERS_JSON` 配置，每个员工只会收到自己负责店铺的独立加密数据，管理员仍能查看全部账号。
+
+示例（请替换用户名、密码、GitHub 用户名和店铺 ID 后保存为 Secret，不要提交到仓库）：
+
+```json
+[
+  {
+    "username": "staff-a",
+    "displayName": "员工 A",
+    "password": "至少8位的独立密码",
+    "githubLogin": "员工的GitHub用户名",
+    "notificationEmail": "可选的初始通知邮箱",
+    "accountIds": ["店铺账号ID"]
+  }
+]
+```
+
+员工在登录页输入自己的用户名和独立密码，只能查看、下载和同步分配给自己的店铺。员工同步 Issue 还会校验其 GitHub 用户名，不能修改别人的成本或店铺；新增/删除店铺仍由总管理员完成。
+
+每位用户登录后可在“账号管理”填写自己的手机通知邮箱并加密同步。扫描发现变化时，系统会先按 `accountIds` 过滤：员工只收到名下店铺，管理员收到全部店铺。启用邮件需要在仓库 Actions Secrets 再设置：
+
+- `RESEND_API_KEY`：Resend 邮件 API 密钥；
+- `NOTIFY_FROM_EMAIL`：已在 Resend 验证域名下的发件地址，例如 `价格守卫 <notify@example.com>`。
+
+邮箱地址保存在加密状态里，不会写入公开的 `users.json`。如果暂未配置上述两个 Secret，原有 GitHub Issue / Telegram 降级提醒仍会继续工作。
+
 由于这是公开仓库的静态 GitHub Pages，网页里不能安全存放 GitHub 写入令牌；因此最后的 GitHub 提交必须由已登录的仓库所有者确认一次。同步内容使用与仪表盘相同的 AES-256-GCM 加密，Issue 中不含明文成本。
 
 ## 多账号

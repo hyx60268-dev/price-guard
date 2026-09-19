@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateManualFields,discoveryDismissalKey,manualCostFor,manualCostKey,mergeAccountConfigs,mergeDiscoveryReviews,mergeDismissedDiscoveries,mergeManualCosts,reconcileDurableState } from '../scripts/lib/state.mjs';
+import { portalUsersFromEnv,scopeResultForPortalUser } from '../scripts/lib/publish.mjs';
 
 const item={accountId:'m',id:'new',title:'中国限定 商品 A 新品',xianyuQuery:'商品A 中国版',ownPrice:5000,recommendedPrice:4500,averageCNY:20};
 
@@ -48,4 +49,16 @@ test('manual discovery review keeps verified price and image set',()=>{
   const merged=mergeDiscoveryReviews({}, {p:{productKey:'p',purchaseCNY:'28',images:['https://a/1','bad','https://a/2','https://a/3'],updatedAt:'2026-01-01T00:00:00Z'}});
   assert.equal(merged.p.purchaseCNY,28);
   assert.deepEqual(merged.p.images,['https://a/1','https://a/2','https://a/3']);
+});
+
+test('portal user sees only assigned shops and costs',()=>{
+  const users=portalUsersFromEnv(JSON.stringify([{username:'staff-a',displayName:'A',password:'12345678',githubLogin:'a',notificationEmail:'staff@example.com',accountIds:['shop-a']}]));
+  const result={accounts:[{id:'shop-a'},{id:'shop-b'}],items:[{id:'a',accountId:'shop-a',title:'A'},{id:'b',accountId:'shop-b',title:'B'}],manualCosts:{a:{accountId:'shop-a'},b:{accountId:'shop-b'}},portalPreferences:{'staff-a':{notificationEmail:'new@example.com'}},managedAccounts:[{id:'shop-a'},{id:'shop-b'}]};
+  const scoped=scopeResultForPortalUser(result,users[0]);
+  assert.deepEqual(scoped.accounts.map(account=>account.id),['shop-a']);
+  assert.deepEqual(scoped.items.map(value=>value.id),['a']);
+  assert.deepEqual(Object.keys(scoped.manualCosts),['a']);
+  assert.equal(scoped.portalUser.role,'member');
+  assert.equal(scoped.portalUser.notificationEmail,'new@example.com');
+  assert.equal(scoped.portalPreferences,undefined);
 });
