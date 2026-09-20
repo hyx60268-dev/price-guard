@@ -207,6 +207,7 @@ export async function discoverYahooProfile(_unusedPage,profileUrl,settings={}){
 
 export async function yahooCompare(_unusedPage,item,settings={}){
   applyYahooSettings(settings);
+  const ownSellerId=String(item.sellerId||settings.ownSellerId||'').trim();
   const query=queryFor(item.title);
   const exactQuery=exactQueryFor(item.title);
   const searchUrl=`https://paypayfleamarket.yahoo.co.jp/search/${encodeURIComponent(query)}?open=1`;
@@ -235,6 +236,7 @@ export async function yahooCompare(_unusedPage,item,settings={}){
     const accepted=[];
     for(const card of cards.sort((a,b)=>a.price-b.price)){
     if(card.id===item.id||!Number.isFinite(card.price))continue;
+    if(ownSellerId&&card.sellerId===ownSellerId){rejected.push({id:card.id,price:card.price,reason:'own_seller'});continue}
     if(isRejected(card.title)){rejected.push({id:card.id,price:card.price,reason:'title_rejected'});continue}
     const tScore=titleScore(exactQuery,card.title);
     const recallScore=titleScore(query,card.title);
@@ -284,6 +286,8 @@ export async function yahooCompare(_unusedPage,item,settings={}){
     try{
       const bundle=await fetchYahooItemBundle(card.id,settings),detail=bundle.detail;
       if(detail.status!=='OPEN'){rejected.push({id:card.id,price:card.price,reason:'not_open'});continue}
+      const detailSellerId=String(detail.seller?.id||detail.sellerId||card.sellerId||'').trim();
+      if(ownSellerId&&detailSellerId===ownSellerId){rejected.push({id:card.id,price:Number(detail.price),reason:'own_seller'});continue}
       if(hasExplicitDefect(detail.title,detail.description)){rejected.push({id:card.id,price:Number(detail.price),reason:'defect'});continue}
       const candidateCondition=typeof detail.condition==='string'?detail.condition:
         detail.condition?.name||detail.condition?.text||detail.condition?.label||detail.condition?.key||'';
@@ -329,7 +333,7 @@ export async function yahooCompare(_unusedPage,item,settings={}){
   const comparable=[own,...competitors].filter(x=>Number.isFinite(x.price)).sort((a,b)=>a.price-b.price);
   const lowest=comparable[0]||null;
   const unresolvedCandidates=unresolvedRaiseCandidates(preliminary,rejected);
-  const market=marketPriceDecision(item.ownPrice,competitors,settings,{plausibleCompetitors:unresolvedCandidates});
+  const market=marketPriceDecision(item.ownPrice,competitors,settings,{plausibleCompetitors:unresolvedCandidates,ownSellerId});
   const {marketPrices,marketMedianPrice,marketMinPrice,marketMaxPrice,underpriced}=market;
   const recommended=lowest&&!lowest.isOwn?Math.max(1,Math.floor(lowest.price)-1):market.recommendedPrice;
   const sourceCovered=Boolean(search||ownBundle);
@@ -353,15 +357,19 @@ export async function yahooCompare(_unusedPage,item,settings={}){
 
 export function marketPriceDecision(ownPrice,prices=[],settings={},safeguards={}){
   const unique=new Map();
+  const ownSellerId=String(safeguards.ownSellerId||'').trim();
   prices.forEach((value,index)=>{
     const sample=typeof value==='object'&&value?value:{price:value};
+    if(ownSellerId&&sample.sellerId===ownSellerId)return;
     const price=Number(sample.price),key=sample.sellerId?`seller:${sample.sellerId}`:sample.id?`item:${sample.id}`:`sample:${index}`;
     if(!Number.isFinite(price))return;
     const current=unique.get(key);if(!current||price<current.price)unique.set(key,{...sample,price});
   });
   const raw=[...unique.values()].sort((a,b)=>a.price-b.price);
   const verifiedMinPrice=raw[0]?.price??null;
-  const plausiblePrices=(safeguards.plausibleCompetitors||[]).map(value=>Number(typeof value==='object'&&value?value.price:value)).filter(Number.isFinite);
+  const plausiblePrices=(safeguards.plausibleCompetitors||[])
+    .filter(value=>!ownSellerId||typeof value!=='object'||!value||value.sellerId!==ownSellerId)
+    .map(value=>Number(typeof value==='object'&&value?value.price:value)).filter(Number.isFinite);
   const plausibleMinPrice=plausiblePrices.length?Math.min(...plausiblePrices):null;
   const guardPrices=[verifiedMinPrice,plausibleMinPrice].filter(Number.isFinite);
   const raiseGuardMinPrice=guardPrices.length?Math.min(...guardPrices):null;

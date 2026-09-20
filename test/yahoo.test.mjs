@@ -56,6 +56,20 @@ test('raise-price advice needs a coherent market from independent sellers',()=>{
   assert.equal(marketPriceDecision(8000,[{sellerId:'one',price:10000},{sellerId:'two',price:15000}],{}).underpriced,false);
 });
 
+test('never treats another listing from our own Yahoo shop as market competition',()=>{
+  const result=marketPriceDecision(33449,[
+    {id:'own-other-character',sellerId:'mine',price:11979},
+    {id:'market-a',sellerId:'other-a',price:35000},
+    {id:'market-b',sellerId:'other-b',price:35500}
+  ],{},{ownSellerId:'mine',plausibleCompetitors:[
+    {id:'own-other-character',sellerId:'mine',price:11979},
+    {id:'market-a',sellerId:'other-a',price:35000}
+  ]});
+  assert.equal(result.verifiedMinPrice,35000);
+  assert.equal(result.plausibleMinPrice,35000);
+  assert.equal(result.ownIsDefiniteLowest,true);
+});
+
 test('a small gap to the nearest same item does not trigger a raise despite high listings',()=>{
   const result=marketPriceDecision(17499,[
     {id:'low',sellerId:'one',price:17999},

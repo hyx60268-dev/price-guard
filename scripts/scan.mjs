@@ -126,7 +126,8 @@ await mapLimit(yahooTasks,yahooConcurrency,async(task,taskIndex)=>{
     context.yahooById.set(item.id,cachedYahoo(prior,item,'scan_budget')||{status:'deferred_budget',cacheReason:'rules_changed',rulesVersion:MATCHING_RULES_VERSION,checkedAt:null,lowestPrice:item.ownPrice,lowestUrl:item.url,recommendedPrice:item.ownPrice,candidates:[]});return;
   }
   try{
-    const result=await yahooCompare(null,item,{...settings,forceYahooBroadSearch:forceYahoo||task.priority<=1});context.yahooById.set(item.id,result);
+    const profileSellerId=String(context.account.profileUrl||'').match(/\/user\/([^/?#]+)/i)?.[1]||'';
+    const result=await yahooCompare(null,item,{...settings,ownSellerId:item.sellerId||profileSellerId,forceYahooBroadSearch:forceYahoo||task.priority<=1});context.yahooById.set(item.id,result);
     console.log(`[Yahoo ${taskIndex+1}/${yahooTasks.length}] ${context.account.name} ${item.id} cards=${result.cardCount} matches=${result.competitorCount} lowest=${result.lowestPrice} source=${result.sourceStatus?.search||'unknown'}`);
   }catch(error){
     console.error(`[Yahoo ERROR][${context.account.id}:${item.id}]`,String(error));
