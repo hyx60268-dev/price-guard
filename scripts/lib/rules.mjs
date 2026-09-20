@@ -3,14 +3,23 @@ const badPattern = /(求购|收购|只收|蹲收|换物|交换|置换|补款|定
 const baitPattern = /(请点进去选项|点击立即购买查看|拍下改价|私聊改价|价格见图|图上价|多个角色|多款可选|任选|标价非实价|自带价|占位价|起步价|最低款价格|标价为最低|标价只是|页面价格不准)/i;
 const selectionPattern = /(请选择|选择规格|选择款式|选款|选图|拍哪款|下单备注|联系客服改价|私聊改价|各款价格|价格不一|每款价格|单独询价|需补差价|补差后发货|以详情价为准|详情价格为准)/i;
 const multiOfferPattern = /(多款|多角色|全系列|合集|系列任选|整套可拆|可拆卖)/i;
-export const MATCHING_RULES_VERSION = 3;
+export const MATCHING_RULES_VERSION = 4;
+
+// 同じIP/シリーズが中国語・日本語・英語や作者名で出品されるケースを、
+// 再利用できる別名辞書で同じ識別語へ寄せる。追加時は商品固有語だけを登録し、
+// 「熊」「フィギュア」のような一般語は絶対に別名扱いしない。
+function canonicalProductText(value='') {
+  return String(value).normalize('NFKC')
+    .replace(/(?:greedy\s*bear|greedybear|貪吃熊|贪吃熊|食いしん坊(?:クマ|熊|ベア)|くいしんぼう(?:クマ|熊|ベア))/gi,' greedybear ')
+    .replace(/(?:sure\s*fun|surefun|may\s*mei|maymei|メイメイ)/gi,' maymei ');
+}
 
 export function normalize(value='') {
-  return String(value).toLowerCase().replace(/[\s·・,:：，。!！?？【】\[\]()（）<>《》“”"'‘’\-_/+＋×]/g,'');
+  return canonicalProductText(value).toLowerCase().replace(/[\s·・,:：，。!！?？【】\[\]()（）<>《》“”"'‘’\-_/+＋×]/g,'');
 }
 
 export function tokens(value='') {
-  return String(value).split(/[\s/・·【】\[\]()（）,:：，。!！?？+＋-]+/)
+  return canonicalProductText(value).split(/[\s/・·【】\[\]()（）,:：，。!！?？+＋-]+/)
     .map(x=>x.trim()).filter(x=>x.length>1 && !noise.has(x));
 }
 
@@ -42,6 +51,7 @@ export function listingTextEquivalent(ownTitle='',ownDescription='',candidateTit
 // 但品牌/系列锚点、商品类型和明确数量都一致时，可作为图片不同情况下的规格证据。
 export function listingSpecificationEquivalent(ownTitle='',candidateTitle='',ownCategory='',candidateCategory=''){
   if(hasVariantMismatch(ownTitle,candidateTitle)||hasVariantMismatch(candidateTitle,ownTitle))return false;
+  if(!saleUnitEquivalent(ownTitle,candidateTitle))return false;
   const forward=semanticSameItem({query:ownTitle,candidate:candidateTitle,queryCategory:ownCategory,candidateCategory});
   const backward=semanticSameItem({query:candidateTitle,candidate:ownTitle,queryCategory:candidateCategory,candidateCategory:ownCategory});
   if(!forward.accepted||!backward.accepted)return false;
@@ -62,16 +72,38 @@ function normalizedJapanese(value='') {
 export function semanticQuantity(value='') {
   const text=normalizedJapanese(value);
   const random=/(?:ランダム|random|随机)/i.test(text);
-  const complete=/全\s*\d+\s*種\s*(?:セット|コンプ)|(?:コンプリート|complete)\s*(?:セット)?/i.test(text);
-  if(random&&!complete)return 1;
+  // 「BOX 6種セット」「6種コンプリート」は6点の商品。説明文に
+  // 「ランダム封入」があっても、出品単位そのものを1点に落としてはいけない。
+  const kindSets=[...text.matchAll(/(?:全\s*)?(\d+)\s*種\s*(?:セット|コンプ(?:リート)?|complete|入り|入|box|ボックス)|(?:box|ボックス|アソート)\s*(\d+)\s*種/gi)]
+    .flatMap(match=>[Number(match[1]),Number(match[2])]).filter(Number.isFinite);
+  const complete=kindSets.length>0||/(?:コンプリート|complete|フルコンプ)\s*(?:セット)?/i.test(text);
   const explicit=[...text.matchAll(/(\d+)\s*(?:点|個|体|枚|本|箱|ピース|個入|入り|件|キャラクター|キャラ)/gi)]
     .map(match=>Number(match[1])).filter(Number.isFinite);
+  if(kindSets.length)return Math.max(...kindSets);
   if(explicit.length)return Math.max(...explicit);
+  if(random&&!complete)return 1;
   const allKinds=text.match(/全\s*(\d+)\s*種/i);
   if(allKinds&&complete)return Number(allKinds[1]);
   if(/(?:ペア|pair|カップル|情侣|一対|1対|男女|男の子.{0,12}女の子|boy.{0,12}girl|girl.{0,12}boy)/i.test(text))return 2;
   if(/(?:単品|ばら売り|バラ売り|1\s*(?:点|個|体|枚|本|箱|ピース|件))/i.test(text))return 1;
   return null;
+}
+
+// 同じ数量でも、未開封アソートBOXと箱なしの6体まとめ売りは別条件。
+// 画像が公式の集合写真で一致しても、販売単位が違えば同款にはしない。
+export function saleUnitProfile(value='') {
+  const text=normalizedJapanese(value);
+  const fullBox=/(?:アソート\s*(?:box|ボックス|ケース)|\d+\s*(?:box|ボックス|ケース)|(?:box|ボックス|ケース).{0,12}\d+\s*(?:個|点|体|種|ピース)|\d+\s*(?:個|点|体|種|ピース)(?:入り|入|セット)?.{0,12}(?:アソート\s*)?(?:box|ボックス|ケース))/i.test(text);
+  const completeSet=/(?:フルコンプ|コンプリート(?:セット)?|(?:全\s*)?\d+\s*種\s*(?:セット|コンプ(?:リート)?|complete))/i.test(text);
+  const explicitSingle=/(?:単品|ばら売り|バラ売り|1\s*(?:点|個|体|枚|本|ピース))(?:\s|$|[、。・])/i.test(text);
+  return {fullBox,completeSet,explicitSingle};
+}
+
+export function saleUnitEquivalent(query='',candidate='') {
+  const left=saleUnitProfile(query),right=saleUnitProfile(candidate);
+  if(left.fullBox||right.fullBox)return left.fullBox&&right.fullBox;
+  if(left.completeSet||right.completeSet)return left.completeSet&&right.completeSet;
+  return !(left.explicitSingle&&right.completeSet||right.explicitSingle&&left.completeSet);
 }
 
 function setMultiplier(value='') {
@@ -108,7 +140,7 @@ export function conditionProfile(value=''){
     // 「未開封品」の中の「開封品」を中古扱いしない。
     openedOrUsed:/(?:中古|開封済|(?<!未)開封品|開封しています|飾って|展示品|使用済|使用感|組立済|二手|已开封|展示过)/i.test(text),
     sealedNew:/(?:新品未開封|新品・未開封|未開封|未拆封|全新未拆)/i.test(text),
-    newUnused:/(?:新品[、・]?未使用|新品、未使用|新品未使用|未使用品|全新未使用)/i.test(text)
+    newUnused:/(?:新品[、・]?未使用|新品、未使用|新品未使用|未使用品|(?:^|[\s\n・])未使用(?:$|[\s\n・])|全新未使用)/i.test(text)
   };
 }
 
@@ -118,15 +150,15 @@ export function conditionCompatible(query='',candidate=''){
   const own=conditionProfile(query),other=conditionProfile(candidate);
   if(other.boxOnly)return false;
   if((own.sealedNew||own.newUnused)&&(other.openedOrUsed||other.noBox))return false;
-  if(own.sealedNew&&!other.sealedNew)return false;
+  if(own.sealedNew&&!(other.sealedNew||other.newUnused))return false;
   if(own.newUnused&&!own.sealedNew&&!(other.newUnused||other.sealedNew))return false;
   return true;
 }
 
-const descriptorPattern=/(?:日本非売品|日本未発売|非売品|中国限定|海外限定|国内限定|正規品|新品|未使用|未開封|公式|限定|希少|レア|コラボレーション|コラボ|シリーズ|セット|まとめ売り|ペア|pair|単品|ランダム|random|全\s*\d+\s*種|\d+\s*(?:点|個|体|枚|本|箱|ピース|個入|入り|件)|ぬいぐるみ|マスコット|キーホルダー|キーチェーン|ストラップ|アクリルスタンド|アクスタ|アクリルブロック|フィギュア|プラモデル|フォトカード|ポストカード|カード|缶バッジ|タンブラー|ボトル|マグ|カップ)/gi;
+const descriptorPattern=/(?:日本非売品|日本未発売|非売品|中国限定|海外限定|国内限定|正規品|新品|未使用|未開封|公式|限定|希少|レア|コラボレーション|コラボ|シリーズ|セット|まとめ売り|ペア|pair|単品|ランダム|random|(?:全\s*)?\d+\s*種|\d+\s*(?:点|個|体|枚|本|箱|ピース|個入|入り|件)|ブラインドボックス|アソート\s*(?:box|ボックス)|box|ぬいぐるみ|マスコット|キーホルダー|キーチェーン|ストラップ|アクリルスタンド|アクスタ|アクリルブロック|フィギュア|プラモデル|フォトカード|ポストカード|カード|缶バッジ|タンブラー|ボトル|マグ|カップ)/gi;
 
 export function distinctiveTokens(value='') {
-  return normalizedJapanese(value).split(/[\s×&＆/／・·,:：，。!！?？【】\[\]()（）<>《》「」『』“”"'‘’+＋\-_]+/)
+  return canonicalProductText(value).toLowerCase().split(/[\s×&＆/／・·,:：，。!！?？【】\[\]()（）<>《》「」『』“”"'‘’+＋\-_]+/)
     .map(part=>part.replace(descriptorPattern,'').trim())
     .filter(part=>part.length>1);
 }
@@ -176,7 +208,10 @@ export function isLikelyVariantOffer(text='',query='') {
 
 function hasVariantMarkerMismatch(query='',candidate='') {
   const q=normalize(query),title=String(candidate);
-  const standaloneMarkers=value=>new Set([...normalizedJapanese(value).toUpperCase().matchAll(/\b[A-H]\b/g)].map(match=>match[0]));
+  // A/B版のような裸の記号は商品名（先頭行）だけを見る。説明文の「Cマーク」
+  // （正規品証明）までC版と誤読して別商品扱いしない。
+  const heading=value=>String(value).split(/\r?\n/).map(line=>line.trim()).find(Boolean)||'';
+  const standaloneMarkers=value=>new Set([...normalizedJapanese(heading(value)).toUpperCase().matchAll(/(?:^|[\s　・:：【】()（）])([A-H])(?=$|[\s　・:：【】()（）])/g)].map(match=>match[1]));
   const queryMarkers=standaloneMarkers(query),candidateMarkers=standaloneMarkers(candidate);
   if([...candidateMarkers].some(marker=>!queryMarkers.has(marker)))return true;
   const querySets=setMultiplier(query),candidateSets=setMultiplier(candidate);
@@ -254,6 +289,12 @@ export function hasVariantMismatch(query='',candidate='') {
 export function visualListingEquivalent({query='',candidate='',queryCategory='',candidateCategory='',imageScore=null,threshold=.86}={}) {
   if(!Number.isFinite(imageScore)||imageScore<threshold)return false;
   if(hasExplicitVariantMismatch(query,candidate)||hasExplicitVariantMismatch(candidate,query))return false;
+  if(!saleUnitEquivalent(query,candidate))return false;
+  const queryQuantity=semanticQuantity(query),candidateQuantity=semanticQuantity(candidate);
+  // 多件套的官方集合图很容易被单品卖家复用。多件商品必须在双方详情里都能
+  // 读出相同数量，不能再只凭相似图片越过数量核验。
+  if((Number.isFinite(queryQuantity)&&queryQuantity>1||Number.isFinite(candidateQuantity)&&candidateQuantity>1)&&
+    (!Number.isFinite(queryQuantity)||!Number.isFinite(candidateQuantity)||queryQuantity!==candidateQuantity))return false;
   const queryFamily=productFamily(query,queryCategory),candidateFamily=productFamily(candidate,candidateCategory);
   if(!queryFamily||queryFamily!==candidateFamily)return false;
   const forward=distinctiveCoverage(query,candidate),backward=distinctiveCoverage(candidate,query);

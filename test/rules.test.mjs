@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateCost,advice,coherentPrices,conditionCompatible,distinctiveCoverage,hasExplicitDefect,hasExplicitVariantMismatch,hasIdentityVariantMismatch,hasVariantMismatch,isLikelyVariantOffer,listingSpecificationEquivalent,listingTextEquivalent,productFamily,semanticQuantity,semanticSameItem,titleScore,visualListingEquivalent } from '../scripts/lib/rules.mjs';
+import { calculateCost,advice,coherentPrices,conditionCompatible,distinctiveCoverage,hasExplicitDefect,hasExplicitVariantMismatch,hasIdentityVariantMismatch,hasVariantMismatch,isLikelyVariantOffer,listingSpecificationEquivalent,listingTextEquivalent,productFamily,saleUnitEquivalent,semanticQuantity,semanticSameItem,titleScore,visualListingEquivalent } from '../scripts/lib/rules.mjs';
 import { encrypt,decrypt } from '../scripts/lib/crypto.mjs';
 const settings={exchangeRate:22.99,costMultiplier:1.05};
 test('manual cost formula',()=>assert.equal(calculateCost(90.5,30,210,settings),3130));
@@ -58,12 +58,30 @@ test('rejects the three reported collectible variant false positives',()=>{
   assert.equal(productFamily(popup),'acrylic_stand');
   assert.equal(semanticSameItem({query:shaker,candidate:popup}).accepted,false);
 });
-test('an omitted quantity may reach visual verification but an explicit single cannot',()=>{
+test('multi-unit listings need quantity evidence even when the image is identical',()=>{
   const pair='雪肌精×モンチッチ ペアぬいぐるみ セット';
   assert.equal(hasVariantMismatch(pair,'雪肌精×モンチッチ 限定ぬいぐるみ'),true);
   assert.equal(hasExplicitVariantMismatch(pair,'雪肌精×モンチッチ 限定ぬいぐるみ'),false);
-  assert.equal(visualListingEquivalent({query:pair,candidate:'雪肌精×モンチッチ 限定ぬいぐるみ',imageScore:.95}),true);
+  assert.equal(visualListingEquivalent({query:pair,candidate:'雪肌精×モンチッチ 限定ぬいぐるみ',imageScore:.99}),false);
+  assert.equal(visualListingEquivalent({query:pair,candidate:'雪肌精×モンチッチ 限定ぬいぐるみ 2キャラクター仕様',imageScore:.95}),true);
   assert.equal(visualListingEquivalent({query:pair,candidate:'雪肌精×モンチッチ 単品ぬいぐるみ',imageScore:.95}),false);
+});
+test('reads a complete BOX quantity before random-assortment wording',()=>{
+  const own='TOPTOY SURE FUN 貪吃熊 ぬいぐるみ ブラインドボックス 6個入り アソートBOX';
+  const competitor='TOPTOY MayMei くいしんぼうベア ぬいぐるみ BOX 6種セット。1種secretモデルがランダム封入品です。';
+  assert.equal(semanticQuantity(own),6);
+  assert.equal(semanticQuantity(competitor),6);
+  assert.equal(saleUnitEquivalent(own,competitor),true);
+  assert.equal(saleUnitEquivalent(own,'TOPTOY SURE FUN 貪吃熊 ぬいぐるみ 6個セット 1ケース'),true);
+  assert.equal(saleUnitEquivalent(own,'TOPTOY くいしんぼうベア ぬいぐるみ 単品'),false);
+  assert.equal(conditionCompatible('新品未開封 外装シュリンク付き',`${competitor}\n未使用`),true);
+  assert.equal(semanticSameItem({query:own,candidate:competitor,queryCategory:'ぬいぐるみ',candidateCategory:'ぬいぐるみ'}).accepted,true);
+});
+test('a certification C mark in the description is not treated as product version C',()=>{
+  const own='TOPTOY SURE FUN 貪吃熊 6個入り アソートBOX';
+  const competitor='TOPTOY MayMei くいしんぼうベア BOX 6種セット\n正規証明ホロシール、またはCマーク入り';
+  assert.equal(hasVariantMismatch(own,competitor),false);
+  assert.equal(hasVariantMismatch('bilibili 鬼滅の刃 アクリルスタンド A','bilibili 鬼滅の刃 アクリルスタンド B'),true);
 });
 test('treats pair and two-piece one-set wording as the same quantity',()=>{
   const own='雪肌精×モンチッチ ペアぬいぐるみ セット 限定';

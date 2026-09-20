@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { extractCategoryIds,extractItemData,extractNextData,extractRecommendationCards,marketPriceDecision,queryFor } from '../scripts/lib/yahoo.mjs';
+import { extractCategoryIds,extractItemData,extractNextData,extractRecommendationCards,marketPriceDecision,queryFor,unresolvedRaiseCandidates } from '../scripts/lib/yahoo.mjs';
 
 test('extractNextData accepts Yahoo nonce attribute',()=>{
   const value={props:{initialState:{searchState:{search:{result:{items:[]}}}}}};
@@ -54,4 +54,45 @@ test('raise-price advice needs a coherent market from independent sellers',()=>{
   assert.equal(marketPriceDecision(8000,[{id:'bait',sellerId:'one',price:2000},{id:'a',sellerId:'two',price:10000},{id:'b',sellerId:'three',price:10200}],{}).marketMedianPrice,10100);
   assert.equal(marketPriceDecision(8000,[7500,10000,10200],{}).underpriced,false);
   assert.equal(marketPriceDecision(8000,[{sellerId:'one',price:10000},{sellerId:'two',price:15000}],{}).underpriced,false);
+});
+
+test('a small gap to the nearest same item does not trigger a raise despite high listings',()=>{
+  const result=marketPriceDecision(17499,[
+    {id:'low',sellerId:'one',price:17999},
+    {id:'high-a',sellerId:'two',price:21388},
+    {id:'high-b',sellerId:'three',price:21400}
+  ],{yahooUnderpriceRatio:.82,yahooUnderpriceMinimumGapJPY:1500},{plausibleCompetitors:[{price:17999},{price:21388},{price:21400}]});
+  assert.equal(result.underpriced,false);
+  assert.equal(result.ownIsDefiniteLowest,true);
+  assert.equal(result.raiseGuardMinPrice,17999);
+  assert.equal(result.raiseRoomJPY,500);
+  assert.equal(result.recommendedPrice,17499);
+});
+
+test('raise-price advice is blocked when any verified or unresolved plausible candidate is not above us',()=>{
+  const verifiedLower=marketPriceDecision(17499,[17000,21388,21400],{});
+  assert.equal(verifiedLower.underpriced,false);
+  assert.equal(verifiedLower.ownIsDefiniteLowest,false);
+  const unresolvedLower=marketPriceDecision(17499,[21388,21400],{},
+    {plausibleCompetitors:[{price:17000},{price:21388},{price:21400}]});
+  assert.equal(unresolvedLower.underpriced,false);
+  assert.equal(unresolvedLower.recommendedPrice,17499);
+});
+
+test('an unchecked plausible same-item candidate caps a raise recommendation',()=>{
+  const result=marketPriceDecision(15000,[21388,21400],{},
+    {plausibleCompetitors:[{price:17999},{price:21388},{price:21400}]});
+  assert.equal(result.underpriced,true);
+  assert.equal(result.recommendedPrice,17998);
+  assert.ok(result.recommendedPrice<result.raiseGuardMinPrice);
+});
+
+test('sold or definitively mismatched cards do not cap an in-stock raise decision',()=>{
+  const cards=[{id:'sold',price:17000},{id:'same',price:17999},{id:'error',price:17800},{id:'unchecked',price:18000}];
+  const result=unresolvedRaiseCandidates(cards,[
+    {id:'sold',reason:'not_open'},
+    {id:'same',reason:'condition_or_packaging_mismatch'},
+    {id:'error',reason:'detail_error'}
+  ]);
+  assert.deepEqual(result.map(item=>item.id),['error','unchecked']);
 });

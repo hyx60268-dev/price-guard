@@ -107,8 +107,10 @@ const deadline=startedAt+(Number(settings.scanBudgetMinutes)||12)*60_000;
 const yahooBuckets=contexts.map(context=>context.activeItems.map((item,itemIndex)=>{
   const prior=priorFor(context,item),added=context.profileDelta.added.includes(item.id)||Boolean(item.relistedFrom);
   const priceChanged=Number.isFinite(prior.ownPrice)&&prior.ownPrice!==item.ownPrice;
+  const rulesChanged=Number(prior.yahoo?.rulesVersion)!==MATCHING_RULES_VERSION;
   const checked=Date.parse(prior.yahoo?.checkedAt||'');
-  return {context,item,itemIndex,prior,priority:added?0:priceChanged?1:Number.isFinite(checked)?3:2,lastChecked:Number.isFinite(checked)?checked:0};
+  // 规则升级后先撤销/重核验正在触发调价的结果，避免旧误判继续显示或通知。
+  return {context,item,itemIndex,prior,priority:added?0:priceChanged?1:rulesChanged&&prior.yahoo?.underpriced?1:rulesChanged?2:Number.isFinite(checked)?3:2,lastChecked:Number.isFinite(checked)?checked:0};
 }).sort((a,b)=>a.priority-b.priority||a.lastChecked-b.lastChecked||a.itemIndex-b.itemIndex));
 // 每个店铺轮流取一件，不让商品多或旧缓存多的账号占满整轮预算。
 const yahooTasks=fairRoundRobin(yahooBuckets);
