@@ -3,7 +3,7 @@ const badPattern = /(求购|收购|只收|蹲收|换物|交换|置换|补款|定
 const baitPattern = /(请点进去选项|点击立即购买查看|拍下改价|私聊改价|价格见图|图上价|多个角色|多款可选|任选|标价非实价|自带价|占位价|起步价|最低款价格|标价为最低|标价只是|页面价格不准)/i;
 const selectionPattern = /(请选择|选择规格|选择款式|选款|选图|拍哪款|下单备注|联系客服改价|私聊改价|各款价格|价格不一|每款价格|单独询价|需补差价|补差后发货|以详情价为准|详情价格为准)/i;
 const multiOfferPattern = /(多款|多角色|全系列|合集|系列任选|整套可拆|可拆卖)/i;
-export const MATCHING_RULES_VERSION = 4;
+export const MATCHING_RULES_VERSION = 5;
 
 // 同じIP/シリーズが中国語・日本語・英語や作者名で出品されるケースを、
 // 再利用できる別名辞書で同じ識別語へ寄せる。追加時は商品固有語だけを登録し、
@@ -11,7 +11,8 @@ export const MATCHING_RULES_VERSION = 4;
 function canonicalProductText(value='') {
   return String(value).normalize('NFKC')
     .replace(/(?:greedy\s*bear|greedybear|貪吃熊|贪吃熊|食いしん坊(?:クマ|熊|ベア)|くいしんぼう(?:クマ|熊|ベア))/gi,' greedybear ')
-    .replace(/(?:sure\s*fun|surefun|may\s*mei|maymei|メイメイ)/gi,' maymei ');
+    .replace(/(?:sure\s*fun|surefun|may\s*mei|maymei|メイメイ)/gi,' maymei ')
+    .replace(/(?:metheus|薪火)/gi,' metheus ');
 }
 
 export function normalize(value='') {
@@ -116,7 +117,7 @@ export function productFamily(value='',category='') {
   const text=normalizedJapanese(`${value} ${category}`);
   if(/(?:レーザーチケット|ホログラムチケット|チケット|ticket|票卡|镭射票)/i.test(text))return 'ticket';
   if(/(?:シールウエハース|ウエハースシール|ステッカー|sticker|贴纸|贴片)/i.test(text))return 'sticker';
-  if(/(?:アクリルブロック|acrylic\s*block|亚克力砖)/i.test(text))return 'acrylic_block';
+  if(/(?:アクリルブロック|シーンブロック|acrylic\s*block|scene\s*block|亚克力砖)/i.test(text))return 'acrylic_block';
   // 流砂/オイル入り/シェイカーは通常の平面アクリルスタンドとは別商品。
   if(/(?:流砂|流沙|オイル入り|オイルアクリル|シェイカー|shaker)\s*(?:アクリル|acrylic)?|(?:アクリル|acrylic).{0,8}(?:流砂|流沙|オイル入り|シェイカー|shaker)/i.test(text))return 'acrylic_shaker';
   if(/(?:アクリルスタンド|アクスタ|acrylic\s*stand|亚克力立牌|立牌)/i.test(text))return 'acrylic_stand';
@@ -155,7 +156,7 @@ export function conditionCompatible(query='',candidate=''){
   return true;
 }
 
-const descriptorPattern=/(?:日本非売品|日本未発売|非売品|中国限定|海外限定|国内限定|正規品|新品|未使用|未開封|公式|限定|希少|レア|コラボレーション|コラボ|シリーズ|セット|まとめ売り|ペア|pair|単品|ランダム|random|(?:全\s*)?\d+\s*種|\d+\s*(?:点|個|体|枚|本|箱|ピース|個入|入り|件)|ブラインドボックス|アソート\s*(?:box|ボックス)|box|ぬいぐるみ|マスコット|キーホルダー|キーチェーン|ストラップ|アクリルスタンド|アクスタ|アクリルブロック|フィギュア|プラモデル|フォトカード|ポストカード|カード|缶バッジ|タンブラー|ボトル|マグ|カップ)/gi;
+const descriptorPattern=/(?:日本非売品|日本未発売|非売品|中国限定|海外限定|国内限定|正規品|新品|未使用|未開封|公式|限定|希少|レア|即発送|即日発送|送料無料|匿名配送|コラボレーション|コラボ|シリーズ|series|セット|まとめ売り|ペア|pair|単品|ランダム|random|(?:全\s*)?\d+\s*種|\d+\s*(?:点|個|体|枚|本|箱|ピース|個入|入り|件)|入り|ブラインドボックス|アソート\s*(?:box|ボックス)|box|ぬいぐるみ|マスコット|キーホルダー|キーチェーン|ストラップ|アクリルスタンド|アクスタ|アクリルブロック|シーンブロック|フィギュア|プラモデル|写真集|書籍|フォトカード|ポストカード|カード|缶バッジ|タンブラー|ボトル|マグ|カップ|特典(?:カード)?付き|おまけ付き)/gi;
 
 export function distinctiveTokens(value='') {
   return canonicalProductText(value).toLowerCase().split(/[\s×&＆/／・·,:：，。!！?？【】\[\]()（）<>《》「」『』“”"'‘’+＋\-_]+/)
@@ -238,6 +239,27 @@ function setFromMatches(value,patterns=[]){
   return result;
 }
 
+function listingHeading(value=''){
+  return String(value).split(/\r?\n|。/).map(line=>line.trim()).find(Boolean)||'';
+}
+
+// ブランド・作品・シリーズが同じでも、両タイトルに互いに存在しない固有語が
+// ある場合は別商品として扱う。これにより角色名、書籍の副題、シリーズ内の款式名
+// （例: Mute Mode / My Channel）を画像類似度やYahoo推薦が上書きできなくなる。
+// 説明文には関連商品名が多数現れるため、比較対象は必ず商品名の先頭行だけにする。
+function namedIdentityConflict(query='',candidate=''){
+  const leftHeading=listingHeading(query),rightHeading=listingHeading(candidate);
+  const leftText=normalize(leftHeading),rightText=normalize(rightHeading);
+  const strong=token=>{
+    const value=normalize(token);
+    return value.length>=4||(/^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+$/u.test(value)&&value.length>=2);
+  };
+  const uniqueStrong=(source,targetText)=>[...new Set(distinctiveTokens(source).map(normalize))]
+    .filter(token=>token&&strong(token)&&!targetText.includes(token));
+  const leftOnly=uniqueStrong(leftHeading,rightText),rightOnly=uniqueStrong(rightHeading,leftText);
+  return leftOnly.length>0&&rightOnly.length>0;
+}
+
 // 抽選フィギュアの「A賞 / ラストワン賞」やタロットの「V / XX」は、
 // 作品名・角色・商品类型が同じでも商品そのものを特定する識別子。
 export function identityVariantFacets(value=''){
@@ -261,7 +283,8 @@ function disjointNonEmpty(left,right){return left.size>0&&right.size>0&&![...lef
 
 export function hasIdentityVariantMismatch(query='',candidate=''){
   const left=identityVariantFacets(query),right=identityVariantFacets(candidate);
-  return disjointNonEmpty(left.prizes,right.prizes)||disjointNonEmpty(left.tarot,right.tarot)||disjointNonEmpty(left.tarotNames,right.tarotNames);
+  return disjointNonEmpty(left.prizes,right.prizes)||disjointNonEmpty(left.tarot,right.tarot)||
+    disjointNonEmpty(left.tarotNames,right.tarotNames)||namedIdentityConflict(query,candidate);
 }
 
 // “未写数量”只是未知，不是明确冲突。它可以进入详情图片核验，但不能仅靠文字

@@ -50,13 +50,29 @@ test('rejects the three reported collectible variant false positives',()=>{
   const judgement='Re:ゼロから始める異世界生活 フェルト タロットカード XX 審判 Judgement 中国限定';
   assert.equal(hasIdentityVariantMismatch(hierophant,judgement),true);
   assert.equal(listingSpecificationEquivalent(hierophant,judgement),false);
-  assert.equal(hasIdentityVariantMismatch('月のシリーズ アクリルスタンド','星のシリーズ アクリルスタンド'),false);
+  assert.equal(hasIdentityVariantMismatch('月のシリーズ アクリルスタンド','星のシリーズ アクリルスタンド'),true);
 
   const shaker='ゼンレスゾーンゼロ 流砂 アクリルスタンド 南宮羽 妄想エンジェル';
   const popup='ゼンレスゾーンゼロ 妄想エンジェル POPUP限定 南宮羽 アクリルスタンド';
   assert.equal(productFamily(shaker),'acrylic_shaker');
   assert.equal(productFamily(popup),'acrylic_stand');
   assert.equal(semanticSameItem({query:shaker,candidate:popup}).accepted,false);
+});
+test('rejects different characters, book titles, and named variants inside one series',()=>{
+  const sukuna='中国限定 POP MART 呪術廻戦 両面宿儺 シーンブロック 正規品';
+  const itadori='中国限定 POP MART 呪術廻戦 虎杖悠仁 シーンブロック 正規品';
+  const street='Vivian Maier: Street Photographer 写真集 新品';
+  const found='Vivian Maier A Photographer Found 写真集';
+  const mute='POP MART SKULLPANDA Off Mode ぬいぐるみキーホルダー Mute Mode';
+  const secret='POPMART SKULLPANDA Off Mode θ シークレット「My Channel」ぬいぐるみ';
+  for(const [left,right] of [[sukuna,itadori],[street,found],[mute,secret]]){
+    assert.equal(hasIdentityVariantMismatch(left,right),true);
+    assert.equal(hasIdentityVariantMismatch(right,left),true);
+    assert.equal(semanticSameItem({query:left,candidate:right}).accepted,false);
+    assert.equal(semanticSameItem({query:right,candidate:left}).accepted,false);
+    assert.equal(visualListingEquivalent({query:left,candidate:right,queryCategory:productFamily(left),candidateCategory:productFamily(right),imageScore:.99}),false);
+  }
+  assert.equal(productFamily(sukuna),'acrylic_block');
 });
 test('multi-unit listings need quantity evidence even when the image is identical',()=>{
   const pair='雪肌精×モンチッチ ペアぬいぐるみ セット';
