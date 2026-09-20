@@ -424,7 +424,7 @@ async function startCloudSync(statusElement=$('#cloudSyncStatus')){
     const prefilled=`https://github.com/${repo}/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
     const target=prefilled.length<7000?prefilled:`https://github.com/${repo}/issues/new?title=${encodeURIComponent(title)}`;
     if(popup)popup.location.href=target;else window.open(target,'_blank','noopener');
-    report(prefilled.length<7000?'已打开 GitHub；请最后点绿色“Submit new issue”提交。':'密文已复制；请粘贴到 GitHub 正文并点“Submit new issue”。');
+    report(prefilled.length<7000?'已打开 GitHub；点绿色“Submit new issue”后，请等待 Issue 显示“已安全合并”，系统会优先发布登录数据。':'密文已复制；请粘贴后提交，并等待 Issue 显示“已安全合并”。');
   }catch(error){popup?.close();report(`生成失败：${error.message||error}`)}
 }
 
@@ -466,6 +466,6 @@ addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPro
 if('serviceWorker'in navigator){
   const hadController=Boolean(navigator.serviceWorker.controller);let reloading=false;
   navigator.serviceWorker.addEventListener('controllerchange',()=>{if(hadController&&!reloading){reloading=true;location.reload()}});
-  navigator.serviceWorker.register('sw.js?v=16',{updateViaCache:'none'}).then(registration=>registration.update()).catch(()=>{});
+  navigator.serviceWorker.register('sw.js?v=17',{updateViaCache:'none'}).then(registration=>registration.update()).catch(()=>{});
 }
 checkCloudStatus(false);

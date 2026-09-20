@@ -1,5 +1,5 @@
 import { imageFingerprints,imageSetSimilarity } from './image.mjs';
-import { coherentPrices,conditionCompatible,distinctiveCoverage,hasExplicitDefect,hasExplicitVariantMismatch,isRejected,listingSpecificationEquivalent,listingTextEquivalent,productFamily,semanticSameItem,titleScore,visualListingEquivalent } from './rules.mjs';
+import { coherentPrices,conditionCompatible,distinctiveCoverage,hasExplicitDefect,hasExplicitVariantMismatch,isRejected,listingSpecificationEquivalent,listingTextEquivalent,MATCHING_RULES_VERSION,productFamily,semanticSameItem,titleScore,visualListingEquivalent } from './rules.mjs';
 
 const UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140 Safari/537.36';
 const DEFAULT_REQUEST_INTERVAL_MS=5500;
@@ -319,6 +319,7 @@ export async function yahooCompare(_unusedPage,item,settings={}){
   const sourceCovered=Boolean(search||ownBundle);
   const matchLabel=lowest&&!lowest.isOwn?'已核验在售同款':underpriced?'售价明显低于同款市场':'未发现更低同款';
   return {
+    rulesVersion:MATCHING_RULES_VERSION,
     query,searchUrl,lowestPrice:lowest?.price??item.ownPrice,lowestUrl:lowest?.url??item.url,
     recommendedPrice:recommended,candidates:competitors.slice(0,5),cardCount:cards.length,
     searchCardCount:searchCards.length,recommendationCardCount:recommendationCards.length,

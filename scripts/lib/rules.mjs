@@ -3,6 +3,7 @@ const badPattern = /(求购|收购|只收|蹲收|换物|交换|置换|补款|定
 const baitPattern = /(请点进去选项|点击立即购买查看|拍下改价|私聊改价|价格见图|图上价|多个角色|多款可选|任选|标价非实价|自带价|占位价|起步价|最低款价格|标价为最低|标价只是|页面价格不准)/i;
 const selectionPattern = /(请选择|选择规格|选择款式|选款|选图|拍哪款|下单备注|联系客服改价|私聊改价|各款价格|价格不一|每款价格|单独询价|需补差价|补差后发货|以详情价为准|详情价格为准)/i;
 const multiOfferPattern = /(多款|多角色|全系列|合集|系列任选|整套可拆|可拆卖)/i;
+export const MATCHING_RULES_VERSION = 3;
 
 export function normalize(value='') {
   return String(value).toLowerCase().replace(/[\s·・,:：，。!！?？【】\[\]()（）<>《》“”"'‘’\-_/+＋×]/g,'');
@@ -84,6 +85,8 @@ export function productFamily(value='',category='') {
   if(/(?:レーザーチケット|ホログラムチケット|チケット|ticket|票卡|镭射票)/i.test(text))return 'ticket';
   if(/(?:シールウエハース|ウエハースシール|ステッカー|sticker|贴纸|贴片)/i.test(text))return 'sticker';
   if(/(?:アクリルブロック|acrylic\s*block|亚克力砖)/i.test(text))return 'acrylic_block';
+  // 流砂/オイル入り/シェイカーは通常の平面アクリルスタンドとは別商品。
+  if(/(?:流砂|流沙|オイル入り|オイルアクリル|シェイカー|shaker)\s*(?:アクリル|acrylic)?|(?:アクリル|acrylic).{0,8}(?:流砂|流沙|オイル入り|シェイカー|shaker)/i.test(text))return 'acrylic_shaker';
   if(/(?:アクリルスタンド|アクスタ|acrylic\s*stand|亚克力立牌|立牌)/i.test(text))return 'acrylic_stand';
   if(/(?:フィギュア|figure|手办|模型雕像)/i.test(text))return 'figure';
   if(/(?:ガンプラ|ガンダム|プラモデル|模型套件|\bmg\b|\bpg\b|\bhg\b|\brg\b)/i.test(text))return 'model_kit';
@@ -194,9 +197,42 @@ function hasVariantMarkerMismatch(query='',candidate='') {
   return false;
 }
 
+function setFromMatches(value,patterns=[]){
+  const text=normalizedJapanese(value).toUpperCase(),result=new Set();
+  for(const [pattern,normalizeMatch] of patterns)for(const match of text.matchAll(pattern))result.add(normalizeMatch(match));
+  return result;
+}
+
+// 抽選フィギュアの「A賞 / ラストワン賞」やタロットの「V / XX」は、
+// 作品名・角色・商品类型が同じでも商品そのものを特定する識別子。
+export function identityVariantFacets(value=''){
+  const upper=normalizedJapanese(value).toUpperCase();
+  const prizes=setFromMatches(upper,[
+    [/(?:ラストワン|LAST\s*ONE)\s*賞?/g,()=> 'LAST_ONE'],
+    [/(?:^|[^A-Z0-9])([A-H])\s*賞/g,match=>`${match[1]}_PRIZE`],
+    [/(?:^|[^0-9])([1-9]|10)\s*等\s*賞/g,match=>`${match[1]}_PRIZE`]
+  ]);
+  const tarot=new Set();
+  if(/(?:タロット|TAROT)/i.test(upper)){
+    for(const match of upper.matchAll(/(?:^|[\s　・:：【】()（）])((?:XXI|XX|XIX|XVIII|XVII|XVI|XV|XIV|XIII|XII|XI|X|IX|VIII|VII|VI|V|IV|III|II|I)|(?:[0-9]|1[0-9]|2[01]))(?=$|[\s　・:：【】()（）])/g))tarot.add(match[1]);
+  }
+  const tarotNames=/(?:タロット|TAROT)/i.test(upper)?setFromMatches(upper,[
+    [/(愚者|魔術師|女教皇|女帝|皇帝|教皇|恋人|戦車|力|隠者|運命の輪|正義|吊るされた男|死神|節制|悪魔|塔|星|月|太陽|審判|世界|THE\s+FOOL|THE\s+MAGICIAN|THE\s+HIGH\s+PRIESTESS|THE\s+EMPRESS|THE\s+EMPEROR|THE\s+HIEROPHANT|THE\s+LOVERS|THE\s+CHARIOT|STRENGTH|THE\s+HERMIT|WHEEL\s+OF\s+FORTUNE|JUSTICE|THE\s+HANGED\s+MAN|DEATH|TEMPERANCE|THE\s+DEVIL|THE\s+TOWER|THE\s+STAR|THE\s+MOON|THE\s+SUN|JUDGEMENT|JUDGMENT|THE\s+WORLD)/g,match=>match[1].replace(/\s+/g,'_')]
+  ]):new Set();
+  return {prizes,tarot,tarotNames};
+}
+
+function disjointNonEmpty(left,right){return left.size>0&&right.size>0&&![...left].some(value=>right.has(value))}
+
+export function hasIdentityVariantMismatch(query='',candidate=''){
+  const left=identityVariantFacets(query),right=identityVariantFacets(candidate);
+  return disjointNonEmpty(left.prizes,right.prizes)||disjointNonEmpty(left.tarot,right.tarot)||disjointNonEmpty(left.tarotNames,right.tarotNames);
+}
+
 // “未写数量”只是未知，不是明确冲突。它可以进入详情图片核验，但不能仅靠文字
 // 直接成为同款；明确写了单品/2体、A/B版或不同套数时仍是硬冲突。
 export function hasExplicitVariantMismatch(query='',candidate=''){
+  if(hasIdentityVariantMismatch(query,candidate))return true;
   const queryQuantity=semanticQuantity(query),candidateQuantity=semanticQuantity(candidate);
   if(Number.isFinite(queryQuantity)&&Number.isFinite(candidateQuantity)&&queryQuantity!==candidateQuantity)return true;
   return hasVariantMarkerMismatch(query,candidate);

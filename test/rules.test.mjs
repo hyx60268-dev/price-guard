@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateCost,advice,coherentPrices,conditionCompatible,distinctiveCoverage,hasExplicitDefect,hasExplicitVariantMismatch,hasVariantMismatch,isLikelyVariantOffer,listingSpecificationEquivalent,listingTextEquivalent,productFamily,semanticQuantity,semanticSameItem,titleScore,visualListingEquivalent } from '../scripts/lib/rules.mjs';
+import { calculateCost,advice,coherentPrices,conditionCompatible,distinctiveCoverage,hasExplicitDefect,hasExplicitVariantMismatch,hasIdentityVariantMismatch,hasVariantMismatch,isLikelyVariantOffer,listingSpecificationEquivalent,listingTextEquivalent,productFamily,semanticQuantity,semanticSameItem,titleScore,visualListingEquivalent } from '../scripts/lib/rules.mjs';
 import { encrypt,decrypt } from '../scripts/lib/crypto.mjs';
 const settings={exchangeRate:22.99,costMultiplier:1.05};
 test('manual cost formula',()=>assert.equal(calculateCost(90.5,30,210,settings),3130));
@@ -38,6 +38,25 @@ test('same-looking image cannot override pair, version, or product-family confli
   assert.equal(visualListingEquivalent({query:'雪肌精×モンチッチ ペアぬいぐるみ',candidate:'雪肌精×モンチッチ 単品ぬいぐるみ',imageScore:.99}),false);
   assert.equal(visualListingEquivalent({query:'鳴潮 長離 フィギュア Aタイプ',candidate:'鳴潮 長離 フィギュア Bタイプ',imageScore:.99}),false);
   assert.equal(visualListingEquivalent({query:'鳴潮 長離 フィギュア',candidate:'鳴潮 長離 アクリルスタンド',imageScore:.99}),false);
+});
+test('rejects the three reported collectible variant false positives',()=>{
+  const lastOne='一番くじ NARUTO-ナルト- 疾風伝 風影奪還編 ラストワン賞 デイダラ MASTERLISE フィギュア';
+  const prizeA='NARUTO-ナルト- 疾風伝 デイダラ A賞 フィギュア';
+  assert.equal(hasIdentityVariantMismatch(lastOne,prizeA),true);
+  assert.equal(semanticSameItem({query:lastOne,candidate:prizeA}).accepted,false);
+  assert.equal(visualListingEquivalent({query:lastOne,candidate:prizeA,imageScore:.99}),false);
+
+  const hierophant='Re:ゼロから始める異世界生活 ガーフィール タロットカード V 教皇 The Hierophant 中国限定';
+  const judgement='Re:ゼロから始める異世界生活 フェルト タロットカード XX 審判 Judgement 中国限定';
+  assert.equal(hasIdentityVariantMismatch(hierophant,judgement),true);
+  assert.equal(listingSpecificationEquivalent(hierophant,judgement),false);
+  assert.equal(hasIdentityVariantMismatch('月のシリーズ アクリルスタンド','星のシリーズ アクリルスタンド'),false);
+
+  const shaker='ゼンレスゾーンゼロ 流砂 アクリルスタンド 南宮羽 妄想エンジェル';
+  const popup='ゼンレスゾーンゼロ 妄想エンジェル POPUP限定 南宮羽 アクリルスタンド';
+  assert.equal(productFamily(shaker),'acrylic_shaker');
+  assert.equal(productFamily(popup),'acrylic_stand');
+  assert.equal(semanticSameItem({query:shaker,candidate:popup}).accepted,false);
 });
 test('an omitted quantity may reach visual verification but an explicit single cannot',()=>{
   const pair='雪肌精×モンチッチ ペアぬいぐるみ セット';

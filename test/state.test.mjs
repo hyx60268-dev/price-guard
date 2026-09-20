@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { calculateManualFields,discoveryDismissalKey,manualCostFor,manualCostKey,mergeAccountConfigs,mergeDiscoveryReviews,mergeDismissedDiscoveries,mergeManualCosts,reconcileDurableState } from '../scripts/lib/state.mjs';
-import { mergePortalUserRecords,portalUsersForResult,portalUsersFromEnv,scopeResultForPortalUser } from '../scripts/lib/publish.mjs';
+import { decrypt } from '../scripts/lib/crypto.mjs';
+import { mergePortalUserRecords,portalUsersForResult,portalUsersFromEnv,scopeResultForPortalUser,writeOutputs } from '../scripts/lib/publish.mjs';
 
 const item={accountId:'m',id:'new',title:'中国限定 商品 A 新品',xianyuQuery:'商品A 中国版',ownPrice:5000,recommendedPrice:4500,averageCNY:20};
 
@@ -70,6 +74,21 @@ test('admin can create a login before the user adds a shop',()=>{
   const scoped=scopeResultForPortalUser({accounts:[],items:[],manualCosts:{},managedAccounts:[]},users[0]);
   assert.equal(scoped.portalUser.displayName,'新人');
   assert.deepEqual(scoped.accounts,[]);
+});
+
+test('admin-created user survives publication and can decrypt its own login file',async()=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'price-guard-user-')),password='admin-pass-123',userPassword='member-pass-123';
+  try{
+    const result={version:6,checkedAt:'2026-09-20T00:00:00Z',dataRevision:'2026-09-20T00:00:00Z',settings:{profitWarningJPY:1500},accounts:[],items:[],manualCosts:{},managedAccounts:[],portalUsers:[{username:'member1',displayName:'成员一',password:userPassword,accountIds:[],enabled:true,updatedAt:'2026-09-20T00:00:00Z'}]};
+    await writeOutputs({root,result,previous:null,password});
+    const admin=JSON.parse(decrypt(await fs.readFile(path.join(root,'public/data/latest.json.enc')),password).toString('utf8'));
+    const member=JSON.parse(decrypt(await fs.readFile(path.join(root,'public/data/users/member1/latest.json.enc')),userPassword).toString('utf8'));
+    const manifest=JSON.parse(await fs.readFile(path.join(root,'public/data/users.json'),'utf8'));
+    assert.deepEqual(admin.portalUsers.map(user=>user.username),['member1']);
+    assert.equal(member.portalUser.username,'member1');
+    assert.deepEqual(member.accounts,[]);
+    assert.deepEqual(manifest.users.map(user=>user.username),['admin','member1']);
+  }finally{await fs.rm(root,{recursive:true,force:true})}
 });
 
 test('encrypted portal records override legacy env users and keep deletion tombstones',()=>{

@@ -9,6 +9,7 @@ import { fairRoundRobin,inventoryDelta,isFresh,isFreshMinutes,reconcileLiveItems
 import { decrypt } from './lib/crypto.mjs';
 import { writeOutputs } from './lib/publish.mjs';
 import { calculateManualFields,manualCostFor,mergeAccountConfigs } from './lib/state.mjs';
+import { MATCHING_RULES_VERSION } from './lib/rules.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url)),root=path.resolve(here,'..');
 const readJson=file=>fs.readFile(file,'utf8').then(JSON.parse);
@@ -51,6 +52,7 @@ function priorFor(context,item){
 
 function cachedYahoo(prior,item,reason='fresh_cache'){
   const cached=prior?.yahoo||item.cachedYahoo;
+  if(Number(cached?.rulesVersion)!==MATCHING_RULES_VERSION)return null;
   if(!cached||!Number.isFinite(cached.lowestPrice??prior.lowestPrice))return null;
   return {
     ...cached,status:'cached',cacheReason:reason,checkedAt:cached.checkedAt||prior.checkedAt||null,
@@ -119,14 +121,14 @@ await mapLimit(yahooTasks,yahooConcurrency,async(task,taskIndex)=>{
     context.yahooById.set(item.id,fresh);return;
   }
   if(Date.now()>=deadline){
-    context.yahooById.set(item.id,cachedYahoo(prior,item,'scan_budget')||{status:'deferred_budget',lowestPrice:null,recommendedPrice:item.ownPrice,candidates:[]});return;
+    context.yahooById.set(item.id,cachedYahoo(prior,item,'scan_budget')||{status:'deferred_budget',cacheReason:'rules_changed',rulesVersion:MATCHING_RULES_VERSION,lowestPrice:item.ownPrice,lowestUrl:item.url,recommendedPrice:item.ownPrice,candidates:[]});return;
   }
   try{
     const result=await yahooCompare(null,item,{...settings,forceYahooBroadSearch:forceYahoo||task.priority<=1});context.yahooById.set(item.id,result);
     console.log(`[Yahoo ${taskIndex+1}/${yahooTasks.length}] ${context.account.name} ${item.id} cards=${result.cardCount} matches=${result.competitorCount} lowest=${result.lowestPrice} source=${result.sourceStatus?.search||'unknown'}`);
   }catch(error){
     console.error(`[Yahoo ERROR][${context.account.id}:${item.id}]`,String(error));
-    context.yahooById.set(item.id,cachedYahoo(prior,item,'request_error')||{status:'error',error:String(error),candidates:[],lowestPrice:null,lowestUrl:'',recommendedPrice:item.ownPrice});
+    context.yahooById.set(item.id,cachedYahoo(prior,item,'request_error')||{status:'error',error:String(error),rulesVersion:MATCHING_RULES_VERSION,candidates:[],lowestPrice:item.ownPrice,lowestUrl:item.url,recommendedPrice:item.ownPrice});
   }finally{await wait(550+Math.floor(Math.random()*350))}
 });
 
