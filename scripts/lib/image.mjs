@@ -6,17 +6,20 @@ function bitsToHex(bits){
   return BigInt(`0b${bits}`).toString(16).padStart(16,'0');
 }
 
-async function download(url){
-  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),12000);
-  try{
-    const response=await fetch(url,{headers:{'user-agent':'Mozilla/5.0','accept':'image/avif,image/webp,image/*,*/*;q=0.8'},signal:controller.signal});
-    if(!response.ok)return null;
-    const length=Number(response.headers.get('content-length'));
-    if(Number.isFinite(length)&&length>12_000_000)return null;
-    const buffer=Buffer.from(await response.arrayBuffer());
-    return buffer.length<=12_000_000?buffer:null;
-  }catch{return null}
-  finally{clearTimeout(timeout)}
+async function download(url,attempts=2){
+  for(let attempt=1;attempt<=attempts;attempt++){
+    const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),12000);
+    try{
+      const response=await fetch(url,{headers:{'user-agent':'Mozilla/5.0','accept':'image/avif,image/webp,image/*,*/*;q=0.8'},signal:controller.signal});
+      if(!response.ok){if(attempt<attempts)continue;return null}
+      const length=Number(response.headers.get('content-length'));
+      if(Number.isFinite(length)&&length>12_000_000)return null;
+      const buffer=Buffer.from(await response.arrayBuffer());
+      return buffer.length<=12_000_000?buffer:null;
+    }catch{if(attempt===attempts)return null}
+    finally{clearTimeout(timeout)}
+  }
+  return null;
 }
 
 async function differenceHash(buffer){
@@ -59,7 +62,7 @@ export async function imageFingerprints(url){
   if(!url)return null;
   if(!cache.has(url)){
     if(cache.size>500)cache.delete(cache.keys().next().value);
-    cache.set(url,makeFingerprints(url));
+    cache.set(url,makeFingerprints(url).then(value=>{if(!value)cache.delete(url);return value}));
   }
   return cache.get(url);
 }

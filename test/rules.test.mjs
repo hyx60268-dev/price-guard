@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateCost,advice,coherentPrices,conditionCompatible,distinctiveCoverage,hasExplicitDefect,hasExplicitVariantMismatch,hasIdentityVariantMismatch,hasVariantMismatch,isLikelyVariantOffer,listingSpecificationEquivalent,listingTextEquivalent,productFamily,saleUnitEquivalent,semanticQuantity,semanticSameItem,titleScore,visualListingEquivalent } from '../scripts/lib/rules.mjs';
+import { calculateCost,advice,coherentPrices,conditionCompatible,distinctiveCoverage,hasExplicitDefect,hasExplicitVariantMismatch,hasIdentityVariantMismatch,hasVariantMismatch,isLikelyVariantOffer,listingSpecificationEquivalent,listingTextEquivalent,packagedAssortmentEquivalent,productFamily,saleUnitEquivalent,semanticQuantity,semanticSameItem,titleScore,visualListingEquivalent } from '../scripts/lib/rules.mjs';
 import { encrypt,decrypt } from '../scripts/lib/crypto.mjs';
 const settings={exchangeRate:22.99,costMultiplier:1.05};
 test('manual cost formula',()=>assert.equal(calculateCost(90.5,30,210,settings),3130));
@@ -33,6 +33,15 @@ test('same primary product with a bonus card remains a competitor',()=>{
   const competitor='新品未開封 鳴潮 Metheus Series 長離 1/7スケール フィギュア 特典カード付き';
   assert.equal(hasVariantMismatch(own,competitor),false);
   assert.equal(visualListingEquivalent({query:own,candidate:competitor,imageScore:.887}),true);
+});
+test('matches the reported Pokemon outer BOX and 12 inner-box wording without weakening variants',()=>{
+  const own='海外限定 ポケモン30周年 梦点睛 ピカチュウ フィギュア 1BOX';
+  const competitor='ポケモン 絵夢点晴 ピカチュウフィギュア第4弾 12小箱セット 被りなし';
+  assert.equal(semanticSameItem({query:own,candidate:competitor,queryCategory:'フィギュア',candidateCategory:'フィギュア'}).accepted,true);
+  assert.equal(packagedAssortmentEquivalent({query:own,candidate:competitor,queryCategory:'フィギュア',candidateCategory:'フィギュア',imageScore:.6983}),true);
+  assert.equal(packagedAssortmentEquivalent({query:own,candidate:competitor.replace('ピカチュウ','イーブイ'),queryCategory:'フィギュア',candidateCategory:'フィギュア',imageScore:.99}),false);
+  assert.equal(hasIdentityVariantMismatch('ポケモン 絵夢点睛 ピカチュウ 第3弾 フィギュア','ポケモン 絵夢点晴 ピカチュウ 第4弾 フィギュア'),true);
+  assert.equal(hasIdentityVariantMismatch('ポケモン20周年 ピカチュウ フィギュア','ポケモン30周年 ピカチュウ フィギュア'),true);
 });
 test('same-looking image cannot override pair, version, or product-family conflicts',()=>{
   assert.equal(visualListingEquivalent({query:'雪肌精×モンチッチ ペアぬいぐるみ',candidate:'雪肌精×モンチッチ 単品ぬいぐるみ',imageScore:.99}),false);

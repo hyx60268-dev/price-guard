@@ -3,13 +3,17 @@ const badPattern = /(求购|收购|只收|蹲收|换物|交换|置换|补款|定
 const baitPattern = /(请点进去选项|点击立即购买查看|拍下改价|私聊改价|价格见图|图上价|多个角色|多款可选|任选|标价非实价|自带价|占位价|起步价|最低款价格|标价为最低|标价只是|页面价格不准)/i;
 const selectionPattern = /(请选择|选择规格|选择款式|选款|选图|拍哪款|下单备注|联系客服改价|私聊改价|各款价格|价格不一|每款价格|单独询价|需补差价|补差后发货|以详情价为准|详情价格为准)/i;
 const multiOfferPattern = /(多款|多角色|全系列|合集|系列任选|整套可拆|可拆卖)/i;
-export const MATCHING_RULES_VERSION = 6;
+export const MATCHING_RULES_VERSION = 7;
 
 // 同じIP/シリーズが中国語・日本語・英語や作者名で出品されるケースを、
 // 再利用できる別名辞書で同じ識別語へ寄せる。追加時は商品固有語だけを登録し、
 // 「熊」「フィギュア」のような一般語は絶対に別名扱いしない。
 function canonicalProductText(value='') {
   return String(value).normalize('NFKC')
+    // Yahoo sellers use several Japanese/Chinese spellings (and one common typo)
+    // for this same Pokemon collection name.  Keep this product-specific alias
+    // here rather than weakening the generic token matcher.
+    .replace(/(?:絵夢点睛|絵夢点晴|绘梦点睛|繪夢點睛|梦点睛|夢点睛)/gi,' emutenkai ')
     .replace(/(?:greedy\s*bear|greedybear|貪吃熊|贪吃熊|食いしん坊(?:クマ|熊|ベア)|くいしんぼう(?:クマ|熊|ベア))/gi,' greedybear ')
     .replace(/(?:sure\s*fun|surefun|may\s*mei|maymei|メイメイ)/gi,' maymei ')
     .replace(/(?:metheus|薪火)/gi,' metheus ');
@@ -156,7 +160,7 @@ export function conditionCompatible(query='',candidate=''){
   return true;
 }
 
-const descriptorPattern=/(?:日本非売品|日本未発売|非売品|中国限定|海外限定|国内限定|正規品|新品|未使用|未開封|公式|限定|希少|レア|即発送|即日発送|送料無料|匿名配送|コラボレーション|コラボ|シリーズ|series|セット|まとめ売り|ペア|pair|単品|ランダム|random|(?:全\s*)?\d+\s*種|\d+\s*(?:点|個|体|枚|本|箱|ピース|個入|入り|件)|入り|ブラインドボックス|アソート\s*(?:box|ボックス)|box|ぬいぐるみ|マスコット|キーホルダー|キーチェーン|ストラップ|アクリルスタンド|アクスタ|アクリルブロック|シーンブロック|フィギュア|プラモデル|写真集|書籍|フォトカード|ポストカード|カード|缶バッジ|タンブラー|ボトル|マグ|カップ|特典(?:カード)?付き|おまけ付き)/gi;
+const descriptorPattern=/(?:日本非売品|日本未発売|非売品|中国限定|海外限定|国内限定|正規品|新品|未使用|未開封|公式|限定|希少|レア|即発送|即日発送|送料無料|匿名配送|コラボレーション|コラボ|シリーズ|series|セット|まとめ売り|ペア|pair|単品|ランダム|random|\d+\s*周年(?:記念)?|第\s*\d+\s*弾|(?:全\s*)?\d+\s*種|\d+\s*(?:小箱|点|個|体|枚|本|箱|ピース|個入|入り|件)|入り|被りなし|重複なし|ブラインドボックス|アソート\s*(?:box|ボックス)|box|コレクション|ぬいぐるみ|マスコット|キーホルダー|キーチェーン|ストラップ|アクリルスタンド|アクスタ|アクリルブロック|シーンブロック|フィギュア|プラモデル|写真集|書籍|フォトカード|ポストカード|カード|缶バッジ|タンブラー|ボトル|マグ|カップ|特典(?:カード)?付き|おまけ付き)/gi;
 
 export function distinctiveTokens(value='') {
   return canonicalProductText(value).toLowerCase().split(/[\s×&＆/／・·,:：，。!！?？【】\[\]()（）<>《》「」『』“”"'‘’+＋\-_]+/)
@@ -276,7 +280,9 @@ export function identityVariantFacets(value=''){
   const tarotNames=/(?:タロット|TAROT)/i.test(upper)?setFromMatches(upper,[
     [/(愚者|魔術師|女教皇|女帝|皇帝|教皇|恋人|戦車|力|隠者|運命の輪|正義|吊るされた男|死神|節制|悪魔|塔|星|月|太陽|審判|世界|THE\s+FOOL|THE\s+MAGICIAN|THE\s+HIGH\s+PRIESTESS|THE\s+EMPRESS|THE\s+EMPEROR|THE\s+HIEROPHANT|THE\s+LOVERS|THE\s+CHARIOT|STRENGTH|THE\s+HERMIT|WHEEL\s+OF\s+FORTUNE|JUSTICE|THE\s+HANGED\s+MAN|DEATH|TEMPERANCE|THE\s+DEVIL|THE\s+TOWER|THE\s+STAR|THE\s+MOON|THE\s+SUN|JUDGEMENT|JUDGMENT|THE\s+WORLD)/g,match=>match[1].replace(/\s+/g,'_')]
   ]):new Set();
-  return {prizes,tarot,tarotNames};
+  const waves=setFromMatches(upper,[[/第\s*(\d+)\s*弾/g,match=>match[1]]]);
+  const anniversaries=setFromMatches(upper,[[/(\d+)\s*周年/g,match=>match[1]]]);
+  return {prizes,tarot,tarotNames,waves,anniversaries};
 }
 
 function disjointNonEmpty(left,right){return left.size>0&&right.size>0&&![...left].some(value=>right.has(value))}
@@ -284,7 +290,8 @@ function disjointNonEmpty(left,right){return left.size>0&&right.size>0&&![...lef
 export function hasIdentityVariantMismatch(query='',candidate=''){
   const left=identityVariantFacets(query),right=identityVariantFacets(candidate);
   return disjointNonEmpty(left.prizes,right.prizes)||disjointNonEmpty(left.tarot,right.tarot)||
-    disjointNonEmpty(left.tarotNames,right.tarotNames)||namedIdentityConflict(query,candidate);
+    disjointNonEmpty(left.tarotNames,right.tarotNames)||disjointNonEmpty(left.waves,right.waves)||
+    disjointNonEmpty(left.anniversaries,right.anniversaries)||namedIdentityConflict(query,candidate);
 }
 
 // “未写数量”只是未知，不是明确冲突。它可以进入详情图片核验，但不能仅靠文字
@@ -322,6 +329,26 @@ export function visualListingEquivalent({query='',candidate='',queryCategory='',
   if(!queryFamily||queryFamily!==candidateFamily)return false;
   const forward=distinctiveCoverage(query,candidate),backward=distinctiveCoverage(candidate,query);
   return Math.max(forward.matchedCount,backward.matchedCount)>=2&&Math.max(forward.matchedLength,backward.matchedLength)>=4;
+}
+
+// A sealed outer blind-box and the seller wording "12 small boxes" describe the
+// same sale unit for some imported collectibles.  Their photos can be the exact
+// same printed carton but score lower after perspective/background changes.  This
+// narrow path still requires a strong image, identical family and shared product
+// identity; explicit wave/anniversary/character conflicts remain hard failures.
+export function packagedAssortmentEquivalent({query='',candidate='',queryCategory='',candidateCategory='',imageScore=null,threshold=.66}={}) {
+  if(!Number.isFinite(imageScore)||imageScore<threshold)return false;
+  const queryHeading=listingHeading(query),candidateHeading=listingHeading(candidate);
+  if(hasIdentityVariantMismatch(queryHeading,candidateHeading)||hasIdentityVariantMismatch(candidateHeading,queryHeading))return false;
+  const queryQuantity=semanticQuantity(queryHeading),candidateQuantity=semanticQuantity(candidateHeading);
+  if(Number.isFinite(queryQuantity)&&Number.isFinite(candidateQuantity)&&queryQuantity!==candidateQuantity)return false;
+  const queryFamily=productFamily(query,queryCategory),candidateFamily=productFamily(candidate,candidateCategory);
+  if(!queryFamily||queryFamily!==candidateFamily)return false;
+  const forward=distinctiveCoverage(queryHeading,candidateHeading),backward=distinctiveCoverage(candidateHeading,queryHeading);
+  if(Math.min(forward.score,backward.score)<.78||Math.min(forward.matchedCount,backward.matchedCount)<2)return false;
+  const left=saleUnitProfile(queryHeading),right=saleUnitProfile(candidateHeading);
+  const smallBoxSet=value=>/\d+\s*小箱\s*(?:セット|入り|入)?/i.test(normalizedJapanese(value));
+  return left.fullBox&&right.fullBox||left.fullBox&&smallBoxSet(candidateHeading)||right.fullBox&&smallBoxSet(queryHeading);
 }
 
 export function inferSize(title='') {

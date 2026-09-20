@@ -83,6 +83,16 @@ test('a small gap to the nearest same item does not trigger a raise despite high
   assert.equal(result.recommendedPrice,17499);
 });
 
+test('a one-yen-higher competitor is market evidence but never a reason to raise',()=>{
+  const result=marketPriceDecision(44499,[{id:'same-box',sellerId:'other',price:44500}],{},
+    {plausibleCompetitors:[{id:'same-box',sellerId:'other',price:44500}]});
+  assert.equal(result.marketMinPrice,44500);
+  assert.equal(result.ownIsDefiniteLowest,true);
+  assert.equal(result.raiseRoomJPY,1);
+  assert.equal(result.underpriced,false);
+  assert.equal(result.recommendedPrice,44499);
+});
+
 test('raise-price advice is blocked when any verified or unresolved plausible candidate is not above us',()=>{
   const verifiedLower=marketPriceDecision(17499,[17000,21388,21400],{});
   assert.equal(verifiedLower.underpriced,false);
