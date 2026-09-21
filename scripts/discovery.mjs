@@ -146,6 +146,32 @@ function xianyuReviewLabel(status=''){
   return '待核验：自动搜索失败';
 }
 
+async function refreshCachedDiscoveryCosts(prior){
+  const products=(prior.products||[]).map(item=>({...item}));
+  const retryMs=60*60_000;
+  const pending=products.filter(item=>{
+    if(item.status==='ready'&&Number.isFinite(Number(item.purchaseCNY)))return false;
+    const checked=Date.parse(item.xianyu?.checkedAt||'');return !Number.isFinite(checked)||Date.now()-checked>=retryMs;
+  }).slice(0,5);
+  if(!pending.length)return {...prior,products};
+  const authState=await xianyuStateFromEnv();let browser,context,page;
+  try{
+    const opened=await openContext(authState);browser=opened.browser;context=opened.context;page=await context.newPage();
+    for(const item of pending){
+      try{
+        const xianyu=await xianyuCost(page,{id:item.id,title:item.sourceTitle,xianyuQuery:item.xianyuQuery,image:item.sourceImages?.[0],images:item.sourceImages||[],yahoo:{ownImages:item.sourceImages||[]}},settings);
+        const validated=validDiscoveryXianyu(xianyu);
+        Object.assign(item,{xianyu,purchaseCNY:validated.ready?xianyu.averageCNY:null,referenceCNY:xianyu.averageCNY,
+          images:validated.images.length?validated.images:(item.images||[]),imageSource:validated.imageSource||item.imageSource,
+          status:validated.ready?'ready':'needs_xianyu_review',xianyuSearchUrl:xianyu.searchUrl,
+          confidence:validated.ready?'自动核验参考价':xianyuReviewLabel(xianyu.status),costVerification:validated});
+        console.log(`[选品成本续查] ${item.sourceTitle} 状态=${xianyu.status} 卡片=${xianyu.cardCount??0} 核验=${xianyu.verifiedCount??0} 成本=${item.purchaseCNY??'待核验'}`);
+      }catch(error){console.warn(`[选品成本续查] ${item.sourceTitle} ${String(error)}`)}
+    }
+  }finally{await browser?.close().catch(()=>{})}
+  return {...prior,products,costCheckedAt:new Date().toISOString()};
+}
+
 function isFresh(prior){
   if(Number(prior?.version)!==DISCOVERY_VERSION)return false;
   const checked=Date.parse(prior?.checkedAt||'');return Number.isFinite(checked)&&Date.now()-checked<Number(cfg.freshHours)*3_600_000;
@@ -157,7 +183,8 @@ const prior=await priorDiscovery();
 // workflow dispatch) when a full refresh is actually required.
 const force=process.env.FORCE_DISCOVERY==='1'||process.env.SCAN_TRIGGER==='workflow_dispatch';
 if(prior&&!force&&isFresh(prior)){
-  await publishExisting(prior);console.log(`选品发现使用 ${prior.checkedAt} 的缓存，共 ${prior.products?.length||0} 个候选`);process.exit(0);
+  const refreshed=await refreshCachedDiscoveryCosts(prior);
+  await publishExisting(refreshed);console.log(`选品发现使用 ${prior.checkedAt} 的缓存，共 ${refreshed.products?.length||0} 个候选，并续查待核验成本`);process.exit(0);
 }
 
 function xianyuStateFromEnv(){

@@ -5,7 +5,7 @@
   "costMultiplier": 1.05,
   "maxXianyuSamples": 5,
   "maxXianyuDetailChecks": 6,
-  "maxXianyuItemsPerRun": 3,
+  "maxXianyuItemsPerRun": 30,
   "xianyuFreshHours": 168,
   "xianyuRetryHours": 24,
   "scanDelayMs": 1200,
