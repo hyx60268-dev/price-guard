@@ -4,7 +4,7 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { openContext,settle } from './lib/browser.mjs';
 import { decrypt,encrypt } from './lib/crypto.mjs';
-import { canonicalSaleTitle,clusterSellerSales,containsDiscoveryKeyword,discoveryId,eligibleDiscoveryCard,groupDiscoveryCandidates,isOwnedDiscoverySource,isWithinDays,median,mercariDiscoverySearchUrl,mercariSoldEvidence,parseListingTime,rewriteListing,sameDiscoveryProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor,yahooDiscoverySearchUrl } from './lib/discovery.mjs';
+import { canonicalSaleTitle,clusterSellerSales,containsDiscoveryKeyword,discoveryId,eligibleDiscoveryCard,groupDiscoveryCandidates,isOwnedDiscoverySource,isWithinDays,median,mercariDiscoverySearchUrl,mercariSoldEvidence,parseListingTime,rankDiscoveryCandidates,rewriteListing,sameDiscoveryProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor,yahooDiscoverySearchUrl } from './lib/discovery.mjs';
 import { xianyuCost } from './lib/xianyu.mjs';
 import { fetchYahooItemBundle,fetchYahooResult } from './lib/yahoo.mjs';
 import { discoveryDismissalKey,normalizeProductIdentity } from './lib/state.mjs';
@@ -12,13 +12,13 @@ import { imageFingerprints,imageSetSimilarity } from './lib/image.mjs';
 import { listingSpecificationEquivalent,listingTextEquivalent,productFamily,titleScore } from './lib/rules.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url)),root=path.resolve(here,'..');
-const DISCOVERY_VERSION=8;
+const DISCOVERY_VERSION=9;
 const readJson=file=>fs.readFile(file,'utf8').then(JSON.parse);
 const exists=file=>fs.access(file).then(()=>true).catch(()=>false);
 const wait=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
 const settings=await readJson(path.join(root,'config','settings.json'));
 const accountsCfg=await readJson(path.join(root,'config','accounts.json'));
-const cfg={keyword:'中国限定',minPriceJPY:4999,windowDays:30,minSalesPerSeller:2,freshHours:6,seedLimitPerPlatform:200,sellerLimitPerPlatform:200,sellerCardLimit:160,sellerPages:2,mercariSearchScrolls:24,mercariSellerScrolls:8,maxProducts:30,...(settings.discovery||{})};
+const cfg={keyword:'中国限定',minPriceJPY:5001,windowDays:30,minSalesPerSeller:2,freshHours:6,seedLimitPerPlatform:200,sellerLimitPerPlatform:200,sellerCardLimit:160,sellerPages:2,mercariSearchScrolls:24,mercariSellerScrolls:8,maxProducts:30,maxProductsPerSeller:4,...(settings.discovery||{})};
 const password=process.env.DASHBOARD_PASSWORD;
 if(!password||password.length<8)throw new Error('DASHBOARD_PASSWORD 至少需要 8 个字符');
 await Promise.all(['data','public/data','state','.auth'].map(directory=>fs.mkdir(path.join(root,directory),{recursive:true})));
@@ -95,11 +95,47 @@ async function matchesOwnedListing(candidate,owned){
   return false;
 }
 
+async function completeOwnedScope(snapshot){
+  const owned=ownedYahooScope(snapshot);
+  for(const account of accountsCfg.accounts||[]){
+    if(!account.catalogFile)continue;
+    try{for(const item of (await readJson(path.join(root,account.catalogFile))).items||[])if(item.title){
+      owned.productTitles.push(item.title);owned.records.push({title:item.title,description:'',category:'',images:[item.image].filter(Boolean)});
+    }}catch{}
+  }
+  owned.productTitles=[...new Set(owned.productTitles)];owned.records=mergeOwnedRecords(owned.records);return owned;
+}
+
+async function excludeOwnedAndUploaded(items,owned,dismissed=[]){
+  const uploadedOwned={records:dismissed.map(record=>({title:record.title||'',description:record.description||'',category:'',images:record.images||[]}))};
+  const filtered=[];
+  for(const item of items){
+    if(await matchesOwnedListing(item,owned))continue;
+    const uploaded=dismissed.find(record=>discoveryDismissalKey(item)===String(record.productKey||''));
+    if(uploaded||dismissed.some(record=>record.title&&sameDiscoveryProduct({title:item.sourceTitle},{title:record.title})))continue;
+    if(await matchesOwnedListing(item,uploadedOwned))continue;
+    filtered.push(item);
+  }
+  return filtered;
+}
+
 async function publishExisting(prior){
-  await fs.copyFile(stateEnc,publicEnc);
-  if(await exists(stateStatus))await fs.copyFile(stateStatus,publicStatus);
-  else await fs.writeFile(publicStatus,JSON.stringify(statusFor(prior),null,2));
+  const latest=await latestPriceSnapshot(),owned=await completeOwnedScope(latest);
+  const dismissed=Object.values(latest?.dismissedDiscoveries||{});
+  const products=rankDiscoveryCandidates(await excludeOwnedAndUploaded(prior.products||[],owned,dismissed),{
+    maxProducts:Number(cfg.maxProducts),minSales:Number(cfg.minSalesPerSeller),perSeller:Number(cfg.maxProductsPerSeller||4)
+  });
+  const refreshed={...prior,version:DISCOVERY_VERSION,products,stats:{...(prior.stats||{}),ready:products.filter(item=>item.status==='ready').length,
+    pending:products.filter(item=>item.status!=='ready').length,mercari:products.filter(item=>item.sourcePlatform==='mercari'||item.sourcePlatforms?.includes('mercari')).length,
+    yahoo:products.filter(item=>item.sourcePlatform==='yahoo'||item.sourcePlatforms?.includes('yahoo')).length}};
+  const sealed=encrypt(Buffer.from(JSON.stringify(refreshed)),password);await Promise.all([fs.writeFile(stateEnc,sealed),fs.writeFile(publicEnc,sealed)]);
+  await fs.writeFile(publicStatus,JSON.stringify(statusFor(refreshed),null,2));
+  await fs.writeFile(stateStatus,JSON.stringify(statusFor(refreshed),null,2));
   await fs.writeFile(path.join(root,'data','discovery-change-summary.json'),JSON.stringify({hasChanges:false,total:0,added:0,removed:0,firstRun:false},null,2));
+}
+
+function isChinaLimitedProduct(item={}){
+  return /(?:中国\s*限定|上海\s*限定|北京\s*限定|広州\s*限定|深圳\s*限定|bilibili.{0,16}限定)/i.test(`${item.title||''} ${item.description||''}`);
 }
 
 function isFresh(prior){
@@ -295,6 +331,7 @@ async function scanMercari(context,errors){
           }
           if(verified.length<Number(cfg.minSalesPerSeller))continue;
           const representative=verified.sort((a,b)=>Date.parse(b.soldAt)-Date.parse(a.soldAt))[0];
+          if(!isChinaLimitedProduct(representative))continue;
           groups.push(makeSourceCandidate('mercari',seller,verified,representative));
         }
       }catch(error){errors.push(`Mercari卖家${seller.id}: ${String(error)}`)}
@@ -338,6 +375,7 @@ async function scanYahoo(errors,owned){
             representative.images=(detail.images||[]).map(image=>typeof image==='string'?image:image?.url).filter(Boolean).slice(0,10);
             seller.name=detail.seller?.displayName||detail.seller?.name||detail.seller?.nickname||seller.id;
           }catch(error){errors.push(`Yahoo详情${representative.id}: ${String(error)}`);representative.images=[representative.image].filter(Boolean)}
+          if(!isChinaLimitedProduct(representative))continue;
           groups.push(makeSourceCandidate('yahoo',seller,verified,representative));
         }
       }catch(error){errors.push(`Yahoo卖家${seller.id}: ${String(error)}`)}
@@ -372,10 +410,11 @@ function aggregateAcrossPlatforms(candidates=[]){
     }
     const salesCount=Object.values(platformSales).reduce((sum,value)=>sum+value,0);
     const rewrite=rewriteListing({title:representative.sourceTitle,description:representative.sourceDescription,condition:'',saleCount:salesCount});
-    return {...representative,id:discoveryId('all','cross-platform',representative.sourceTitle),salesCount,platformSales,
+    const sellerIds=[...new Set(members.map(member=>member.seller?.id).filter(Boolean))];
+    return {...representative,id:discoveryId('all','cross-platform',representative.sourceTitle),salesCount,platformSales,sellerIds,sellerCount:sellerIds.length,
       sourcePlatforms:Object.keys(platformSales),sourceUrls:urls.slice(0,20),saleDates:dates.sort().reverse(),sourcePricesJPY:prices,
       sourcePriceJPY:median(prices)||representative.sourcePriceJPY,...rewrite};
-  }).sort((a,b)=>b.salesCount-a.salesCount||b.sourcePriceJPY-a.sourcePriceJPY);
+  });
 }
 
 const errors=[],authState=await xianyuStateFromEnv();
@@ -384,26 +423,12 @@ const sourceCandidates=[];
 const sourceScanStats={mercariRawCards:0,mercariMarkedSeeds:0,mercariSeeds:0,mercariSellers:0,mercariSellerCards:0,mercariRepeatedGroups:0,yahooSeeds:0,yahooSellers:0};
 let ranked=[];
 try{
-  const latest=await latestPriceSnapshot(),owned=ownedYahooScope(latest);
-  for(const account of accountsCfg.accounts||[]){
-    if(!account.catalogFile)continue;
-    try{for(const item of (await readJson(path.join(root,account.catalogFile))).items||[])if(item.title){owned.productTitles.push(item.title);owned.records.push({title:item.title,description:'',category:'',images:[item.image].filter(Boolean)})}}catch{}
-  }
-  owned.productTitles=[...new Set(owned.productTitles)];
-  owned.records=mergeOwnedRecords(owned.records);
+  const latest=await latestPriceSnapshot(),owned=await completeOwnedScope(latest);
   const opened=await openContext(authState);browser=opened.browser;context=opened.context;
   const [mercari,yahoo]=await Promise.all([scanMercari(context,errors),scanYahoo(errors,owned)]);sourceCandidates.push(...mercari,...yahoo);
   const dismissed=Object.values(latest?.dismissedDiscoveries||{});
-  const filtered=[];
-  for(const item of aggregateAcrossPlatforms(sourceCandidates)){
-    if(await matchesOwnedListing(item,owned))continue;
-    const uploaded=dismissed.find(record=>discoveryDismissalKey(item)===String(record.productKey||''));
-    if(uploaded)continue;
-    if(dismissed.some(record=>record.title&&sameDiscoveryProduct({title:item.sourceTitle},{title:record.title})))continue;
-    if(await matchesOwnedListing(item,{records:dismissed.map(record=>({title:record.title||'',description:record.description||'',category:'',images:record.images||[]}))}))continue;
-    filtered.push(item);if(filtered.length>=Number(cfg.maxProducts))break;
-  }
-  ranked=filtered;
+  const filtered=await excludeOwnedAndUploaded(aggregateAcrossPlatforms(sourceCandidates),owned,dismissed);
+  ranked=rankDiscoveryCandidates(filtered,{maxProducts:Number(cfg.maxProducts),minSales:Number(cfg.minSalesPerSeller),perSeller:Number(cfg.maxProductsPerSeller||4)});
   const reviews=Object.values(latest?.discoveryReviews||{});
   const reviewFor=item=>reviews.find(record=>String(record.productKey||'')===discoveryDismissalKey(item)||(record.title&&sameDiscoveryProduct({title:item.sourceTitle},{title:record.title})));
   xPage=await context.newPage();
@@ -415,8 +440,8 @@ try{
     }
     try{
       const xianyu=await xianyuCost(xPage,{id:item.id,title:item.sourceTitle,xianyuQuery:item.xianyuQuery,image:item.sourceImages[0],images:item.sourceImages,yahoo:{ownImages:item.sourceImages}},settings);
-      const validated=validDiscoveryXianyu(xianyu);Object.assign(item,{xianyu,purchaseCNY:xianyu.averageCNY,images:validated.images,
-        imageSource:validated.imageSource,status:validated.ready?'ready':'needs_xianyu_review',xianyuSearchUrl:xianyu.searchUrl,confidence:validated.ready?'高':'需人工'});
+      const validated=validDiscoveryXianyu(xianyu);Object.assign(item,{xianyu,purchaseCNY:validated.ready?xianyu.averageCNY:null,referenceCNY:xianyu.averageCNY,images:validated.images,
+        imageSource:validated.imageSource,status:validated.ready?'ready':'needs_xianyu_review',xianyuSearchUrl:xianyu.searchUrl,confidence:validated.ready?'自动核验参考价':'待核验',costVerification:validated});
       if(['login_required','blocked'].includes(xianyu.status))xianyuAuthRequired=true;
     }catch(error){errors.push(`闲鱼${item.id}: ${String(error)}`);Object.assign(item,{status:'needs_xianyu_review',purchaseCNY:null,images:[],confidence:'需人工',xianyuSearchUrl:`https://www.goofish.com/search?q=${encodeURIComponent(item.xianyuQuery)}`})}
     if(review){
@@ -430,7 +455,7 @@ try{
 }finally{await browser?.close().catch(()=>{})}
 
 const products=ranked;
-const result={version:DISCOVERY_VERSION,checkedAt:new Date().toISOString(),filters:{keyword:cfg.keyword,soldOnly:true,minPriceJPY:cfg.minPriceJPY,sort:'newest',windowDays:cfg.windowDays,minSalesPerSeller:cfg.minSalesPerSeller},
+const result={version:DISCOVERY_VERSION,checkedAt:new Date().toISOString(),filters:{keyword:cfg.keyword,soldOnly:true,minPriceJPY:cfg.minPriceJPY,sort:'2d_then_7d_then_30d',windowDays:cfg.windowDays,minSalesPerSeller:cfg.minSalesPerSeller},
   products,stats:{sourceCandidates:sourceCandidates.length,...sourceScanStats,ready:products.filter(item=>item.status==='ready').length,pending:products.filter(item=>item.status!=='ready').length,
     mercari:products.filter(item=>item.sourcePlatform==='mercari'||item.sourcePlatforms?.includes('mercari')).length,
     yahoo:products.filter(item=>item.sourcePlatform==='yahoo'||item.sourcePlatforms?.includes('yahoo')).length},

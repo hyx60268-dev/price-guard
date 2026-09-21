@@ -1,6 +1,6 @@
 import { cardsFromPage,settle } from './browser.mjs';
 import { coherentIndependentImages,imageFingerprints,imageSetSimilarity } from './image.mjs';
-import { average,coherentPrices,conditionCompatible,hasExplicitDefect,hasVariantMismatch,isLikelyVariantOffer,isRejected,productFamily,semanticSameItem,titleScore,yen } from './rules.mjs';
+import { coherentPrices,conditionCompatible,hasExplicitDefect,hasVariantMismatch,isLikelyVariantOffer,isRejected,productFamily,semanticSameItem,titleScore,yen } from './rules.mjs';
 
 async function mapLimit(values,limit,worker){
   const output=new Array(values.length);let cursor=0;
@@ -29,7 +29,9 @@ async function verifyDetail(context,candidate,item,settings,ownFingerprints){
       }).map(image=>image.currentSrc||image.src).filter(Boolean)];
       const blocked=/访问频繁|安全验证|滑块|验证码|请稍后重试|被挤爆/.test(text);
       const loginVisible=[...document.querySelectorAll('iframe[src*="login"], [class*="login" i]')].some(visible);
-      return {text,titles:[...new Set(titleCandidates)].slice(0,30),images:[...new Set(images.filter(Boolean))].slice(0,16),optionCount:optionNodes.length,blocked,loginVisible};
+      const sellerLink=[...root.querySelectorAll('a[href*="/personal"],a[href*="/user"],a[href*="seller"]')].find(visible);
+      const sellerUrl=sellerLink?.href||'',sellerName=(sellerLink?.innerText||sellerLink?.getAttribute('aria-label')||'').replace(/\s+/g,' ').trim();
+      return {text,titles:[...new Set(titleCandidates)].slice(0,30),images:[...new Set(images.filter(Boolean))].slice(0,16),optionCount:optionNodes.length,blocked,loginVisible,sellerUrl,sellerName};
     }).catch(()=>({text:'',titles:[],images:[],optionCount:0,blocked:false,loginVisible:false}));
     if(state.blocked)return {accepted:false,reason:'detail_blocked'};
     if(state.loginVisible||/login|signin/i.test(detail.url()))return {accepted:false,reason:'detail_login_required'};
@@ -50,7 +52,8 @@ async function verifyDetail(context,candidate,item,settings,ownFingerprints){
     const textStrong=semantic.accepted&&(titleMatch>=.74||(titleMatch>=.52&&bodyMatch>=.82));
     const visualStrong=ownFingerprints.length?Number.isFinite(imageScore)&&imageScore>=.70:titleMatch>=.88;
     if(!textStrong||!visualStrong)return {accepted:false,reason:!textStrong?'detail_title_mismatch':'detail_image_mismatch',detailTitle,titleMatch,bodyMatch,imageScore};
-    return {accepted:true,reason:'detail_type_quantity_text_images_verified',detailTitle,titleMatch,bodyMatch,imageScore,optionCount:state.optionCount,semantic,queryFamily,candidateFamily,
+    const sellerKey=state.sellerUrl||state.sellerName||'';
+    return {accepted:true,reason:'detail_type_quantity_text_images_verified',detailTitle,titleMatch,bodyMatch,imageScore,optionCount:state.optionCount,semantic,queryFamily,candidateFamily,sellerKey,
       detailImages:state.images.slice(0,6),independentImages,imageSource:'xianyu'};
   }catch(error){return {accepted:false,reason:'detail_error',error:String(error)}}
   finally{await detail.close().catch(()=>{})}
@@ -94,8 +97,14 @@ export async function xianyuCost(page,item,settings){
     else rejected.push({url:candidate.url,title:candidate.title,price:candidate.price,reason:check.reason,titleMatch:check.titleMatch,imageScore:check.imageScore});
   });
   const coherent=coherentPrices(verified).slice(0,settings.maxXianyuSamples||5);
-  const status=coherent.length>=2?'ok':cardCount?'manual_review':'page_empty';
-  return {query,searchUrl:url,status,samples:coherent,averageCNY:status==='ok'?average(coherent.map(sample=>sample.price)):null,cardCount,
+  const prices=coherent.map(sample=>sample.price).sort((a,b)=>a-b),middle=Math.floor(prices.length/2);
+  const referenceCNY=prices.length?(prices.length%2?prices[middle]:(prices[middle-1]+prices[middle])/2):null;
+  const sellerCount=new Set(coherent.map(sample=>sample.sellerKey).filter(Boolean)).size;
+  const sellerEvidence=sellerCount>=2||coherent.length>=3;
+  const priceSpread=prices.length>=2?(prices.at(-1)-prices[0])/Math.max(1,prices[middle]):Infinity;
+  const status=coherent.length>=2&&sellerEvidence&&priceSpread<=.30?'ok':cardCount?'manual_review':'page_empty';
+  return {query,searchUrl:url,status,samples:coherent,averageCNY:status==='ok'?referenceCNY:null,cardCount,
     loginVisible:pageState.loginVisible,preliminaryCount:preliminary.length,verifiedCount:verified.length,rejected:rejected.slice(0,12),
-    verification:'detail_text_images_price_cluster_v2',checkedAt:new Date().toISOString(),method:'text_recall_plus_multi_image_and_detail'};
+    sellerCount,priceSpread,
+    verification:'detail_text_images_price_cluster_v3',checkedAt:new Date().toISOString(),method:'verified_detail_median_multi_image'};
 }

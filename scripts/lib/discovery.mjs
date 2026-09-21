@@ -4,12 +4,12 @@ import { distinctiveTokens,hasExplicitDefect,hasVariantMismatch,isLikelyVariantO
 const listingNoise=/(?:中国限定|海外限定|日本未発売|日本非売品|限定|正規品|公式|新品(?:、未使用)?|未使用|未開封|即日発送|当日発送|翌日発送|国内発送|即納|スピード発送|匿名配送|送料無料|送料込み|即購入(?:可|可能|ok)?|希少|レア|現品限り|ラスト\s*1点|残り\s*1点|在庫あり|在庫複数|複数在庫|早い者勝ち|お?値下げ不可|\d+月\d+日(?:まで|以降)?|\d+\/\d+(?:まで|以降)?|発送予定)/gi;
 const rejectSale=/(?:様専用|専用出品|リクエスト|まとめ商品|オーダー|確認用|取り置き|ばら売り|バラ売り|訳あり|ジャンク|破損|欠品|箱潰れ)/i;
 
-export function mercariDiscoverySearchUrl({keyword='中国限定',minPriceJPY=4999}={}){
+export function mercariDiscoverySearchUrl({keyword='中国限定',minPriceJPY=5001}={}){
   const params=new URLSearchParams({keyword,status:'sold_out|trading',sort:'created_time',order:'desc',price_min:String(minPriceJPY)});
   return `https://jp.mercari.com/search?${params}`;
 }
 
-export function yahooDiscoverySearchUrl({keyword='中国限定',minPriceJPY=4999}={}){
+export function yahooDiscoverySearchUrl({keyword='中国限定',minPriceJPY=5001}={}){
   const params=new URLSearchParams({sold:'1',minPrice:String(minPriceJPY),sort:'openTime',order:'desc'});
   return `https://paypayfleamarket.yahoo.co.jp/search/${encodeURIComponent(keyword)}?${params}`;
 }
@@ -166,8 +166,44 @@ export function validDiscoveryXianyu(result={}){
   const richest=samples.map(sample=>({sample,images:[...new Set(sample.independentImages||[])].filter(url=>/^https?:\/\//.test(url))}))
     .sort((a,b)=>b.images.length-a.images.length)[0];
   const images=(richest?.images||[]).slice(0,8);
-  return {ready:result.status==='ok'&&samples.length>=2&&Number.isFinite(Number(result.averageCNY))&&images.length>=3,
-    images,sample:richest?.sample||null,imageSource:images.length>=3?'xianyu_independent_coherent':null};
+  const prices=samples.map(sample=>Number(sample.price)).sort((a,b)=>a-b);
+  const spread=prices.length>=2?(prices.at(-1)-prices[0])/Math.max(1,prices[Math.floor(prices.length/2)]):Infinity;
+  const sellerKeys=new Set(samples.map(sample=>sample.sellerKey).filter(Boolean));
+  const sellerEvidence=sellerKeys.size>=2||samples.length>=3;
+  return {ready:result.status==='ok'&&samples.length>=2&&sellerEvidence&&spread<=.30&&Number.isFinite(Number(result.averageCNY))&&images.length>=3,
+    images,sample:richest?.sample||null,imageSource:images.length>=3?'xianyu_independent_coherent':null,
+    sampleCount:samples.length,sellerCount:sellerKeys.size,priceSpread:spread};
+}
+
+export function salesWindowCounts(saleDates=[],now=Date.now()){
+  const dates=saleDates.filter(value=>Number.isFinite(Date.parse(value)));
+  return {days2:dates.filter(value=>isWithinDays(value,2,now)).length,
+    days7:dates.filter(value=>isWithinDays(value,7,now)).length,
+    days30:dates.filter(value=>isWithinDays(value,30,now)).length};
+}
+
+export function rankDiscoveryCandidates(candidates=[],{maxProducts=30,minSales=2,perSeller=4,now=Date.now()}={}){
+  const ranked=candidates.map(candidate=>{
+    const windows=salesWindowCounts(candidate.saleDates||[],now);
+    const priorityWindow=windows.days2>=minSales?2:windows.days7>=minSales?7:30;
+    return {...candidate,salesWindows:windows,priorityWindow};
+  }).sort((a,b)=>a.priorityWindow-b.priorityWindow||
+    (a.priorityWindow===2?b.salesWindows.days2-a.salesWindows.days2:a.priorityWindow===7?b.salesWindows.days7-a.salesWindows.days7:b.salesWindows.days30-a.salesWindows.days30)||
+    (b.sellerCount||1)-(a.sellerCount||1)||b.salesCount-a.salesCount||b.sourcePriceJPY-a.sourcePriceJPY);
+  const selected=[],sellerUsage=new Map();
+  // Complete the 2-day tier before 7-day and 30-day tiers. Inside each tier,
+  // round-robin sellers and cap each shop so one account cannot fill the page.
+  for(const window of [2,7,30]){
+    const remaining=ranked.filter(item=>item.priorityWindow===window);
+    for(let allowance=1;allowance<=Math.max(1,perSeller)&&selected.length<maxProducts;allowance++){
+      for(let index=0;index<remaining.length&&selected.length<maxProducts;){
+        const item=remaining[index],key=String(item.seller?.id||item.sellerIds?.[0]||item.sourcePlatform||'unknown');
+        if((sellerUsage.get(key)||0)>=allowance){index++;continue}
+        selected.push(item);sellerUsage.set(key,(sellerUsage.get(key)||0)+1);remaining.splice(index,1);
+      }
+    }
+  }
+  return selected;
 }
 
 export function discoveryId(platform,sellerId,title=''){

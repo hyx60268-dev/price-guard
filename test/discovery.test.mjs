@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canonicalSaleTitle,clusterSellerSales,containsDiscoveryKeyword,eligibleDiscoveryCard,groupDiscoveryCandidates,isOwnedDiscoverySource,isWithinDays,mercariDiscoverySearchUrl,mercariSoldEvidence,parseListingTime,rewriteListing,sameDiscoveryProduct,sameSaleProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor,yahooDiscoverySearchUrl } from '../scripts/lib/discovery.mjs';
+import { canonicalSaleTitle,clusterSellerSales,containsDiscoveryKeyword,eligibleDiscoveryCard,groupDiscoveryCandidates,isOwnedDiscoverySource,isWithinDays,mercariDiscoverySearchUrl,mercariSoldEvidence,parseListingTime,rankDiscoveryCandidates,rewriteListing,salesWindowCounts,sameDiscoveryProduct,sameSaleProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor,yahooDiscoverySearchUrl } from '../scripts/lib/discovery.mjs';
 
 test('discovery URLs use the live sold and price filters',()=>{
   const mercari=new URL(mercariDiscoverySearchUrl({keyword:'中国限定',minPriceJPY:4999}));
@@ -66,7 +66,7 @@ test('discovery enforces sold price date and valid xianyu images',()=>{
   const now=Date.parse('2026-09-13T03:00:00Z');
   assert.equal(eligibleDiscoveryCard({sold:true,price:4999,soldAt:'2026-09-12T03:00:00Z',title:'中国限定 商品'},{minPriceJPY:4999,windowDays:30},now),true);
   assert.equal(eligibleDiscoveryCard({sold:false,price:9000,soldAt:'2026-09-12T03:00:00Z',title:'中国限定 商品'},{minPriceJPY:4999,windowDays:30},now),false);
-  assert.equal(validDiscoveryXianyu({status:'ok',query:'商品',averageCNY:28,samples:[{price:28,independentImages:['https://a/1','https://a/2','https://a/3']},{price:30}]}).ready,true);
+  assert.equal(validDiscoveryXianyu({status:'ok',query:'商品',averageCNY:28,samples:[{price:28,sellerKey:'a',independentImages:['https://a/1','https://a/2','https://a/3']},{price:30,sellerKey:'b'}]}).ready,true);
   assert.equal(validDiscoveryXianyu({status:'ok',query:'商品',averageCNY:28,samples:[{price:28,independentImages:['https://a/1','https://a/2']},{price:30}]}).ready,false);
   assert.equal(validDiscoveryXianyu({status:'ok',query:'商品',averageCNY:3,samples:[{price:3,independentImages:['https://a/1']},{price:28}]}).ready,false);
 });
@@ -85,4 +85,31 @@ test('all configured Yahoo accounts and their items are excluded from discovery'
   assert.equal(isOwnedDiscoverySource({id:'z999',sellerId:'p76217154'},owned),true);
   assert.equal(isOwnedDiscoverySource({id:'z111',sellerId:'other'},owned),true);
   assert.equal(isOwnedDiscoverySource({id:'z999',sellerId:'other'},owned),false);
+});
+
+test('discovery ranks 2 days before 7 days before 30 days and diversifies sellers',()=>{
+  const now=Date.parse('2026-09-21T00:00:00Z'),date=days=>new Date(now-days*86400000).toISOString();
+  assert.deepEqual(salesWindowCounts([date(1),date(6),date(20)],now),{days2:1,days7:2,days30:3});
+  const input=[
+    {id:'old',seller:{id:'a'},saleDates:[date(10),date(12)],salesCount:2,sourcePriceJPY:9000},
+    {id:'fresh-a',seller:{id:'a'},saleDates:[date(1),date(1.5)],salesCount:2,sourcePriceJPY:8000},
+    {id:'week',seller:{id:'b'},saleDates:[date(3),date(5)],salesCount:2,sourcePriceJPY:7000},
+    {id:'fresh-b',seller:{id:'b'},saleDates:[date(.2),date(.8)],salesCount:2,sourcePriceJPY:6500},
+    {id:'fresh-c',seller:{id:'c'},saleDates:[date(.3),date(.7)],salesCount:2,sourcePriceJPY:6400}
+  ];
+  const ranked=rankDiscoveryCandidates(input,{maxProducts:5,minSales:2,perSeller:2,now});
+  assert.deepEqual(ranked.slice(0,3).map(item=>item.id),['fresh-a','fresh-b','fresh-c']);
+  assert.equal(ranked.find(item=>item.id==='week').priorityWindow,7);
+  assert.equal(ranked.find(item=>item.id==='old').priorityWindow,30);
+});
+
+test('xianyu automatic reference requires coherent prices and independent evidence',()=>{
+  const good=validDiscoveryXianyu({status:'ok',query:'商品',averageCNY:101,samples:[
+    {price:100,sellerKey:'a',independentImages:['https://a/1','https://a/2','https://a/3']},{price:102,sellerKey:'b'}
+  ]});
+  assert.equal(good.ready,true);
+  const wide=validDiscoveryXianyu({status:'ok',query:'商品',averageCNY:200,samples:[
+    {price:100,sellerKey:'a',independentImages:['https://a/1','https://a/2','https://a/3']},{price:300,sellerKey:'b'}
+  ]});
+  assert.equal(wide.ready,false);
 });

@@ -27,7 +27,7 @@
   "timezone": "Asia/Tokyo",
   "discovery": {
     "keyword": "中国限定",
-    "minPriceJPY": 4999,
+    "minPriceJPY": 5001,
     "windowDays": 30,
     "minSalesPerSeller": 2,
     "freshHours": 6,
@@ -39,6 +39,9 @@
     "mercariSearchScrolls": 12,
     "mercariSellerScrolls": 5,
     "mercariKeywords": ["中国限定", "上海限定", "bilibili 限定"],
-    "maxProducts": 30
+    "maxProducts": 30,
+    "maxProductsPerSeller": 4,
+    "maxXianyuDetailChecks": 8,
+    "maxXianyuSamples": 5
   }
 }
