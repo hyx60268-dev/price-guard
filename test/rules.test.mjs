@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateCost,advice,coherentPrices,conditionCompatible,distinctiveCoverage,hasExplicitDefect,hasExplicitVariantMismatch,hasIdentityVariantMismatch,hasVariantMismatch,isLikelyVariantOffer,listingSpecificationEquivalent,listingTextEquivalent,packagedAssortmentEquivalent,productFamily,saleUnitEquivalent,semanticQuantity,semanticSameItem,titleScore,visualListingEquivalent } from '../scripts/lib/rules.mjs';
+import { calculateCost,advice,coherentPrices,conditionCompatible,distinctiveCoverage,hasExplicitDefect,hasExplicitVariantMismatch,hasIdentityVariantMismatch,hasLotterySeriesMismatch,hasVariantMismatch,isLikelyVariantOffer,listingSpecificationEquivalent,listingTextEquivalent,lotterySeriesEquivalent,lotterySeriesNeedsVisualConfirmation,packagedAssortmentEquivalent,productFamily,saleUnitEquivalent,semanticQuantity,semanticSameItem,titleScore,visualListingEquivalent } from '../scripts/lib/rules.mjs';
 import { encrypt,decrypt } from '../scripts/lib/crypto.mjs';
 const settings={exchangeRate:22.99,costMultiplier:1.05};
 test('manual cost formula',()=>assert.equal(calculateCost(90.5,30,210,settings),3130));
@@ -66,6 +66,21 @@ test('rejects the three reported collectible variant false positives',()=>{
   assert.equal(productFamily(shaker),'acrylic_shaker');
   assert.equal(productFamily(popup),'acrylic_stand');
   assert.equal(semanticSameItem({query:shaker,candidate:popup}).accepted,false);
+});
+test('Ichiban Kuji release subtitles are product identity, not optional wording',()=>{
+  const bonds='一番くじ NARUTO-ナルト- 疾風伝 忍ノ絆 A賞 うずまきナルト MASTERLISE';
+  const rescue='一番くじ NARUTO-ナルト- 疾風伝 風影奪還編 A賞 うずまきナルト MASTERLISE';
+  const generic='一番くじ NARUTO-ナルト- A賞 うずまきナルト フィギュア\n一番くじ NARUTO 疾風伝\nA賞 ナルト MASTERLISE';
+  const same='一番くじ NARUTO A賞 うずまきナルト\n一番くじ NARUTO 疾風伝 忍ノ絆 A賞 ナルト MASTERLISE';
+  assert.equal(hasLotterySeriesMismatch(bonds,rescue),true);
+  assert.equal(hasIdentityVariantMismatch(bonds,rescue),true);
+  assert.equal(semanticSameItem({query:bonds,candidate:rescue}).accepted,false);
+  assert.equal(lotterySeriesNeedsVisualConfirmation(bonds,generic),true);
+  assert.equal(lotterySeriesNeedsVisualConfirmation(bonds,same),false);
+  assert.equal(lotterySeriesEquivalent(bonds,same),true);
+  assert.equal(lotterySeriesEquivalent(bonds,rescue),false);
+  assert.equal(lotterySeriesEquivalent(bonds,same.replace('うずまきナルト','うちはサスケ')),false);
+  assert.equal(hasLotterySeriesMismatch('一番くじ 鬼滅の刃 無限列車編 A賞 煉獄杏寿郎','一番くじ 鬼滅の刃 刀鍛冶の里編 A賞 煉獄杏寿郎'),true);
 });
 test('rejects different characters, book titles, and named variants inside one series',()=>{
   const sukuna='中国限定 POP MART 呪術廻戦 両面宿儺 シーンブロック 正規品';

@@ -3,7 +3,7 @@ const badPattern = /(求购|收购|只收|蹲收|换物|交换|置换|补款|定
 const baitPattern = /(请点进去选项|点击立即购买查看|拍下改价|私聊改价|价格见图|图上价|多个角色|多款可选|任选|标价非实价|自带价|占位价|起步价|最低款价格|标价为最低|标价只是|页面价格不准)/i;
 const selectionPattern = /(请选择|选择规格|选择款式|选款|选图|拍哪款|下单备注|联系客服改价|私聊改价|各款价格|价格不一|每款价格|单独询价|需补差价|补差后发货|以详情价为准|详情价格为准)/i;
 const multiOfferPattern = /(多款|多角色|全系列|合集|系列任选|整套可拆|可拆卖)/i;
-export const MATCHING_RULES_VERSION = 7;
+export const MATCHING_RULES_VERSION = 8;
 
 // 同じIP/シリーズが中国語・日本語・英語や作者名で出品されるケースを、
 // 再利用できる別名辞書で同じ識別語へ寄せる。追加時は商品固有語だけを登録し、
@@ -287,11 +287,69 @@ export function identityVariantFacets(value=''){
 
 function disjointNonEmpty(left,right){return left.size>0&&right.size>0&&![...left].some(value=>right.has(value))}
 
+// Ichiban Kuji often reuses the same character, prize letter and MASTERLISE name
+// across completely different releases.  The words between "一番くじ" and the
+// prize marker are therefore part of the product identity (e.g. 忍ノ絆,
+// 風影奪還編, 波の国編).  Collect every such prefix from the title and the first
+// description lines so a seller that omits the release name from the title can
+// still be verified from the description.
+function lotteryPrefixTokens(value=''){
+  const text=canonicalProductText(String(value)).slice(0,1200),result=new Set();
+  for(const match of text.matchAll(/一番くじ/gi)){
+    const window=text.slice(match.index,match.index+180);
+    const prize=window.search(/(?:ラストワン|[A-HＡ-Ｈ])\s*賞/i);
+    if(prize<0)continue;
+    for(const token of distinctiveTokens(window.slice(0,prize))){
+      let normalized=normalize(token);
+      if(normalized==='ナルト')normalized='naruto';
+      if(normalized&&normalized!=='一番くじ')result.add(normalized);
+    }
+  }
+  return result;
+}
+
+function lotterySeriesDelta(query='',candidate=''){
+  const left=lotteryPrefixTokens(query),right=lotteryPrefixTokens(candidate);
+  if(!left.size||!right.size)return {applicable:false,leftOnly:new Set(),rightOnly:new Set()};
+  return {
+    applicable:true,
+    leftOnly:new Set([...left].filter(token=>!right.has(token))),
+    rightOnly:new Set([...right].filter(token=>!left.has(token)))
+  };
+}
+
+export function hasLotterySeriesMismatch(query='',candidate=''){
+  const delta=lotterySeriesDelta(query,candidate);
+  return delta.applicable&&delta.leftOnly.size>0&&delta.rightOnly.size>0;
+}
+
+// If only one listing states the release subtitle, text/recommendation evidence
+// is not enough.  Yahoo must confirm the same package at the strong visual
+// threshold; otherwise two different A-prize figures of the same character mix.
+export function lotterySeriesNeedsVisualConfirmation(query='',candidate=''){
+  const delta=lotterySeriesDelta(query,candidate);
+  return delta.applicable&&!hasLotterySeriesMismatch(query,candidate)&&
+    (delta.leftOnly.size>0||delta.rightOnly.size>0);
+}
+
 export function hasIdentityVariantMismatch(query='',candidate=''){
   const left=identityVariantFacets(query),right=identityVariantFacets(candidate);
   return disjointNonEmpty(left.prizes,right.prizes)||disjointNonEmpty(left.tarot,right.tarot)||
     disjointNonEmpty(left.tarotNames,right.tarotNames)||disjointNonEmpty(left.waves,right.waves)||
-    disjointNonEmpty(left.anniversaries,right.anniversaries)||namedIdentityConflict(query,candidate);
+    disjointNonEmpty(left.anniversaries,right.anniversaries)||hasLotterySeriesMismatch(query,candidate)||namedIdentityConflict(query,candidate);
+}
+
+export function lotterySeriesEquivalent(query='',candidate=''){
+  const delta=lotterySeriesDelta(query,candidate);
+  if(!delta.applicable||delta.leftOnly.size||delta.rightOnly.size)return false;
+  const queryHeading=listingHeading(query),candidateHeading=listingHeading(candidate);
+  if(hasIdentityVariantMismatch(queryHeading,candidateHeading)||hasIdentityVariantMismatch(candidateHeading,queryHeading))return false;
+  const left=identityVariantFacets(queryHeading),right=identityVariantFacets(candidateHeading);
+  if(!left.prizes.size||!right.prizes.size||![...left.prizes].some(prize=>right.prizes.has(prize)))return false;
+  const forward=distinctiveCoverage(queryHeading,candidateHeading),backward=distinctiveCoverage(candidateHeading,queryHeading);
+  // One title may omit the release subtitle while its description supplies it;
+  // in that case the shorter heading must be a strong subset of the fuller one.
+  return Math.max(forward.score,backward.score)>=.85&&Math.min(forward.matchedCount,backward.matchedCount)>=4;
 }
 
 // “未写数量”只是未知，不是明确冲突。它可以进入详情图片核验，但不能仅靠文字
