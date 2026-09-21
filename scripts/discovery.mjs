@@ -138,6 +138,14 @@ function isChinaLimitedProduct(item={}){
   return /(?:中国\s*限定|上海\s*限定|北京\s*限定|広州\s*限定|深圳\s*限定|bilibili.{0,16}限定)/i.test(`${item.title||''} ${item.description||''}`);
 }
 
+function xianyuReviewLabel(status=''){
+  if(status==='login_required')return '待核验：闲鱼登录已失效';
+  if(status==='blocked')return '待核验：闲鱼触发安全验证';
+  if(status==='page_empty')return '待核验：闲鱼未返回商品';
+  if(status==='manual_review')return '待核验：同款或报价证据不足';
+  return '待核验：自动搜索失败';
+}
+
 function isFresh(prior){
   if(Number(prior?.version)!==DISCOVERY_VERSION)return false;
   const checked=Date.parse(prior?.checkedAt||'');return Number.isFinite(checked)&&Date.now()-checked<Number(cfg.freshHours)*3_600_000;
@@ -441,7 +449,7 @@ try{
     try{
       const xianyu=await xianyuCost(xPage,{id:item.id,title:item.sourceTitle,xianyuQuery:item.xianyuQuery,image:item.sourceImages[0],images:item.sourceImages,yahoo:{ownImages:item.sourceImages}},settings);
       const validated=validDiscoveryXianyu(xianyu);Object.assign(item,{xianyu,purchaseCNY:validated.ready?xianyu.averageCNY:null,referenceCNY:xianyu.averageCNY,images:validated.images,
-        imageSource:validated.imageSource,status:validated.ready?'ready':'needs_xianyu_review',xianyuSearchUrl:xianyu.searchUrl,confidence:validated.ready?'自动核验参考价':'待核验',costVerification:validated});
+        imageSource:validated.imageSource,status:validated.ready?'ready':'needs_xianyu_review',xianyuSearchUrl:xianyu.searchUrl,confidence:validated.ready?'自动核验参考价':xianyuReviewLabel(xianyu.status),costVerification:validated});
       if(['login_required','blocked'].includes(xianyu.status))xianyuAuthRequired=true;
     }catch(error){errors.push(`闲鱼${item.id}: ${String(error)}`);Object.assign(item,{status:'needs_xianyu_review',purchaseCNY:null,images:[],confidence:'需人工',xianyuSearchUrl:`https://www.goofish.com/search?q=${encodeURIComponent(item.xianyuQuery)}`})}
     if(review){
@@ -449,7 +457,7 @@ try{
       if(reviewImages.length)item.images=reviewImages;
       item.manualReview=review;
     }
-    console.log(`[选品 ${index+1}/${ranked.length}] ${item.sourcePlatform} 月销${item.salesCount} ${item.sourceTitle} 闲鱼=${item.purchaseCNY??'待核验'} 图片=${item.images?.length||0}`);
+    console.log(`[选品 ${index+1}/${ranked.length}] ${item.sourcePlatform} 月销${item.salesCount} ${item.sourceTitle} 闲鱼=${item.purchaseCNY??'待核验'} 状态=${item.xianyu?.status||'error'} 卡片=${item.xianyu?.cardCount??0} 初筛=${item.xianyu?.preliminaryCount??0} 核验=${item.xianyu?.verifiedCount??0} 图片=${item.images?.length||0}`);
     await wait(600);
   }
 }finally{await browser?.close().catch(()=>{})}

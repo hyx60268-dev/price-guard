@@ -156,10 +156,7 @@ const xianyuLimit=Math.max(0,Number(settings.maxXianyuItemsPerRun)||3);
 const xianyuBuckets=contexts.map(()=>[]);
 for(const [contextIndex,context] of contexts.entries())for(const item of context.activeItems){
   const prior=priorFor(context,item),yc=context.yahooById.get(item.id)||{};
-  const lowest=Number.isFinite(yc.lowestPrice)?yc.lowestPrice:prior.lowestPrice;
-  if(!Number.isFinite(lowest)||lowest>=item.ownPrice){context.xianyuById.set(item.id,{status:'skipped_no_reprice',samples:[],averageCNY:null});continue}
   const manual=manualCostFor(manualCosts,{...item,accountId:context.account.id},relistAliases);
-  if(Number.isFinite(manual?.purchaseCNY)){context.xianyuById.set(item.id,{status:'skipped_manual_purchase',samples:[],averageCNY:null});continue}
   const verified=verifiedXianyuCache(prior);
   if(verified&&isFresh(verified.checkedAt,xianyuFreshHours)){
     context.xianyuById.set(item.id,{status:'cached_verified',...verified});continue;
@@ -167,15 +164,22 @@ for(const [contextIndex,context] of contexts.entries())for(const item of context
   if(prior.xianyu?.checkedAt&&isFresh(prior.xianyu.checkedAt,xianyuRetryHours)){
     context.xianyuById.set(item.id,{status:'skipped_recent_review',samples:[],averageCNY:null,checkedAt:prior.xianyu.checkedAt});continue;
   }
-  xianyuBuckets[contextIndex].push({context,item,prior});
+  // Refresh an automatic market reference for every listing. A user-confirmed
+  // purchase cost remains authoritative for profit, but no longer prevents the
+  // background reference scan from running.
+  xianyuBuckets[contextIndex].push({context,item,prior,priority:Number.isFinite(manual?.purchaseCNY)?1:0});
 }
+for(const bucket of xianyuBuckets)bucket.sort((a,b)=>a.priority-b.priority||a.item.seq-b.item.seq);
 const xianyuTasks=[];
 for(let index=0;index<Math.max(0,...xianyuBuckets.map(bucket=>bucket.length));index++)for(const bucket of xianyuBuckets)if(bucket[index])xianyuTasks.push(bucket[index]);
 
 try{
   for(const [index,task] of xianyuTasks.entries()){
     const {context,item}=task;
-    if(index>=xianyuLimit||Date.now()>=deadline){context.xianyuById.set(item.id,{status:'deferred_limit',samples:[],averageCNY:null});continue}
+    // Yahoo owns the general scan budget, but the small fixed Xianyu batch must
+    // still run afterwards; otherwise a large inventory permanently starves cost
+    // refreshes before they start.
+    if(index>=xianyuLimit){context.xianyuById.set(item.id,{status:'deferred_limit',samples:[],averageCNY:null});continue}
     if(anyXianyuLoginRequired){context.xianyuById.set(item.id,{status:'deferred_auth',samples:[],averageCNY:null});continue}
     console.log(`[闲鱼 ${index+1}/${Math.min(xianyuTasks.length,xianyuLimit)}] ${context.account.name} ${item.title}`);
     let result;
@@ -226,7 +230,7 @@ for(const context of contexts){
     yahoo:rows.length,yahooLive:yahooValues.filter(value=>value.status==='ok').length,
     yahooCached:yahooValues.filter(value=>value.status==='cached').length,
     yahooDeferred:yahooValues.filter(value=>value.status==='deferred_budget'||value.cacheReason==='scan_budget').length,
-    xianyuRequested:xianyuValues.filter(value=>!String(value.status).startsWith('skipped_no_reprice')).length,
+    xianyuRequested:xianyuValues.filter(value=>!['not_requested'].includes(String(value.status))).length,
     xianyuScanned:xianyuValues.filter(value=>['ok','manual_review','page_empty','login_required','blocked','error'].includes(value.status)).length,
     xianyuCached:xianyuValues.filter(value=>value.status==='cached_verified').length,
     xianyuSkipped:xianyuValues.filter(value=>String(value.status).startsWith('skipped')||String(value.status).startsWith('deferred')).length

@@ -1,7 +1,7 @@
 <!doctype html><html lang="zh-CN"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#13211b">
-<title>价格守卫</title><link rel="manifest" href="manifest.webmanifest?v=18"><link rel="icon" href="favicon.svg"><link rel="stylesheet" href="styles.css?v=18">
+<title>价格守卫</title><link rel="manifest" href="manifest.webmanifest?v=19"><link rel="icon" href="favicon.svg"><link rel="stylesheet" href="styles.css?v=19">
 </head><body>
 <header><div><p class="eyebrow">YAHOO!フリマ × 闲鱼</p><h1>价格守卫</h1><p id="stamp">读取最近一次云端检查…</p></div><div class="headeractions"><button id="cloudSync" class="ghost" hidden>同步云端</button><button id="help" class="ghost">手机与通知</button><button id="install" class="ghost" hidden>安装到桌面</button></div></header>
 <main>
@@ -36,5 +36,5 @@
 <dialog id="detail"><button class="close" aria-label="关闭">×</button><div id="detailBody"></div></dialog>
 <dialog id="imageSearchDialog"><button class="close" aria-label="关闭">×</button><h2>手机以图搜索</h2><div class="imagehandoff"><img id="imageSearchPreview" alt="待搜索图片"><div><b id="imageSearchTitle"></b><p id="imageSearchStatus" class="muted">先把图片保存到手机，再打开 App 选择刚保存的图片。</p></div></div><div class="imagehandoffactions"><button id="saveSearchImage">① 保存图片到手机</button><button id="openXianyu" class="soft">② 打开闲鱼</button><button id="openXhs" class="soft">② 打开小红书</button></div><p class="muted">iPhone/Android 会先出现系统分享面板，请点“存储图像/保存图片”。网页受手机系统限制，不能代替你点击 App 内的相机按钮；打开 App 后选择相册里最新一张即可。</p></dialog>
 <dialog id="helpDialog"><button class="close" aria-label="关闭">×</button><h2>手机使用、同步与通知</h2><ol class="helpsteps"><li><b>打开仪表盘</b><span>手机 Safari 或 Chrome 打开当前网址，输入管理员给你的用户名和密码。</span></li><li><b>放到手机桌面</b><span>iPhone：Safari“分享 → 添加到主屏幕”；Android：浏览器菜单“安装应用/添加到主屏幕”。</span></li><li><b>绑定自己的店铺</b><span>在“账号管理”粘贴 Yahoo!フリマ 卖家主页链接，点“同步云端”，再在打开的 GitHub 页面点绿色“Submit new issue”。首次提交会绑定你的 GitHub 身份。</span></li><li><b>接收手机提醒</b><span>填写自己的收件邮箱并同步；系统只发送你名下店铺的降价、提价和利润变化。管理员接收全部店铺。</span></li></ol><hr><h3>管理员只需设置一次邮件服务</h3><ol class="helpsteps"><li><b>注册 Resend 并验证发件域名</b><span>打开 <a target="_blank" href="https://resend.com/domains">Resend Domains</a>，按页面提示把 DNS 记录加到自己的域名。</span></li><li><b>创建邮件密钥</b><span>打开 <a target="_blank" href="https://resend.com/api-keys">Resend API Keys</a>，创建密钥并复制；邮箱地址本身无法自动生成这个密钥。</span></li><li><b>放入 GitHub 加密设置</b><span>打开本仓库 <a target="_blank" href="https://github.com/hyx60268-dev/price-guard/settings/secrets/actions">Actions Secrets</a>，新增 <code>RESEND_API_KEY</code>（粘贴密钥）和 <code>NOTIFY_FROM_EMAIL</code>（例如 <code>价格守卫 &lt;notice@你的域名&gt;</code>）。普通用户不需要接触密钥，只填自己的收件邮箱。</span></li></ol><p class="muted">没有启用邮件服务时，系统仍会使用 <a target="_blank" href="https://github.com/hyx60268-dev/price-guard/issues">GitHub Issues</a> 或 Telegram 降级提醒。邮箱和业务数据保存在加密文件中。</p></dialog>
-<footer>价格检查约每20分钟 · 热卖选品每6小时深度更新 · 每人仅接收名下账号提醒 · 可跨设备加密同步</footer><script type="module" src="app.js?v=18"></script>
+<footer>价格检查约每20分钟 · 热卖选品每6小时深度更新 · 每人仅接收名下账号提醒 · 可跨设备加密同步</footer><script type="module" src="app.js?v=19"></script>
 </body></html>

@@ -62,16 +62,24 @@ async function verifyDetail(context,candidate,item,settings,ownFingerprints){
 export async function xianyuCost(page,item,settings){
   const query=item.xianyuQuery||item.title||'';
   if(!query)return {query,status:'missing_query',samples:[],averageCNY:null};
-  const url=`https://www.goofish.com/search?q=${encodeURIComponent(query)}`;
-  await page.goto(url,{waitUntil:'domcontentloaded',timeout:35000});await settle(page,Math.max(2500,settings.scanDelayMs||1200));
-  await page.waitForSelector('a[href*="/item?id="], a[href*="/item/"]',{timeout:6000}).catch(()=>{});
-  const cards=await cardsFromPage(page,'xianyu'),cardCount=cards.length;
-  const pageState=await page.evaluate(()=>{
+  const compact=value=>String(value).replace(/(?:中国限定|海外限定|正規品|正规品|新品|未使用|未開封|即日発送|匿名配送|送料無料)/gi,' ').replace(/\s+/g,' ').trim();
+  const simplified=compact(query),short=simplified.split(' ').filter(token=>token.length>1).slice(0,6).join(' ');
+  const searchQueries=[...new Set([query,simplified,short].filter(value=>value&&value.length>=3))];
+  let cards=[],pageState={loginVisible:false,blocked:false,snippet:''},usedQuery=query,url='';
+  for(const candidateQuery of searchQueries){
+    usedQuery=candidateQuery;url=`https://www.goofish.com/search?q=${encodeURIComponent(candidateQuery)}`;
+    await page.goto(url,{waitUntil:'domcontentloaded',timeout:35000});await settle(page,Math.max(2500,settings.scanDelayMs||1200));
+    await page.waitForSelector('a[href*="/item?id="], a[href*="/item/"]',{timeout:6000}).catch(()=>{});
+    cards=await cardsFromPage(page,'xianyu');
+    pageState=await page.evaluate(()=>{
     const visible=element=>{const style=getComputedStyle(element),rect=element.getBoundingClientRect();return style.display!=='none'&&style.visibility!=='hidden'&&rect.width>0&&rect.height>0};
     const text=(document.body?.innerText||'').replace(/\s+/g,' ');
     const loginVisible=[...document.querySelectorAll('iframe[src*="login"], [class*="login" i]')].some(visible);
     return {loginVisible,blocked:/访问频繁|安全验证|滑块|验证码|请稍后重试|被挤爆/.test(text),snippet:text.slice(0,180)};
-  }).catch(()=>({loginVisible:false,blocked:false,snippet:''}));
+    }).catch(()=>({loginVisible:false,blocked:false,snippet:''}));
+    if(cards.length||pageState.blocked||pageState.loginVisible)break;
+  }
+  const cardCount=cards.length;
   if(!cardCount&&pageState.blocked)return {query,searchUrl:url,status:'blocked',samples:[],averageCNY:null,cardCount,diagnostic:pageState.snippet};
   if(!cardCount&&(pageState.loginVisible||/login|signin/i.test(page.url())))return {query,searchUrl:url,status:'login_required',samples:[],averageCNY:null,cardCount,diagnostic:pageState.snippet};
 
@@ -103,7 +111,7 @@ export async function xianyuCost(page,item,settings){
   const sellerEvidence=sellerCount>=2||coherent.length>=3;
   const priceSpread=prices.length>=2?(prices.at(-1)-prices[0])/Math.max(1,prices[middle]):Infinity;
   const status=coherent.length>=2&&sellerEvidence&&priceSpread<=.30?'ok':cardCount?'manual_review':'page_empty';
-  return {query,searchUrl:url,status,samples:coherent,averageCNY:status==='ok'?referenceCNY:null,cardCount,
+  return {query,usedQuery,searchAttempts:searchQueries.length,searchUrl:url,status,samples:coherent,averageCNY:status==='ok'?referenceCNY:null,cardCount,
     loginVisible:pageState.loginVisible,preliminaryCount:preliminary.length,verifiedCount:verified.length,rejected:rejected.slice(0,12),
     sellerCount,priceSpread,
     verification:'detail_text_images_price_cluster_v3',checkedAt:new Date().toISOString(),method:'verified_detail_median_multi_image'};
