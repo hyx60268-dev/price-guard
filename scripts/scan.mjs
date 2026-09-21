@@ -227,12 +227,17 @@ for(const context of contexts){
   });
   const yahooValues=[...context.yahooById.values()];
   const xianyuValues=[...context.xianyuById.values()];
+  const xianyuVerifiedNew=context.activeItems.filter(item=>{
+    const current=context.xianyuById.get(item.id),prior=priorFor(context,item);
+    return current?.status==='ok'&&Number.isFinite(current.averageCNY)&&!Number.isFinite(verifiedXianyuCache(prior)?.averageCNY);
+  }).length;
   const scanStats={
     yahoo:rows.length,yahooLive:yahooValues.filter(value=>value.status==='ok').length,
     yahooCached:yahooValues.filter(value=>value.status==='cached').length,
     yahooDeferred:yahooValues.filter(value=>value.status==='deferred_budget'||value.cacheReason==='scan_budget').length,
     xianyuRequested:xianyuValues.filter(value=>!['not_requested'].includes(String(value.status))).length,
     xianyuScanned:xianyuValues.filter(value=>['ok','manual_review','page_empty','login_required','blocked','error'].includes(value.status)).length,
+    xianyuVerifiedNew,
     xianyuCached:xianyuValues.filter(value=>value.status==='cached_verified').length,
     xianyuSkipped:xianyuValues.filter(value=>String(value.status).startsWith('skipped')||String(value.status).startsWith('deferred')).length
   };

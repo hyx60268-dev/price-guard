@@ -66,9 +66,10 @@ export function dashboardSummary(result,changeSummary){
     yahooDeferred:sum.yahooDeferred+(account.scanStats?.yahooDeferred||0),
     xianyuRequested:sum.xianyuRequested+(account.scanStats?.xianyuRequested||0),
     xianyuScanned:sum.xianyuScanned+(account.scanStats?.xianyuScanned||0),
+    xianyuVerifiedNew:sum.xianyuVerifiedNew+(account.scanStats?.xianyuVerifiedNew||0),
     xianyuCached:sum.xianyuCached+(account.scanStats?.xianyuCached||0),
     xianyuSkipped:sum.xianyuSkipped+(account.scanStats?.xianyuSkipped||0)
-  }),{yahoo:0,yahooLive:0,yahooCached:0,yahooDeferred:0,xianyuRequested:0,xianyuScanned:0,xianyuCached:0,xianyuSkipped:0});
+  }),{yahoo:0,yahooLive:0,yahooCached:0,yahooDeferred:0,xianyuRequested:0,xianyuScanned:0,xianyuVerifiedNew:0,xianyuCached:0,xianyuSkipped:0});
   return {
     version:result.version,checkedAt:result.checkedAt,cloudSyncedAt:result.cloudSyncedAt||null,
     dataRevision:result.dataRevision||result.cloudSyncedAt||result.checkedAt,total:items.length,

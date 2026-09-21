@@ -145,11 +145,12 @@ function effective(item,temporary){
   return {...item,manualPurchaseCNY,purchaseCNY,automaticReferenceCNY:numberOrNull(item.averageCNY),manualFeeCNY,shippingJPY,costJPY,currentProfitJPY,afterProfitJPY,
     currentUnder1500:Number.isFinite(currentProfitJPY)&&currentProfitJPY<data.settings.profitWarningJPY,
     afterUnder1500:Number.isFinite(afterProfitJPY)&&afterProfitJPY<data.settings.profitWarningJPY,needsCostInput:!complete,
+    needsPurchaseReference:!Number.isFinite(purchaseCNY),needsManualFees:!Number.isFinite(manualFeeCNY)||!Number.isFinite(shippingJPY),
     advice:item.yahoo?.underpriced?'售价明显低于同款市场，建议提价':clientAdvice({ownPrice:item.ownPrice,recommendedPrice:item.recommendedPrice,costJPY}),
     effectiveCostSource:complete?(Number.isFinite(manualPurchaseCNY)?'人工采购价 + 手工费用':`${item.costSource==='live'?'闲鱼验证均价':'历史参考价'} + 手工费用`):'待补齐成本值'};
 }
 function items(){return rawItems().map(item=>effective(item))}
-function stats(){const list=items();return [['商品',list.length],['建议调价',list.filter(item=>item.recommendedPrice!==item.ownPrice).length],['当前利润 < ¥1,500',list.filter(item=>item.currentUnder1500).length],['调价后 < ¥1,500',list.filter(item=>item.afterUnder1500).length],['待补完整成本',list.filter(item=>item.needsCostInput).length]]}
+function stats(){const list=items();return [['商品',list.length],['建议调价',list.filter(item=>item.recommendedPrice!==item.ownPrice).length],['缺采购参考',list.filter(item=>item.needsPurchaseReference).length],['待填人工费用',list.filter(item=>item.needsManualFees).length],['成本已完整',list.filter(item=>!item.needsCostInput).length]]}
 function pill(item){const tone=/亏损|不建议|控制成本/.test(item.advice)?'bad':item.needsCostInput||item.confidence!=='高'?'warn':'';return `<span class="pill ${tone}">${escapeHtml(item.advice)}</span>`}
 function selected(){
   const query=$('#search').value.toLowerCase(),filter=$('#filter').value;
@@ -285,7 +286,7 @@ function render(){
   $('#stamp').textContent=`最近检查：${Number.isNaN(date.valueOf())?'等待首次扫描':date.toLocaleString('zh-CN')} · 页面会自动接收新结果`;
   const login=data.login||{};$('#loginNotice').hidden=!(login.xianyuRequired||login.xianyuAuthExpired);
   $('#loginTitle').textContent=login.xianyuRequired?'闲鱼自动核验暂不可用':'闲鱼登录失效，已尝试匿名模式';
-  $('#loginText').textContent='Yahoo 仍会继续检查；闲鱼无法同时核对正文、规格和图片时不会采用低价，请手工填写采购价。';
+  $('#loginText').textContent='本轮无法新增闲鱼采购参考。Yahoo 仍会继续检查；旧成本不会删除，闲鱼无法同时核对正文、规格和图片时也不会采用不可靠低价。';
   const changes=data.changes;$('#changeNotice').hidden=!changes?.hasChanges;
   $('#changeText').textContent=changes?.hasChanges?`本次共 ${changes.total} 项变化：新增 ${changes.added}、下架 ${changes.removed}、价格/利润变化 ${changes.updated}。`:'';
   $('#profileLink').href=current.profileUrl;
@@ -293,12 +294,12 @@ function render(){
   $('#accountSync').textContent=current.profileStatus==='live'?`主页成功 · 新增 ${delta.added?.length||0} / 减少 ${delta.removed?.length||0} / 重新上架 ${delta.relisted?.length||0}`:current.profileStatus==='pending_sync'?'已同步，等待首次扫描':current.profileStatus==='error'?'主页失败，沿用上次清单':'沿用已保存清单';
   const savedCosts=list.filter(item=>!item.needsCostInput).length;
   if(allAccountsSelected()){
-    const accounts=cloudAccounts(),totals=accounts.reduce((sum,value)=>({yahooLive:sum.yahooLive+(value.scanStats?.yahooLive||0),yahooCached:sum.yahooCached+(value.scanStats?.yahooCached||0),yahooDeferred:sum.yahooDeferred+(value.scanStats?.yahooDeferred||0),xianyuScanned:sum.xianyuScanned+(value.scanStats?.xianyuScanned||0),xianyuCached:sum.xianyuCached+(value.scanStats?.xianyuCached||0)}),{yahooLive:0,yahooCached:0,yahooDeferred:0,xianyuScanned:0,xianyuCached:0});
+    const accounts=cloudAccounts(),totals=accounts.reduce((sum,value)=>({yahooLive:sum.yahooLive+(value.scanStats?.yahooLive||0),yahooCached:sum.yahooCached+(value.scanStats?.yahooCached||0),yahooDeferred:sum.yahooDeferred+(value.scanStats?.yahooDeferred||0),xianyuScanned:sum.xianyuScanned+(value.scanStats?.xianyuScanned||0),xianyuVerifiedNew:sum.xianyuVerifiedNew+(value.scanStats?.xianyuVerifiedNew||0),xianyuCached:sum.xianyuCached+(value.scanStats?.xianyuCached||0)}),{yahooLive:0,yahooCached:0,yahooDeferred:0,xianyuScanned:0,xianyuVerifiedNew:0,xianyuCached:0});
     $('#profileLink').removeAttribute('href');$('#accountSync').textContent=`总览 ${accounts.length} 个账号 · 每个账号的数据、成本和利润单独保存`;
-    $('#statusGrid').innerHTML=statusCard('账号',`${accounts.length} 个账号 / ${list.length} 件在售`,accounts.every(value=>value.profileStatus==='live')?'good':'warn')+statusCard('Yahoo比价',`实时 ${totals.yahooLive} / 缓存 ${totals.yahooCached} / 延后 ${totals.yahooDeferred}`,totals.yahooDeferred?'warn':'good')+statusCard('闲鱼按需核验',`本轮 ${totals.xianyuScanned} / 缓存 ${totals.xianyuCached}`,data.login?.xianyuRequired?'bad':'good')+statusCard('低价异常',`${list.filter(item=>item.yahoo?.underpriced).length} 件`,'warn');
+    $('#statusGrid').innerHTML=statusCard('账号',`${accounts.length} 个账号 / ${list.length} 件在售`,accounts.every(value=>value.profileStatus==='live')?'good':'warn')+statusCard('Yahoo比价',`实时 ${totals.yahooLive} / 缓存 ${totals.yahooCached} / 延后 ${totals.yahooDeferred}`,totals.yahooDeferred?'warn':'good')+statusCard('闲鱼采购参考',`尝试 ${totals.xianyuScanned} / 本轮新增 ${totals.xianyuVerifiedNew} / 历史 ${totals.xianyuCached}`,data.login?.xianyuRequired||data.login?.xianyuAuthExpired?'bad':'good')+statusCard('低价异常',`${list.filter(item=>item.yahoo?.underpriced).length} 件`,'warn');
   }else $('#statusGrid').innerHTML=statusCard('Yahoo主页',current.profileStatus==='live'?`${list.length} 件在售`:'使用保存清单',current.profileStatus==='live'?'good':'warn')+
     statusCard('Yahoo比价',`实时 ${scan.yahooLive??0} / 缓存 ${scan.yahooCached??0} / 延后 ${scan.yahooDeferred??0}`,(scan.yahooDeferred||0)?'warn':'good')+
-    statusCard('闲鱼按需核验',`本轮 ${scan.xianyuScanned??0} / 缓存 ${scan.xianyuCached??0}`,data.login?.xianyuRequired?'bad':'good')+
+    statusCard('闲鱼采购参考',`尝试 ${scan.xianyuScanned??0} / 本轮新增 ${scan.xianyuVerifiedNew??0} / 历史 ${scan.xianyuCached??0}`,data.login?.xianyuRequired||data.login?.xianyuAuthExpired?'bad':'good')+
     statusCard('成本数据',`已完整 ${savedCosts}/${list.length}`,savedCosts===list.length?'good':'warn');
   $('#kpis').innerHTML=stats().map(([label,value])=>`<div class="kpi"><strong>${value}</strong><span>${label}</span></div>`).join('');
   const filtered=selected(),pageCount=Math.max(1,Math.ceil(filtered.length/PAGE_SIZE));pricingPage=Math.min(Math.max(1,pricingPage),pageCount);
