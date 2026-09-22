@@ -7,7 +7,7 @@ Start-Transcript -Path $LogFile -Append | Out-Null
 
 function Wait-For-Exit {
     Write-Host ''
-    Read-Host '按回车键关闭窗口'
+    Read-Host 'Press Enter to close this window'
 }
 
 function Refresh-ToolPath {
@@ -18,52 +18,52 @@ function Refresh-ToolPath {
 
 function Install-WithWinget([string]$Id, [string]$DisplayName) {
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        throw "系统没有 winget，无法自动安装 $DisplayName。请把 $LogFile 发给维护人员。"
+        throw "winget is unavailable. Install $DisplayName manually, then run this file again. Log: $LogFile"
     }
-    Write-Host "正在安装 $DisplayName，请不要关闭窗口……" -ForegroundColor Cyan
+    Write-Host "Installing $DisplayName. Keep this window open..." -ForegroundColor Cyan
     & winget install --id $Id -e --source winget --accept-package-agreements --accept-source-agreements
     if ($LASTEXITCODE -ne 0) {
-        throw "$DisplayName 安装失败，退出代码：$LASTEXITCODE"
+        throw "$DisplayName installation failed. Exit code: $LASTEXITCODE"
     }
     Refresh-ToolPath
 }
 
 try {
-    Write-Host '价格守卫：闲鱼登录同步' -ForegroundColor Green
-    Write-Host "运行日志：$LogFile"
+    Write-Host 'Price Guard - Xianyu Login Sync' -ForegroundColor Green
+    Write-Host "Log file: $LogFile"
     Refresh-ToolPath
 
     if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-        Install-WithWinget 'OpenJS.NodeJS.LTS' 'Node.js 长期支持版'
+        Install-WithWinget 'OpenJS.NodeJS.LTS' 'Node.js LTS'
     }
     if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
         Install-WithWinget 'GitHub.cli' 'GitHub CLI'
     }
     if (-not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) {
-        throw 'Node.js 已安装，但当前窗口仍找不到 npm.cmd。请重新启动电脑后再次运行本文件。'
+        throw 'Node.js is installed but npm.cmd is unavailable. Restart Windows and run this file again.'
     }
 
     if (-not (Test-Path (Join-Path $ProjectRoot 'node_modules'))) {
-        Write-Host '正在安装项目依赖……' -ForegroundColor Cyan
+        Write-Host 'Installing project dependencies...' -ForegroundColor Cyan
         & npm.cmd ci
-        if ($LASTEXITCODE -ne 0) { throw "npm ci 执行失败，退出代码：$LASTEXITCODE" }
+        if ($LASTEXITCODE -ne 0) { throw "npm ci failed. Exit code: $LASTEXITCODE" }
     }
 
-    Write-Host '正在准备登录浏览器……' -ForegroundColor Cyan
+    Write-Host 'Preparing the login browser...' -ForegroundColor Cyan
     & npx.cmd playwright install chromium
-    if ($LASTEXITCODE -ne 0) { throw "浏览器安装失败，退出代码：$LASTEXITCODE" }
+    if ($LASTEXITCODE -ne 0) { throw "Browser installation failed. Exit code: $LASTEXITCODE" }
 
     & npm.cmd run login:sync
-    if ($LASTEXITCODE -ne 0) { throw "闲鱼登录同步未完成，退出代码：$LASTEXITCODE" }
+    if ($LASTEXITCODE -ne 0) { throw "Xianyu login sync did not finish. Exit code: $LASTEXITCODE" }
 
     Write-Host ''
-    Write-Host '同步成功。GitHub 已开始线上成本扫描。' -ForegroundColor Green
+    Write-Host 'Sync completed. GitHub has started the online cost scan.' -ForegroundColor Green
 }
 catch {
     Write-Host ''
-    Write-Host '执行失败，窗口不会关闭。' -ForegroundColor Red
+    Write-Host 'The operation failed. This window will remain open.' -ForegroundColor Red
     Write-Host $_.Exception.Message -ForegroundColor Red
-    Write-Host "详细日志保存在：$LogFile" -ForegroundColor Yellow
+    Write-Host "Detailed log: $LogFile" -ForegroundColor Yellow
 }
 finally {
     Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
