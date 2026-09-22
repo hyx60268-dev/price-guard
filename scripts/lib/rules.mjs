@@ -17,7 +17,7 @@ function canonicalProductText(value='') {
     .replace(/(?:greedy\s*bear|greedybear|貪吃熊|贪吃熊|食いしん坊(?:クマ|熊|ベア)|くいしんぼう(?:クマ|熊|ベア))/gi,' greedybear ')
     .replace(/(?:sure\s*fun|surefun|may\s*mei|maymei|メイメイ)/gi,' maymei ')
     .replace(/(?:metheus|薪火)/gi,' metheus ')
-    .replace(/pet\s*(?:フォトカード|相卡|合影卡|透卡|拍立得)/gi,' petphotocard ')
+    .replace(/pet\s*(?:フォトカード|相卡|合影卡|透卡|拍立得)/gi,' photocard ')
     .replace(/(?:フォトカード|相卡|合影卡|透卡|拍立得)/gi,' photocard ');
 }
 
