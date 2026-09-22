@@ -36,7 +36,13 @@ async function verifyRealCost(context){
   try{
     for(const item of selected){
       process.stdout.write(`\n真实成本验证：${item.title}\n`);
-      const result=await xianyuCost(page,item,{...settings,maxXianyuDetailChecks:8,maxXianyuSamples:5});
+      let result;
+      try{
+        result=await xianyuCost(page,item,{...settings,maxXianyuDetailChecks:8,maxXianyuSamples:5});
+      }catch(error){
+        console.warn(`本商品核验暂时失败，继续下一个：${String(error?.message||error).split('\\n')[0]}`);
+        continue;
+      }
       console.log(`状态 ${result.status}；候选 ${result.cardCount||0}；核验通过 ${result.verifiedCount||0}`);
       // 这里验证的是“登录会话确实能读到真实搜索与详情”，不是直接批准成本。
       // 正式扫描仍由 xianyuCost 要求至少两个独立卖家的同款价格样本。
