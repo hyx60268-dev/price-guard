@@ -80,7 +80,7 @@ try{
     const auth=spawnSync('gh',['auth','status'],{cwd:root,stdio:'inherit'});
     if(auth.status!==0){
       console.log('\n请在接下来的 GitHub 官方窗口完成一次授权。');
-      run('gh',['auth','login','--web','--hostname','github.com']);
+      run('gh',['auth','login','--web','--hostname','github.com','--git-protocol','https','--skip-ssh-key'],{input:'\n'});
     }
     for(let index=0;index<3;index++){
       run('gh',['secret','set',`XIANYU_AUTH_PART_${index+1}`,'--repo',repository],{input:parts[index]});
