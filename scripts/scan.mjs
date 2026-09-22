@@ -198,6 +198,11 @@ try{
     }catch(error){console.error(`[闲鱼 ERROR][${item.id}]`,String(error));result={status:'error',error:String(error),samples:[],averageCNY:null}}
     result.checkedAt=result.checkedAt||new Date().toISOString();
     console.log(`[闲鱼结果] ${item.id} 状态=${result.status} 卡片=${result.cardCount??0} 初筛=${result.preliminaryCount??0} 核验=${result.verifiedCount??0} 卖家=${result.sellerCount??0} 参考=${result.averageCNY??'—'}`);
+    if(result.rejected?.length){
+      const reasons=Object.entries(result.rejected.reduce((map,row)=>{map[row.reason||'unknown']=(map[row.reason||'unknown']||0)+1;return map},{})).map(([reason,count])=>`${reason}:${count}`).join(', ');
+      console.log(`[闲鱼拒绝原因] ${item.id} ${reasons}`);
+      for(const row of result.rejected.slice(0,2))console.log(`[闲鱼拒绝样本] ${item.id} 原因=${row.reason} 标题=${String(row.detailTitle||row.title||'').slice(0,100)} 标题分=${row.titleMatch??'—'} 图片分=${row.imageScore??'—'} 错误=${String(row.error||'').slice(0,180)}`);
+    }
     if(result.status==='login_required'||result.status==='blocked')anyXianyuLoginRequired=true;
     context.xianyuById.set(item.id,result);
   }
