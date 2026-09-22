@@ -59,7 +59,7 @@ export function shouldScanXianyu(item,yahooResult){
 }
 
 export function verifiedXianyuCache(item={}){
-  if(!['detail_and_price_cluster','detail_text_images_price_cluster_v2','detail_text_images_price_cluster_v3'].includes(item.xianyu?.verification)||!Number.isFinite(item.averageCNY))return null;
+  if(!['detail_and_price_cluster','detail_text_images_price_cluster_v2','detail_text_images_price_cluster_v3','detail_text_images_price_cluster_v4'].includes(item.xianyu?.verification)||!Number.isFinite(item.averageCNY))return null;
   return {averageCNY:item.averageCNY,samples:item.xianyu.samples||[],checkedAt:item.xianyu.checkedAt||item.checkedAt||null,verification:item.xianyu.verification};
 }
 

@@ -8,6 +8,15 @@ async function mapLimit(values,limit,worker){
   await Promise.all(Array.from({length:Math.min(limit,values.length)},run));return output;
 }
 
+// 闲鱼搜索卡片的价格节点有时只有数字，没有 ￥ 符号；正文里还会混有
+// “10 人想要”等数字。因此优先解析专用价格节点，只有节点缺失时才回退正文。
+function cardPrice(card={}){
+  const explicit=yen(card.priceText)||yen(card.text);
+  if(Number.isFinite(explicit))return explicit;
+  const plain=String(card.priceText||'').replaceAll(',','').match(/(?:^|\s)(\d+(?:\.\d{1,2})?)(?:\s|$)/);
+  return plain?Number(plain[1]):null;
+}
+
 async function verifyDetail(context,candidate,item,settings,ownFingerprints){
   const query=item.xianyuQuery||item.title||'';
   const detail=await context.newPage();
@@ -50,8 +59,11 @@ async function verifyDetail(context,candidate,item,settings,ownFingerprints){
     const imageScore=imageSetSimilarity(ownFingerprints,allCandidateImages);
     const independentImages=coherentIndependentImages(detailFingerprints,ownFingerprints,3);
     const textStrong=semantic.accepted&&(titleMatch>=.74||(titleMatch>=.52&&bodyMatch>=.82));
+    // 同一商品经常由不同卖家重新拍摄，不能强制像素近似。图片一致，或标题、
+    // 正文和商品类别三方面均强一致，都可以进入多卖家价格聚类。
     const visualStrong=ownFingerprints.length?Number.isFinite(imageScore)&&imageScore>=.70:titleMatch>=.88;
-    if(!textStrong||!visualStrong)return {accepted:false,reason:!textStrong?'detail_title_mismatch':'detail_image_mismatch',detailTitle,titleMatch,bodyMatch,imageScore};
+    const textualIdentityStrong=semantic.accepted&&titleMatch>=.78&&bodyMatch>=.80&&(!queryFamily||candidateFamily===queryFamily);
+    if(!textStrong||!(visualStrong||textualIdentityStrong))return {accepted:false,reason:!textStrong?'detail_title_mismatch':'detail_identity_unconfirmed',detailTitle,titleMatch,bodyMatch,imageScore};
     const sellerKey=state.sellerUrl||state.sellerName||'';
     return {accepted:true,reason:'detail_type_quantity_text_images_verified',detailTitle,titleMatch,bodyMatch,imageScore,optionCount:state.optionCount,semantic,queryFamily,candidateFamily,sellerKey,
       detailImages:state.images.slice(0,6),independentImages,imageSource:'xianyu'};
@@ -85,10 +97,11 @@ export async function xianyuCost(page,item,settings){
 
   const ownUrls=[...(item.yahoo?.ownImages||[]),...(item.images||[]),item.image].filter(Boolean).slice(0,5);
   const ownFingerprints=(await mapLimit([...new Set(ownUrls)],3,imageFingerprints)).filter(Boolean);
-  const eligible=cards.slice(0,30).filter(card=>{
-    if(isRejected(card.text)||isLikelyVariantOffer(card.text,query)||hasVariantMismatch(query,card.title))return false;
-    card.price=yen(card.text);return Number.isFinite(card.price)&&card.price>1;
-  });
+  // 搜索卡片文字经常包含平台推荐词、系列名和不完整规格。旧逻辑在打开详情
+  // 之前就用这些噪声判定规格，导致 20～30 张卡片全部被清空。首轮只解析
+  // 价格；多规格、瑕疵、数量、正文和图片全部在详情页严格核验。
+  const priced=cards.slice(0,30).map(card=>({...card,price:cardPrice(card)}));
+  const eligible=priced.filter(card=>Number.isFinite(card.price)&&card.price>1);
   const scored=await mapLimit(eligible,4,async card=>{
     const titleMatch=titleScore(query,card.title),fingerprint=card.image?await imageFingerprints(card.image):null;
     const imageScore=imageSetSimilarity(ownFingerprints,[fingerprint]);
@@ -119,7 +132,8 @@ export async function xianyuCost(page,item,settings){
   const status=coherent.length>=2&&sellerEvidence&&priceSpread<=.30?'ok':cardCount?'manual_review':'page_empty';
   return {query,usedQuery,searchAttempts:searchQueries.length,searchUrl:url,status,samples:coherent,averageCNY:status==='ok'?referenceCNY:null,cardCount,
     loginVisible:pageState.loginVisible,preliminaryCount:preliminary.length,verifiedCount:verified.length,rejected:rejected.slice(0,12),
+    pricedCardCount:eligible.length,unpricedCardCount:priced.length-eligible.length,
     topCandidates:ranked.slice(0,5).map(card=>({title:card.title.slice(0,120),titleScore:Number(card.titleScore.toFixed(3)),imageScore:Number.isFinite(card.imageScore)?Number(card.imageScore.toFixed(3)):null,price:card.price})),
     sellerCount,priceSpread,
-    verification:'detail_text_images_price_cluster_v3',checkedAt:new Date().toISOString(),method:'verified_detail_median_multi_image'};
+    verification:'detail_text_images_price_cluster_v4',checkedAt:new Date().toISOString(),method:'verified_detail_median_multi_image'};
 }

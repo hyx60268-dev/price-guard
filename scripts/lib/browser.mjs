@@ -21,9 +21,11 @@ export async function cardsFromPage(page, domain) {
       const text=(box.innerText||a.innerText||'').replace(/\s+/g,' ').trim();
       const img=box.querySelector('img')||a.querySelector('img');
       const heading=box.querySelector('[title],h1,h2,h3,[class*="title" i]');
+      const priceNode=box.querySelector('[data-price],[class*="price" i],[class*="Price" i]');
       const title=(a.getAttribute('title')||heading?.getAttribute('title')||heading?.innerText||a.innerText||text).replace(/\s+/g,' ').trim();
       const id=(href.match(/[?&]id=([^&]+)/)||href.match(/\/item\/([^/?]+)/)||[])[1]||href;
-      out.push({id,url:href,text,title,image:img?.currentSrc||img?.src||'',domain});
+      const priceText=(priceNode?.getAttribute('data-price')||priceNode?.innerText||'').replace(/\s+/g,' ').trim();
+      out.push({id,url:href,text,title,priceText,image:img?.currentSrc||img?.src||'',domain});
     }
     return out;
   },domain);

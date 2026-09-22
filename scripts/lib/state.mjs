@@ -150,7 +150,8 @@ export function manualCostFor(costs={},item={},aliases={}){
 export function calculateManualFields(item,record,settings){
   const normalized=record?normalizeManualCostRecord(record,item):null;
   const manualPurchaseCNY=finite(normalized?.purchaseCNY);
-  const purchaseCNY=manualPurchaseCNY??finite(item.averageCNY);
+  // 已通过详情与多卖家价格聚类的闲鱼参考优先；人工采购价只在自动核验失败时兜底。
+  const purchaseCNY=finite(item.averageCNY)??manualPurchaseCNY;
   const manualFeeCNY=finite(normalized?.manualFeeCNY);
   const shippingJPY=finite(normalized?.shippingJPY);
   const costJPY=calculateCost(purchaseCNY,manualFeeCNY,shippingJPY,settings);
