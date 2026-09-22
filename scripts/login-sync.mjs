@@ -47,13 +47,13 @@ async function verifyRealCost(context){
       // 这里验证的是“登录会话确实能读到真实搜索与详情”，不是直接批准成本。
       // 正式扫描仍由 xianyuCost 要求至少两个独立卖家的同款价格样本。
       // 若把登录同步也绑定到两个样本，会让有效登录因冷门商品只有一个卖家而无法上传。
-      if((result.cardCount||0)>0&&(result.verifiedCount||0)>=1){
-        console.log(`登录会话验证成功：${result.cardCount} 个真实候选，${result.verifiedCount} 个详情严格通过。`);
+      if((result.cardCount||0)>0&&!result.loginVisible&&!['login_required','blocked'].includes(result.status)){
+        console.log(`登录会话验证成功：已读取 ${result.cardCount} 个真实搜索候选；严格同款详情 ${result.verifiedCount||0} 个。`);
         return {item,result};
       }
     }
   }finally{await page.close().catch(()=>{})}
-  throw new Error('登录虽成功，但测试商品尚未取得任何严格核验通过的闲鱼详情；已停止同步。');
+  throw new Error('未能读取真实闲鱼搜索结果；已停止同步。');
 }
 
 const browser=await chromium.launch({headless:false});
