@@ -285,8 +285,8 @@ function render(){
   const list=items(),scan=current.scanStats||{},date=new Date(data.checkedAt);
   $('#stamp').textContent=`最近检查：${Number.isNaN(date.valueOf())?'等待首次扫描':date.toLocaleString('zh-CN')} · 页面会自动接收新结果`;
   const login=data.login||{};$('#loginNotice').hidden=!(login.xianyuRequired||login.xianyuAuthExpired);
-  $('#loginTitle').textContent=login.xianyuRequired?'闲鱼自动核验暂不可用':'闲鱼登录失效，已尝试匿名模式';
-  $('#loginText').textContent='本轮无法新增闲鱼采购参考。Yahoo 仍会继续检查；旧成本不会删除，闲鱼无法同时核对正文、规格和图片时也不会采用不可靠低价。';
+  $('#loginTitle').textContent=login.xianyuRequired?'闲鱼自动核验暂不可用':'闲鱼云端会话未复用，已切换匿名核验';
+  $('#loginText').textContent=login.xianyuRequired?'本轮闲鱼页面要求验证，未新增采购参考；旧成本不会删除。':'匿名模式仍会读取搜索和详情，并只保存通过正文、规格、图片及多卖家价格核验的成本；未通过的商品继续显示待核验。';
   const changes=data.changes;$('#changeNotice').hidden=!changes?.hasChanges;
   $('#changeText').textContent=changes?.hasChanges?`本次共 ${changes.total} 项变化：新增 ${changes.added}、下架 ${changes.removed}、价格/利润变化 ${changes.updated}。`:'';
   $('#profileLink').href=current.profileUrl;
