@@ -63,6 +63,25 @@ test('same-looking image cannot override pair, version, or product-family confli
   assert.equal(visualListingEquivalent({query:'鳴潮 長離 フィギュア Aタイプ',candidate:'鳴潮 長離 フィギュア Bタイプ',imageScore:.99}),false);
   assert.equal(visualListingEquivalent({query:'鳴潮 長離 フィギュア',candidate:'鳴潮 長離 アクリルスタンド',imageScore:.99}),false);
 });
+test('set cards and random assortments never equal a specified single item',()=>{
+  const ss='ゼンゼロ 閃魂コラボ 中国限定 仲夏幻夢 コレクションカード 葉瞬光 SS';
+  const cardSet='ゼンゼロ 閃魂コラボ 仲夏幻夢 葉瞬光 コレクションカード セット';
+  assert.equal(saleUnitEquivalent(ss,cardSet),false);
+  assert.equal(hasVariantMismatch(ss,cardSet),true);
+  assert.equal(exactIdentityTitleEquivalent(ss,cardSet),false);
+  assert.equal(visualListingEquivalent({query:ss,candidate:cardSet,imageScore:.99}),false);
+
+  const random='鬼滅の刃 中国限定 新繹シリーズ アクリルスタンド A 全8種 ランダム';
+  const specified='鬼滅の刃 中国限定 新繹シリーズ アクリルスタンド 猗窩座';
+  assert.equal(semanticQuantity(random),1);
+  assert.equal(saleUnitEquivalent(random,specified),false);
+  assert.equal(hasVariantMismatch(random,specified),true);
+  assert.equal(semanticSameItem({query:random,candidate:specified}).accepted,false);
+  assert.equal(visualListingEquivalent({query:random,candidate:specified,imageScore:.99}),false);
+  assert.equal(hasIdentityVariantMismatch(
+    'ゼンゼロ 仲夏幻夢 葉瞬光 コレクションカード SS',
+    'ゼンゼロ 仲夏幻夢 葉瞬光 コレクションカード SR'),true);
+});
 test('rejects the three reported collectible variant false positives',()=>{
   const lastOne='一番くじ NARUTO-ナルト- 疾風伝 風影奪還編 ラストワン賞 デイダラ MASTERLISE フィギュア';
   const prizeA='NARUTO-ナルト- 疾風伝 デイダラ A賞 フィギュア';
@@ -158,6 +177,7 @@ test('matches the Monchhichi pair by distinctive names, quantity, and plush cate
 });
 test('rejects actual defects but not generic overseas-product disclaimers',()=>{
   assert.equal(hasExplicitDefect('通常品','箱に大きな破損があります。'),true);
+  assert.equal(hasExplicitDefect('取手部分破れアリ',''),true);
   assert.equal(hasExplicitDefect('通常品','海外製品のため、外箱の凹み等がある場合がございます。'),false);
   assert.equal(hasExplicitDefect('【訳あり】商品',''),true);
 });

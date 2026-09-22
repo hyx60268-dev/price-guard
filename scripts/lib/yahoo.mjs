@@ -174,10 +174,8 @@ function recommendationEvidence(card){
 export function candidateEvidenceOrder(a,b){
   // 比价的首要目标是找到最低在售同款。候选已经通过初筛后，先核验低价，
   // 不能让 Yahoo 的相似度分数把更低的候选挤出详情检查预算。
-  // 一番くじ等同角色・同賞別シリーズ商品は例外。シリーズ名が双方で確認できる
-  // 候補を先に読み、シリーズ不明の商品だけで詳細枠を使い切らないようにする。
-  const aSeriesUnconfirmed=a.lotterySeriesUnconfirmed?1:0,bSeriesUnconfirmed=b.lotterySeriesUnconfirmed?1:0;
-  if(aSeriesUnconfirmed!==bSeriesUnconfirmed)return aSeriesUnconfirmed-bSeriesUnconfirmed;
+  // 一番くじも例外にしない。シリーズ名が短い低价候选を後回しにすると、高价候选
+  // だけで检查上限を使い切り、画面に見えている同款低价を无视して提价してしまう。
   if(a.price!==b.price)return a.price-b.price;
   const aCondition=Number.isFinite(a.conditionPriority)?a.conditionPriority:1,bCondition=Number.isFinite(b.conditionPriority)?b.conditionPriority:1;
   if(aCondition!==bCondition)return aCondition-bCondition;
@@ -209,7 +207,10 @@ export function unresolvedRaiseCandidates(preliminary=[],rejected=[]){
   // 或详情请求失败而仍有疑点的候选，才作为提价安全上限继续保留。
   const decisions=new Map();
   for(const item of rejected)if(item?.id&&preliminary.some(card=>card.id===item.id))decisions.set(item.id,item.reason||'rejected');
-  return preliminary.filter(card=>!decisions.has(card.id)||decisions.get(card.id)==='detail_error');
+  const definitive=new Set(['not_open','own_seller','defect','condition_or_packaging_mismatch','physical_product_type_unconfirmed','variant_mismatch','product_mismatch','title_rejected']);
+  // 图片不足、系列信息不全或详情请求失败只是“尚未证实”，不是“已经证伪”。
+  // 这些低价项必须继续限制提价上限，避免证据不足反而导致激进提价。
+  return preliminary.filter(card=>!definitive.has(decisions.get(card.id)));
 }
 
 export async function discoverYahooProfile(_unusedPage,profileUrl,settings={}){
@@ -269,7 +270,7 @@ export async function yahooCompare(_unusedPage,item,settings={}){
     const strongTitle=tScore>=0.88&&!['variant_mismatch','product_mismatch'].includes(semantic.reason);
     const anchors=distinctiveCoverage(item.title,card.title);
     const sameFamily=productFamily(item.title,ownCategory)&&productFamily(item.title,ownCategory)===productFamily(card.title,candidateCategory);
-    const recommendationRecall=fromRecommendation&&Number(card.recommendationScore)>=.9&&sameFamily&&
+    const recommendationRecall=fromRecommendation&&Number(card.recommendationScore)>=.9&&sameFamily&&semantic.reason!=='variant_mismatch'&&
       !hasExplicitVariantMismatch(item.title,card.title)&&!hasExplicitVariantMismatch(card.title,item.title)&&
       (anchors.matchedCount>=2||anchors.matchedLength>=6);
     if(strongTitle||semantic.accepted||recommendationRecall||(fromRecommendation&&tScore>=0.5&&semantic.reason==='weak_anchors')){

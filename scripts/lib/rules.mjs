@@ -3,7 +3,7 @@ const badPattern = /(求购|收购|只收|蹲收|换物|交换|置换|补款|定
 const baitPattern = /(请点进去选项|点击立即购买查看|拍下改价|私聊改价|价格见图|图上价|多个角色|多款可选|任选|标价非实价|自带价|占位价|起步价|最低款价格|标价为最低|标价只是|页面价格不准)/i;
 const selectionPattern = /(请选择|选择规格|选择款式|选款|选图|拍哪款|下单备注|联系客服改价|私聊改价|各款价格|价格不一|每款价格|单独询价|需补差价|补差后发货|以详情价为准|详情价格为准)/i;
 const multiOfferPattern = /(多款|多角色|全系列|合集|系列任选|整套可拆|可拆卖)/i;
-export const MATCHING_RULES_VERSION = 9;
+export const MATCHING_RULES_VERSION = 10;
 
 // 同じIP/シリーズが中国語・日本語・英語や作者名で出品されるケースを、
 // 再利用できる別名辞書で同じ識別語へ寄せる。追加時は商品固有語だけを登録し、
@@ -99,17 +99,32 @@ export function semanticQuantity(value='') {
 // 同じ数量でも、未開封アソートBOXと箱なしの6体まとめ売りは別条件。
 // 画像が公式の集合写真で一致しても、販売単位が違えば同款にはしない。
 export function saleUnitProfile(value='') {
-  const text=normalizedJapanese(value);
-  const fullBox=/(?:アソート\s*(?:box|ボックス|ケース)|\d+\s*(?:box|ボックス|ケース)|(?:box|ボックス|ケース).{0,12}\d+\s*(?:個|点|体|種|ピース)|\d+\s*(?:個|点|体|種|ピース)(?:入り|入|セット)?.{0,12}(?:アソート\s*)?(?:box|ボックス|ケース))/i.test(text);
+  // Only the heading describes what is actually being sold.  Descriptions often
+  // mention the complete line-up or say that a bonus was randomly enclosed; those
+  // words must not turn a specific item into a random/set listing.
+  const text=normalizedJapanese(listingHeading(value));
+  const fullBox=/(?:アソート\s*(?:box|ボックス|ケース)|\d+\s*(?:box|ボックス|ケース)|\d+\s*小箱\s*(?:セット|入り|入)?|(?:box|ボックス|ケース).{0,12}\d+\s*(?:個|点|体|種|ピース)|\d+\s*(?:個|点|体|種|ピース)(?:入り|入|セット)?.{0,12}(?:アソート\s*)?(?:box|ボックス|ケース))/i.test(text);
   const completeSet=/(?:フルコンプ|コンプリート(?:セット)?|(?:全\s*)?\d+\s*種\s*(?:セット|コンプ(?:リート)?|complete))/i.test(text);
   const explicitSingle=/(?:単品|ばら売り|バラ売り|1\s*(?:点|個|体|枚|本|ピース))(?:\s|$|[、。・])/i.test(text);
-  return {fullBox,completeSet,explicitSingle};
+  const randomUnit=/(?:ランダム|random|随机|ブラインド)/i.test(text)&&!fullBox&&!completeSet;
+  // A title ending in 「セット」 is a bundle even when the seller omitted the
+  // count.  That is not interchangeable with a named SS card or one character.
+  const genericBundle=/(?:セット|まとめ売り|抱き合わせ)/i.test(text)&&!fullBox&&!completeSet;
+  return {fullBox,completeSet,explicitSingle,randomUnit,genericBundle};
 }
 
 export function saleUnitEquivalent(query='',candidate='') {
   const left=saleUnitProfile(query),right=saleUnitProfile(candidate);
   if(left.fullBox||right.fullBox)return left.fullBox&&right.fullBox;
   if(left.completeSet||right.completeSet)return left.completeSet&&right.completeSet;
+  if(left.randomUnit||right.randomUnit)return left.randomUnit&&right.randomUnit;
+  if(left.genericBundle||right.genericBundle){
+    if(left.genericBundle&&right.genericBundle)return true;
+    // A pair title may omit the word "set" while still stating two characters.
+    // Unknown-count card "sets" must not receive this exception.
+    const leftQuantity=semanticQuantity(query),rightQuantity=semanticQuantity(candidate);
+    return Number.isFinite(leftQuantity)&&leftQuantity>1&&leftQuantity===rightQuantity;
+  }
   return !(left.explicitSingle&&right.completeSet||right.explicitSingle&&left.completeSet);
 }
 
@@ -218,10 +233,10 @@ export function exactIdentityTitleEquivalent(query='',candidate='',queryCategory
 // 実物の傷・欠品を明記した行だけを除外する。
 export function hasExplicitDefect(title='',description='') {
   if(badPattern.test(title))return true;
-  return String(description).split(/[\n。]/).some(line=>{
-    if(!/(?:破損|欠品|キズ|傷|汚れ|凹み|割れ|剥がれ|箱潰れ|箱ダメージ)/i.test(line))return false;
+  return `${title}\n${description}`.split(/[\n。]/).some(line=>{
+    if(!/(?:破損|破れ|欠品|キズ|傷|汚れ|凹み|割れ|剥がれ|箱潰れ|箱ダメージ)/i.test(line))return false;
     if(/(?:場合|可能性|ことが|あり得|海外製品|海外輸送|製造上|初期.{0,8}(?:場合|可能性)|ご了承ください)/i.test(line))return false;
-    return /(?:あります|あり|ございます|しています|見られます|欠けています|付属しません|なし)/i.test(line);
+    return /(?:あります|あり|アリ|ございます|しています|見られます|欠けています|付属しません|なし)/i.test(line);
   });
 }
 
@@ -308,7 +323,11 @@ export function identityVariantFacets(value=''){
   ]):new Set();
   const waves=setFromMatches(upper,[[/第\s*(\d+)\s*弾/g,match=>match[1]]]);
   const anniversaries=setFromMatches(upper,[[/(\d+)\s*周年/g,match=>match[1]]]);
-  return {prizes,tarot,tarotNames,waves,anniversaries};
+  const cardGrades=/(?:カード|CARD|卡片|トレカ)/i.test(upper)?setFromMatches(upper,[[
+    /(?:^|[\s　・:：【】()（）])((?:SSP|SSR|SEC|SS|SR|UR|LR|MR|SP|RRR|RR|R|N))(?=$|[\s　・:：【】()（）])/g,
+    match=>match[1]
+  ]]):new Set();
+  return {prizes,tarot,tarotNames,waves,anniversaries,cardGrades};
 }
 
 function disjointNonEmpty(left,right){return left.size>0&&right.size>0&&![...left].some(value=>right.has(value))}
@@ -362,7 +381,8 @@ export function hasIdentityVariantMismatch(query='',candidate=''){
   const left=identityVariantFacets(query),right=identityVariantFacets(candidate);
   return disjointNonEmpty(left.prizes,right.prizes)||disjointNonEmpty(left.tarot,right.tarot)||
     disjointNonEmpty(left.tarotNames,right.tarotNames)||disjointNonEmpty(left.waves,right.waves)||
-    disjointNonEmpty(left.anniversaries,right.anniversaries)||hasLotterySeriesMismatch(query,candidate)||namedIdentityConflict(query,candidate);
+    disjointNonEmpty(left.anniversaries,right.anniversaries)||disjointNonEmpty(left.cardGrades,right.cardGrades)||
+    hasLotterySeriesMismatch(query,candidate)||namedIdentityConflict(query,candidate);
 }
 
 export function lotterySeriesEquivalent(query='',candidate=''){
@@ -389,6 +409,7 @@ export function hasExplicitVariantMismatch(query='',candidate=''){
 
 export function hasVariantMismatch(query='',candidate='') {
   if(hasExplicitVariantMismatch(query,candidate))return true;
+  if(!saleUnitEquivalent(query,candidate))return true;
   const queryQuantity=semanticQuantity(query),candidateQuantity=semanticQuantity(candidate);
   if(Number.isFinite(candidateQuantity)&&candidateQuantity>1&&!Number.isFinite(queryQuantity))return true;
   // 文字判定时，元商品がペア/複数セットなら候補にも同じ個数の明記を要求する。

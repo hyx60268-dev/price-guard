@@ -121,6 +121,16 @@ test('sold or definitively mismatched cards do not cap an in-stock raise decisio
   assert.deepEqual(result.map(item=>item.id),['error','unchecked']);
 });
 
+test('unconfirmed lottery series and image misses remain raise-price guards',()=>{
+  const cards=[{id:'series',price:50999},{id:'image',price:52000},{id:'variant',price:53000}];
+  const result=unresolvedRaiseCandidates(cards,[
+    {id:'series',reason:'lottery_series_unconfirmed'},
+    {id:'image',reason:'physical_image_unconfirmed'},
+    {id:'variant',reason:'variant_mismatch'}
+  ]);
+  assert.deepEqual(result.map(item=>item.id),['series','image']);
+});
+
 test('live search cards beat stale recommendation cards at the same price',()=>{
   const cards=[
     {id:'sold-rec',price:9100,titleScore:1,fromRecommendation:true,sources:['recommendation']},
@@ -135,6 +145,14 @@ test('a cheaper candidate is checked before a higher card that merely says new',
     {id:'lower-unknown',price:6980,conditionPriority:1,titleScore:1,sources:['recommendation']}
   ].sort(candidateEvidenceOrder);
   assert.equal(cards[0].id,'lower-unknown');
+});
+
+test('a cheaper lottery candidate is checked before a higher fully named release',()=>{
+  const cards=[
+    {id:'higher-confirmed',price:68200,lotterySeriesUnconfirmed:false,conditionPriority:0,titleScore:1,sources:['search']},
+    {id:'lower-needs-detail',price:50999,lotterySeriesUnconfirmed:true,conditionPriority:1,titleScore:.8,sources:['recommendation']}
+  ].sort(candidateEvidenceOrder);
+  assert.equal(cards[0].id,'lower-needs-detail');
 });
 
 test('visual recall rescues a renamed recommendation but still blocks another variant',()=>{
