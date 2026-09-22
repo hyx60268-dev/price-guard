@@ -6,6 +6,8 @@
   "scripts": {
     "scan": "node scripts/scan.mjs",
     "login": "node scripts/login.mjs",
+    "login:sync": "node scripts/login-sync.mjs",
+    "verify:xianyu": "node scripts/verify-real-xianyu.mjs",
     "serve": "node scripts/serve.mjs",
     "test": "node --test",
     "seed": "node scripts/seed.mjs",

@@ -75,8 +75,10 @@ export async function xianyuCost(page,item,settings){
   const query=item.xianyuQuery||item.title||'';
   if(!query)return {query,status:'missing_query',samples:[],averageCNY:null};
   const compact=value=>String(value).replace(/(?:中国限定|海外限定|正規品|正规品|新品|未使用|未開封|即日発送|匿名配送|送料無料)/gi,' ').replace(/\s+/g,' ').trim();
-  const simplified=compact(query),short=simplified.split(' ').filter(token=>token.length>1).slice(0,6).join(' ');
-  const searchQueries=[...new Set([query,simplified,short].filter(value=>value&&value.length>=3))];
+  const simplified=compact(query);
+  const withoutSeries=simplified.replace(/[^\s]{1,16}(?:系列|シリーズ)/gi,' ').replace(/\s+/g,' ').trim();
+  const short=withoutSeries.split(' ').filter(token=>token.length>1).slice(0,6).join(' ');
+  const searchQueries=[...new Set([query,simplified,withoutSeries,short].filter(value=>value&&value.length>=3))];
   let cards=[],pageState={loginVisible:false,blocked:false,snippet:''},usedQuery=query,url='';
   for(const candidateQuery of searchQueries){
     usedQuery=candidateQuery;url=`https://www.goofish.com/search?q=${encodeURIComponent(candidateQuery)}`;
@@ -87,9 +89,12 @@ export async function xianyuCost(page,item,settings){
     const visible=element=>{const style=getComputedStyle(element),rect=element.getBoundingClientRect();return style.display!=='none'&&style.visibility!=='hidden'&&rect.width>0&&rect.height>0};
     const text=(document.body?.innerText||'').replace(/\s+/g,' ');
     const loginVisible=[...document.querySelectorAll('iframe[src*="login"], [class*="login" i]')].some(visible);
-    return {loginVisible,blocked:/访问频繁|安全验证|滑块|验证码|请稍后重试|被挤爆/.test(text),snippet:text.slice(0,180)};
+    return {loginVisible,noResults:/没有找到你想要的宝贝|减少筛选内容试试/.test(text),blocked:/访问频繁|安全验证|滑块|验证码|请稍后重试|被挤爆/.test(text),snippet:text.slice(0,180)};
     }).catch(()=>({loginVisible:false,blocked:false,snippet:''}));
-    if(cards.length||pageState.blocked||pageState.loginVisible)break;
+    // 闲鱼无搜索结果时仍会在“猜你喜欢”下返回约20个完全无关的链接。
+    // 这些链接不能算搜索候选，否则系统会看似扫描成功却永远得不到成本。
+    if(pageState.noResults)cards=[];
+    if(cards.length||pageState.blocked)break;
   }
   const cardCount=cards.length;
   if(!cardCount&&pageState.blocked)return {query,searchUrl:url,status:'blocked',samples:[],averageCNY:null,cardCount,diagnostic:pageState.snippet};
