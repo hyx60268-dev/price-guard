@@ -1,0 +1,33 @@
+name: 闲鱼成本快速验收
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/xianyu-proof.yml'
+      - 'scripts/xianyu-proof.mjs'
+      - 'scripts/lib/xianyu.mjs'
+      - 'scripts/lib/rules.mjs'
+permissions:
+  contents: read
+concurrency:
+  group: xianyu-proof
+  cancel-in-progress: true
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: 核验真实闲鱼成本
+        run: node scripts/xianyu-proof.mjs
+        env:
+          XIANYU_AUTH_PART_1: ${{ secrets.XIANYU_AUTH_PART_1 }}
+          XIANYU_AUTH_PART_2: ${{ secrets.XIANYU_AUTH_PART_2 }}
+          XIANYU_AUTH_PART_3: ${{ secrets.XIANYU_AUTH_PART_3 }}
