@@ -61,13 +61,21 @@ async function verifyDetail(context,candidate,item,settings,ownFingerprints){
     if(state.loginVisible||/login|signin/i.test(detail.url()))return {accepted:false,reason:'detail_login_required'};
     if(state.text.length<80)return {accepted:false,reason:'detail_unreadable'};
     const ranked=(state.titles||[]).map(title=>({title,score:titleScore(query,title)})).sort((a,b)=>b.score-a.score);
-    const detailTitle=ranked[0]?.title||candidate.title||'',titleMatch=ranked[0]?.score??titleScore(query,candidate.title);
-    if(hasVariantMismatch(query,detailTitle)||hasExplicitDefect(detailTitle,state.text))return {accepted:false,reason:'detail_variant_or_defect',detailTitle};
-    if(state.optionCount>1||isLikelyVariantOffer(`${candidate.text} ${state.text}`,query))return {accepted:false,reason:'multi_variant_or_bait',detailTitle,optionCount:state.optionCount};
-    if(!conditionCompatible(item.title||query,`${detailTitle}\n${state.text}`))return {accepted:false,reason:'condition_or_packaging_mismatch',detailTitle};
-    const queryFamily=productFamily(query),candidateFamily=productFamily(`${detailTitle}\n${state.text}`);
-    if(queryFamily&&candidateFamily!==queryFamily)return {accepted:false,reason:'physical_product_type_unconfirmed',detailTitle,queryFamily,candidateFamily};
-    const semantic=semanticSameItem({query,candidate:`${detailTitle}\n${state.text}`});
+    const detailTitle=ranked[0]?.title||candidate.title||'';
+    // 闲鱼会把商品说明、推荐标签和同系列角色拼进 og:title/card 文本。
+    // 规格冲突只能看商品标题头，不能把后面的关联词误判为“另一款”。
+    const identityTitle=String(detailTitle)
+      .split(/【(?:商品信息|商品状态|成色|包装|配送|温馨提示|提醒)】|(?:商品信息|商品状态|成色|包装|配送方式)[:：]/)[0]
+      .replace(/\s+/g,' ').trim().slice(0,220)||String(candidate.title||'').slice(0,220);
+    const titleMatch=titleScore(query,identityTitle);
+    const variantMismatch=hasVariantMismatch(query,identityTitle);
+    const explicitDefect=hasExplicitDefect(identityTitle,state.text);
+    if(variantMismatch||explicitDefect)return {accepted:false,reason:variantMismatch?'detail_variant_mismatch':'detail_explicit_defect',detailTitle:identityTitle,titleMatch};
+    if(state.optionCount>1||isLikelyVariantOffer(`${candidate.text} ${state.text}`,query))return {accepted:false,reason:'multi_variant_or_bait',detailTitle:identityTitle,titleMatch,optionCount:state.optionCount};
+    if(!conditionCompatible(item.title||query,`${identityTitle}\n${state.text}`))return {accepted:false,reason:'condition_or_packaging_mismatch',detailTitle:identityTitle,titleMatch};
+    const queryFamily=productFamily(query),candidateFamily=productFamily(`${identityTitle}\n${state.text}`);
+    if(queryFamily&&candidateFamily!==queryFamily)return {accepted:false,reason:'physical_product_type_unconfirmed',detailTitle:identityTitle,titleMatch,queryFamily,candidateFamily};
+    const semantic=semanticSameItem({query,candidate:`${identityTitle}\n${state.text}`});
     const bodyMatch=titleScore(query,state.text);
     const detailFingerprints=(await mapLimit(state.images.slice(0,8),3,imageFingerprints)).filter(Boolean);
     const allCandidateImages=[candidate.fingerprint,...detailFingerprints].filter(Boolean);
@@ -78,9 +86,9 @@ async function verifyDetail(context,candidate,item,settings,ownFingerprints){
     // 正文和商品类别三方面均强一致，都可以进入多卖家价格聚类。
     const visualStrong=ownFingerprints.length?Number.isFinite(imageScore)&&imageScore>=.70:titleMatch>=.88;
     const textualIdentityStrong=semantic.accepted&&titleMatch>=.78&&bodyMatch>=.80&&(!queryFamily||candidateFamily===queryFamily);
-    if(!textStrong||!(visualStrong||textualIdentityStrong))return {accepted:false,reason:!textStrong?'detail_title_mismatch':'detail_identity_unconfirmed',detailTitle,titleMatch,bodyMatch,imageScore};
+    if(!textStrong||!(visualStrong||textualIdentityStrong))return {accepted:false,reason:!textStrong?'detail_title_mismatch':'detail_identity_unconfirmed',detailTitle:identityTitle,titleMatch,bodyMatch,imageScore,semanticReason:semantic.reason};
     const sellerKey=state.sellerUrl||state.sellerName||'';
-    return {accepted:true,reason:'detail_type_quantity_text_images_verified',detailTitle,titleMatch,bodyMatch,imageScore,optionCount:state.optionCount,semantic,queryFamily,candidateFamily,sellerKey,
+    return {accepted:true,reason:'detail_type_quantity_text_images_verified',detailTitle:identityTitle,titleMatch,bodyMatch,imageScore,optionCount:state.optionCount,semantic,queryFamily,candidateFamily,sellerKey,
       detailImages:state.images.slice(0,6),independentImages,imageSource:'xianyu'};
   }catch(error){return {accepted:false,reason:'detail_error',error:String(error)}}
   finally{await detail.close().catch(()=>{})}
@@ -141,7 +149,7 @@ export async function xianyuCost(page,item,settings){
   checks.forEach((check,index)=>{
     const candidate=preliminary[index];
     if(check.accepted)verified.push({...candidate,...check,fingerprint:undefined});
-    else rejected.push({url:candidate.url,title:candidate.title,price:candidate.price,reason:check.reason,titleMatch:check.titleMatch,imageScore:check.imageScore});
+    else rejected.push({url:candidate.url,title:candidate.title,price:candidate.price,reason:check.reason,detailTitle:check.detailTitle,titleMatch:check.titleMatch,bodyMatch:check.bodyMatch,imageScore:check.imageScore,semanticReason:check.semanticReason,error:check.error});
   });
   const coherent=coherentPrices(verified).slice(0,settings.maxXianyuSamples||5);
   const prices=coherent.map(sample=>sample.price).sort((a,b)=>a-b),middle=Math.floor(prices.length/2);
