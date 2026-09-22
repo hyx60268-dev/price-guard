@@ -165,7 +165,7 @@ for(const [contextIndex,context] of contexts.entries())for(const item of context
   // Login/challenge/errors and deferred rows must be retried/rotated; otherwise
   // one failed batch stamps checkedAt and can freeze the whole inventory for a day.
   const priorXianyuStatus=String(prior.xianyu?.status||'');
-  if(prior.xianyu?.verification==='detail_text_images_price_cluster_v4'&&['manual_review','page_empty'].includes(priorXianyuStatus)&&prior.xianyu?.checkedAt&&isFresh(prior.xianyu.checkedAt,xianyuRetryHours)){
+  if(prior.xianyu?.verification==='detail_text_images_price_cluster_v5'&&['manual_review','page_empty'].includes(priorXianyuStatus)&&prior.xianyu?.checkedAt&&isFresh(prior.xianyu.checkedAt,xianyuRetryHours)){
     context.xianyuById.set(item.id,{status:'skipped_recent_review',samples:[],averageCNY:null,checkedAt:prior.xianyu.checkedAt});continue;
   }
   // Refresh an automatic market reference for every listing. A user-confirmed
