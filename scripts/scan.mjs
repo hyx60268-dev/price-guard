@@ -221,7 +221,7 @@ for(const context of contexts){
     const recommendedPrice=Number.isFinite(yc.recommendedPrice)?yc.recommendedPrice:Number.isFinite(lowestPrice)&&lowestPrice<ownPrice?Math.max(1,Math.floor(lowestPrice)-1):ownPrice;
     const needsXianyu=Number.isFinite(lowestPrice)&&lowestPrice<ownPrice;
     const manual=manualCostFor(manualCosts,{...item,accountId:context.account.id},relistAliases);
-    const yahooSource=yc.status==='ok'?'live':yc.status==='cached'?'cached':Number.isFinite(prior.lowestPrice)?'cached':'own_baseline';
+    const yahooSource=['ok','incomplete'].includes(yc.status)?'live':yc.status==='cached'?'cached':Number.isFinite(prior.lowestPrice)?'cached':'own_baseline';
     const costSource=Number.isFinite(manual?.purchaseCNY)?'manual':xc.status==='ok'&&Number.isFinite(xc.averageCNY)?'live':Number.isFinite(averageCNY)?'cached':'missing';
     const samples=xc.samples?.length?xc.samples:(priorVerified?.samples||[]);
     const confidence=yc.status==='ok'&&(!needsXianyu||xc.status==='ok'||Number.isFinite(manual?.purchaseCNY))?'高':(yahooSource==='cached'||costSource==='cached')?'参考缓存':'需人工';
@@ -242,7 +242,7 @@ for(const context of contexts){
     return current?.status==='ok'&&Number.isFinite(current.averageCNY)&&!Number.isFinite(verifiedXianyuCache(prior)?.averageCNY);
   }).length;
   const scanStats={
-    yahoo:rows.length,yahooLive:yahooValues.filter(value=>value.status==='ok').length,
+    yahoo:rows.length,yahooLive:yahooValues.filter(value=>['ok','incomplete'].includes(value.status)).length,
     yahooCached:yahooValues.filter(value=>value.status==='cached').length,
     yahooDeferred:yahooValues.filter(value=>value.status==='deferred_budget'||value.cacheReason==='scan_budget').length,
     xianyuRequested:xianyuValues.filter(value=>!['not_requested'].includes(String(value.status))).length,

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateCost,advice,coherentPrices,conditionCompatible,distinctiveCoverage,hasExplicitDefect,hasExplicitVariantMismatch,hasIdentityVariantMismatch,hasLotterySeriesMismatch,hasVariantMismatch,isLikelyVariantOffer,listingSpecificationEquivalent,listingTextEquivalent,lotterySeriesEquivalent,lotterySeriesNeedsVisualConfirmation,packagedAssortmentEquivalent,productFamily,saleUnitEquivalent,semanticQuantity,semanticSameItem,titleScore,visualListingEquivalent } from '../scripts/lib/rules.mjs';
+import { calculateCost,advice,coherentPrices,conditionCompatible,distinctiveCoverage,exactIdentityTitleEquivalent,hasExplicitDefect,hasExplicitVariantMismatch,hasIdentityVariantMismatch,hasLotterySeriesMismatch,hasVariantMismatch,isLikelyVariantOffer,listingSpecificationEquivalent,listingTextEquivalent,lotterySeriesEquivalent,lotterySeriesNeedsVisualConfirmation,packagedAssortmentEquivalent,productFamily,saleUnitEquivalent,semanticQuantity,semanticSameItem,titleScore,visualListingEquivalent } from '../scripts/lib/rules.mjs';
 import { encrypt,decrypt } from '../scripts/lib/crypto.mjs';
 const settings={exchangeRate:22.99,costMultiplier:1.05};
 test('manual cost formula',()=>assert.equal(calculateCost(90.5,30,210,settings),3130));
@@ -16,6 +16,21 @@ test('identical title and description can verify a product despite a different f
   assert.equal(listingTextEquivalent(title,description,title,description),true);
   assert.equal(listingTextEquivalent(title,'正規品の未開封商品です',title,'正規品の未開封商品です'),true);
   assert.equal(listingTextEquivalent(title,description,title.replace('不死川実弥','冨岡義勇'),description.replace('不死川実弥','冨岡義勇')),false);
+});
+test('exact product identity survives different listing photos and descriptions',()=>{
+  assert.equal(exactIdentityTitleEquivalent(
+    '新品未開封 Wabi Inspirations Axel Vervoordt 写真集',
+    '新品 Wabi Inspirations Axel Vervoordt 写真集'),true);
+  assert.equal(exactIdentityTitleEquivalent(
+    '中国限定 鬼滅の刃 アクリルスタンド 不死川実弥',
+    '中国限定 鬼滅の刃 アクリルスタンド 冨岡義勇'),false);
+  assert.equal(exactIdentityTitleEquivalent(
+    'FAN HO 何藩 ファン・ホー 香港三部作 写真集 森山大道',
+    '何藩 写真集 ファン・ホー Fan Ho 香港三部作 森山大道 写真家',
+    '写真集、グラフ誌','タレントグッズ'),true);
+  assert.equal(exactIdentityTitleEquivalent(
+    'DIMOO WORLD × PIXAR ぬいぐるみペンダント',
+    'DIMOO in Space Crane フィギュア'),false);
 });
 
 test('same branded box accepts piece-versus-figure quantity wording',()=>{

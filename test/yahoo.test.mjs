@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { extractCategoryIds,extractItemData,extractNextData,extractRecommendationCards,marketPriceDecision,queryFor,unresolvedRaiseCandidates } from '../scripts/lib/yahoo.mjs';
+import { candidateEvidenceOrder,extractCategoryIds,extractItemData,extractNextData,extractRecommendationCards,marketPriceDecision,queryFor,unresolvedRaiseCandidates,visualRecallEligible } from '../scripts/lib/yahoo.mjs';
 
 test('extractNextData accepts Yahoo nonce attribute',()=>{
   const value={props:{initialState:{searchState:{search:{result:{items:[]}}}}}};
@@ -119,4 +119,38 @@ test('sold or definitively mismatched cards do not cap an in-stock raise decisio
     {id:'error',reason:'detail_error'}
   ]);
   assert.deepEqual(result.map(item=>item.id),['error','unchecked']);
+});
+
+test('live search cards beat stale recommendation cards at the same price',()=>{
+  const cards=[
+    {id:'sold-rec',price:9100,titleScore:1,fromRecommendation:true,sources:['recommendation']},
+    {id:'live-search',price:9100,titleScore:1,fromRecommendation:true,sources:['search','recommendation']}
+  ].sort(candidateEvidenceOrder);
+  assert.equal(cards[0].id,'live-search');
+});
+
+test('a cheaper candidate is checked before a higher card that merely says new',()=>{
+  const cards=[
+    {id:'higher-new',price:9100,conditionPriority:0,titleScore:1,sources:['search']},
+    {id:'lower-unknown',price:6980,conditionPriority:1,titleScore:1,sources:['recommendation']}
+  ].sort(candidateEvidenceOrder);
+  assert.equal(cards[0].id,'lower-unknown');
+});
+
+test('visual recall rescues a renamed recommendation but still blocks another variant',()=>{
+  assert.equal(visualRecallEligible({
+    query:'POP MART DIMOO WORLD × PIXAR シリーズ ぬいぐるみ ペンダント',
+    candidate:'DIMOO WORLD PIXAR ぬいぐるみ ペンダント',
+    queryCategory:'ぬいぐるみ',candidateCategory:'ぬいぐるみ',imageScore:.91
+  }),true);
+  assert.equal(visualRecallEligible({
+    query:'鬼滅の刃 中国限定 アクリルスタンド 不死川実弥',
+    candidate:'鬼滅の刃 中国限定 アクリルスタンド 冨岡義勇',
+    queryCategory:'アクリルスタンド',candidateCategory:'アクリルスタンド',imageScore:.96
+  }),false);
+  assert.equal(visualRecallEligible({
+    query:'POPMART NARUTO 暁 フィギュア 長門',
+    candidate:'POPMART NARUTO 暁 フィギュア 長門',
+    queryCategory:'フィギュア',candidateCategory:'フィギュア',imageScore:.70
+  }),false);
 });

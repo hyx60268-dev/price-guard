@@ -3,7 +3,7 @@ const badPattern = /(求购|收购|只收|蹲收|换物|交换|置换|补款|定
 const baitPattern = /(请点进去选项|点击立即购买查看|拍下改价|私聊改价|价格见图|图上价|多个角色|多款可选|任选|标价非实价|自带价|占位价|起步价|最低款价格|标价为最低|标价只是|页面价格不准)/i;
 const selectionPattern = /(请选择|选择规格|选择款式|选款|选图|拍哪款|下单备注|联系客服改价|私聊改价|各款价格|价格不一|每款价格|单独询价|需补差价|补差后发货|以详情价为准|详情价格为准)/i;
 const multiOfferPattern = /(多款|多角色|全系列|合集|系列任选|整套可拆|可拆卖)/i;
-export const MATCHING_RULES_VERSION = 8;
+export const MATCHING_RULES_VERSION = 9;
 
 // 同じIP/シリーズが中国語・日本語・英語や作者名で出品されるケースを、
 // 再利用できる別名辞書で同じ識別語へ寄せる。追加時は商品固有語だけを登録し、
@@ -188,6 +188,30 @@ export function semanticSameItem({query='',candidate='',queryCategory='',candida
   const enoughAnchors=evidence.score>=0.78&&(evidence.matchedCount>=2||evidence.matchedLength>=6);
   return {accepted:familyCompatible&&enoughAnchors,reason:familyCompatible?(enoughAnchors?'matched':'weak_anchors'):'product_mismatch',
     queryFamily,candidateFamily,...evidence};
+}
+
+// Sellers often use the same complete product title but different photos and
+// descriptions. Exact bidirectional identity is stronger than a perceptual-image
+// miss caused by crop/background changes. Hard variant, quantity and family
+// guards remain mandatory.
+export function exactIdentityTitleEquivalent(query='',candidate='',queryCategory='',candidateCategory=''){
+  const queryHeading=listingHeading(query),candidateHeading=listingHeading(candidate);
+  if(hasExplicitVariantMismatch(queryHeading,candidateHeading)||hasExplicitVariantMismatch(candidateHeading,queryHeading))return false;
+  if(!saleUnitEquivalent(queryHeading,candidateHeading))return false;
+  const queryQuantity=semanticQuantity(queryHeading),candidateQuantity=semanticQuantity(candidateHeading);
+  if(Number.isFinite(queryQuantity)&&Number.isFinite(candidateQuantity)&&queryQuantity!==candidateQuantity)return false;
+  const queryFamily=productFamily(queryHeading,queryCategory),candidateFamily=productFamily(candidateHeading,candidateCategory);
+  if(queryFamily&&candidateFamily&&queryFamily!==candidateFamily)return false;
+  const queryIdentity=distinctiveCoverage(queryHeading,candidateHeading),candidateIdentity=distinctiveCoverage(candidateHeading,queryHeading);
+  const minimumScore=Math.min(queryIdentity.score,candidateIdentity.score);
+  const minimumCount=Math.min(queryIdentity.matchedCount,candidateIdentity.matchedCount);
+  const minimumLength=Math.min(queryIdentity.matchedLength,candidateIdentity.matchedLength);
+  // One seller may append a generic profession/category word (e.g. 写真家) to an
+  // otherwise complete title. Several shared identity anchors are stronger evidence
+  // than that harmless extra token, while all hard character/version/quantity guards
+  // above still apply.
+  return minimumScore>=.9&&minimumCount>=2&&minimumLength>=4||
+    minimumScore>=.85&&minimumCount>=3&&minimumLength>=8;
 }
 
 // 「海外製品のため傷がある場合がございます」のような一般的な注意書きは除外理由にせず、
