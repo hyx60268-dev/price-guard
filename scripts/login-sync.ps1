@@ -4,6 +4,7 @@ $LogFile = Join-Path $ProjectRoot 'login-sync.log'
 
 Set-Location $ProjectRoot
 Start-Transcript -Path $LogFile -Append | Out-Null
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 function Wait-For-Exit {
     Write-Host ''
@@ -14,10 +15,37 @@ function Refresh-ToolPath {
     $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     $user = [Environment]::GetEnvironmentVariable('Path', 'User')
     $env:Path = "$machine;$user;$env:ProgramFiles\nodejs;$env:ProgramFiles\GitHub CLI"
+    $portableGh = Get-ChildItem (Join-Path $ProjectRoot '.tools') -Filter gh.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($portableGh) {
+        $env:Path = "$($portableGh.DirectoryName);$env:Path"
+    }
+}
+
+function Install-PortableGitHubCli {
+    $toolsDir = Join-Path $ProjectRoot '.tools'
+    $zipFile = Join-Path $toolsDir 'gh-windows-amd64.zip'
+    $extractDir = Join-Path $toolsDir 'gh'
+    New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
+    Write-Host 'Downloading the official portable GitHub CLI...' -ForegroundColor Cyan
+    $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/cli/cli/releases/latest' -Headers @{ 'User-Agent' = 'price-guard-login-sync' }
+    $asset = $release.assets | Where-Object { $_.name -match 'windows_amd64\.zip$' } | Select-Object -First 1
+    if (-not $asset) { throw 'Could not find the official Windows AMD64 GitHub CLI package.' }
+    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zipFile -UseBasicParsing
+    if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
+    Expand-Archive -Path $zipFile -DestinationPath $extractDir -Force
+    Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
+    Refresh-ToolPath
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        throw 'The portable GitHub CLI was downloaded but gh.exe could not be started.'
+    }
 }
 
 function Install-WithWinget([string]$Id, [string]$DisplayName) {
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        if ($Id -eq 'GitHub.cli') {
+            Install-PortableGitHubCli
+            return
+        }
         throw "winget is unavailable. Install $DisplayName manually, then run this file again. Log: $LogFile"
     }
     Write-Host "Installing $DisplayName. Keep this window open..." -ForegroundColor Cyan
