@@ -43,5 +43,9 @@
     "maxProductsPerSeller": 4,
     "maxXianyuDetailChecks": 8,
     "maxXianyuSamples": 5
+    ,"estimatedManualFeeCNY": 10
+    ,"estimatedShippingJPY": 750
+    ,"sellerFeeRate": 0.05
+    ,"minimumProfitJPY": 1500
   }
 }

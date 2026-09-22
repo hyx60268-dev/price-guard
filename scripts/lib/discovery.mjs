@@ -175,6 +175,18 @@ export function validDiscoveryXianyu(result={}){
     sampleCount:samples.length,sellerCount:sellerKeys.size,priceSpread:spread};
 }
 
+export function discoveryProfit(item={},settings={}){
+  const purchaseCNY=Number(item.purchaseCNY),salePriceJPY=Number(item.sourcePriceJPY),cfg=settings.discovery||{};
+  if(!Number.isFinite(purchaseCNY)||!Number.isFinite(salePriceJPY))return {ready:false,estimatedCostJPY:null,estimatedNetRevenueJPY:null,estimatedProfitJPY:null,qualified:false};
+  const manualFeeCNY=Number(cfg.estimatedManualFeeCNY??10),shippingJPY=Number(cfg.estimatedShippingJPY??750);
+  const sellerFeeRate=Number(cfg.sellerFeeRate??0.05),minimumProfitJPY=Number(cfg.minimumProfitJPY??1500);
+  const estimatedCostJPY=Math.ceil(((purchaseCNY+manualFeeCNY)*Number(settings.exchangeRate||0)+shippingJPY)*Number(settings.costMultiplier||1));
+  const estimatedNetRevenueJPY=Math.floor(salePriceJPY*(1-sellerFeeRate));
+  const estimatedProfitJPY=estimatedNetRevenueJPY-estimatedCostJPY;
+  return {ready:true,estimatedCostJPY,estimatedNetRevenueJPY,estimatedProfitJPY,qualified:estimatedProfitJPY>=minimumProfitJPY,
+    assumptions:{manualFeeCNY,shippingJPY,sellerFeeRate,minimumProfitJPY}};
+}
+
 export function salesWindowCounts(saleDates=[],now=Date.now()){
   const dates=saleDates.filter(value=>Number.isFinite(Date.parse(value)));
   return {days2:dates.filter(value=>isWithinDays(value,2,now)).length,

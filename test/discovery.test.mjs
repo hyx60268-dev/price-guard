@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canonicalSaleTitle,clusterSellerSales,containsDiscoveryKeyword,eligibleDiscoveryCard,groupDiscoveryCandidates,isOwnedDiscoverySource,isWithinDays,mercariDiscoverySearchUrl,mercariSoldEvidence,parseListingTime,rankDiscoveryCandidates,rewriteListing,salesWindowCounts,sameDiscoveryProduct,sameSaleProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor,yahooDiscoverySearchUrl } from '../scripts/lib/discovery.mjs';
+import { canonicalSaleTitle,clusterSellerSales,containsDiscoveryKeyword,discoveryProfit,eligibleDiscoveryCard,groupDiscoveryCandidates,isOwnedDiscoverySource,isWithinDays,mercariDiscoverySearchUrl,mercariSoldEvidence,parseListingTime,rankDiscoveryCandidates,rewriteListing,salesWindowCounts,sameDiscoveryProduct,sameSaleProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor,yahooDiscoverySearchUrl } from '../scripts/lib/discovery.mjs';
 
 test('discovery URLs use the live sold and price filters',()=>{
   const mercari=new URL(mercariDiscoverySearchUrl({keyword:'中国限定',minPriceJPY:4999}));
@@ -69,6 +69,13 @@ test('discovery enforces sold price date and valid xianyu images',()=>{
   assert.equal(validDiscoveryXianyu({status:'ok',query:'商品',averageCNY:28,samples:[{price:28,sellerKey:'a',independentImages:['https://a/1','https://a/2','https://a/3']},{price:30,sellerKey:'b'}]}).ready,true);
   assert.equal(validDiscoveryXianyu({status:'ok',query:'商品',averageCNY:28,samples:[{price:28,independentImages:['https://a/1','https://a/2']},{price:30}]}).ready,false);
   assert.equal(validDiscoveryXianyu({status:'ok',query:'商品',averageCNY:3,samples:[{price:3,independentImages:['https://a/1']},{price:28}]}).ready,false);
+});
+
+test('discovery excludes verified products below net profit floor',()=>{
+  const settings={exchangeRate:23,costMultiplier:1.05,discovery:{estimatedManualFeeCNY:10,estimatedShippingJPY:750,sellerFeeRate:.05,minimumProfitJPY:1500}};
+  assert.equal(discoveryProfit({purchaseCNY:100,sourcePriceJPY:5000},settings).qualified,false);
+  assert.equal(discoveryProfit({purchaseCNY:100,sourcePriceJPY:8000},settings).qualified,true);
+  assert.equal(discoveryProfit({sourcePriceJPY:8000},settings).ready,false);
 });
 
 test('queries are translated and proposed title stays within 40 characters',()=>{

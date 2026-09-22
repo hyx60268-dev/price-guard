@@ -94,9 +94,15 @@ export async function xianyuCost(page,item,settings){
     const imageScore=imageSetSimilarity(ownFingerprints,[fingerprint]);
     return {...card,titleScore:titleMatch,imageScore,fingerprint};
   });
-  const preliminary=scored.filter(card=>card.titleScore>=.82||(card.titleScore>=.25&&card.imageScore>=.72)||card.imageScore>=.88)
-    .sort((a,b)=>(b.imageScore??0)-(a.imageScore??0)||b.titleScore-a.titleScore||a.price-b.price);
   const limit=Math.max(2,Number(settings.maxXianyuDetailChecks)||6);
+  // Search ranking is useful evidence, but never final same-item evidence.  The
+  // old .82 title gate rejected every Chinese result when the source title was
+  // partly Japanese, so no detail page was ever opened.  Send the best search
+  // results to the strict detail verifier instead; only verified details can
+  // contribute a cost.
+  const ranked=scored.sort((a,b)=>Math.max(b.imageScore??0,b.titleScore)-Math.max(a.imageScore??0,a.titleScore)||a.price-b.price);
+  const signalled=ranked.filter(card=>card.titleScore>=.18||card.imageScore>=.52);
+  const preliminary=(signalled.length?signalled:ranked).slice(0,limit);
   const checks=await mapLimit(preliminary.slice(0,limit),2,candidate=>verifyDetail(page.context(),candidate,item,settings,ownFingerprints));
   const verified=[],rejected=[];
   checks.forEach((check,index)=>{
@@ -113,6 +119,7 @@ export async function xianyuCost(page,item,settings){
   const status=coherent.length>=2&&sellerEvidence&&priceSpread<=.30?'ok':cardCount?'manual_review':'page_empty';
   return {query,usedQuery,searchAttempts:searchQueries.length,searchUrl:url,status,samples:coherent,averageCNY:status==='ok'?referenceCNY:null,cardCount,
     loginVisible:pageState.loginVisible,preliminaryCount:preliminary.length,verifiedCount:verified.length,rejected:rejected.slice(0,12),
+    topCandidates:ranked.slice(0,5).map(card=>({title:card.title.slice(0,120),titleScore:Number(card.titleScore.toFixed(3)),imageScore:Number.isFinite(card.imageScore)?Number(card.imageScore.toFixed(3)):null,price:card.price})),
     sellerCount,priceSpread,
     verification:'detail_text_images_price_cluster_v3',checkedAt:new Date().toISOString(),method:'verified_detail_median_multi_image'};
 }

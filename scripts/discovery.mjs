@@ -4,7 +4,7 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { openContext,settle } from './lib/browser.mjs';
 import { decrypt,encrypt } from './lib/crypto.mjs';
-import { canonicalSaleTitle,clusterSellerSales,containsDiscoveryKeyword,discoveryId,eligibleDiscoveryCard,groupDiscoveryCandidates,isOwnedDiscoverySource,isWithinDays,median,mercariDiscoverySearchUrl,mercariSoldEvidence,parseListingTime,rankDiscoveryCandidates,rewriteListing,sameDiscoveryProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor,yahooDiscoverySearchUrl } from './lib/discovery.mjs';
+import { canonicalSaleTitle,clusterSellerSales,containsDiscoveryKeyword,discoveryId,discoveryProfit,eligibleDiscoveryCard,groupDiscoveryCandidates,isOwnedDiscoverySource,isWithinDays,median,mercariDiscoverySearchUrl,mercariSoldEvidence,parseListingTime,rankDiscoveryCandidates,rewriteListing,sameDiscoveryProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor,yahooDiscoverySearchUrl } from './lib/discovery.mjs';
 import { xianyuCost } from './lib/xianyu.mjs';
 import { fetchYahooItemBundle,fetchYahooResult } from './lib/yahoo.mjs';
 import { discoveryDismissalKey,normalizeProductIdentity } from './lib/state.mjs';
@@ -12,7 +12,7 @@ import { imageFingerprints,imageSetSimilarity } from './lib/image.mjs';
 import { listingSpecificationEquivalent,listingTextEquivalent,productFamily,titleScore } from './lib/rules.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url)),root=path.resolve(here,'..');
-const DISCOVERY_VERSION=9;
+const DISCOVERY_VERSION=10;
 const readJson=file=>fs.readFile(file,'utf8').then(JSON.parse);
 const exists=file=>fs.access(file).then(()=>true).catch(()=>false);
 const wait=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
@@ -24,6 +24,12 @@ if(!password||password.length<8)throw new Error('DASHBOARD_PASSWORD 至少需要
 await Promise.all(['data','public/data','state','.auth'].map(directory=>fs.mkdir(path.join(root,directory),{recursive:true})));
 const stateEnc=path.join(root,'state','discovery.json.enc'),stateStatus=path.join(root,'state','discovery-status.json');
 const publicEnc=path.join(root,'public','data','discovery.json.enc'),publicStatus=path.join(root,'public','data','discovery-status.json');
+
+function applyDiscoveryProfit(item){
+  const profit=discoveryProfit(item,settings);Object.assign(item,profit);
+  if(profit.ready&&!profit.qualified){item.status='rejected_low_profit';item.confidence=`预计到手利润 ¥${profit.estimatedProfitJPY.toLocaleString('ja-JP')}，低于 ¥${profit.assumptions.minimumProfitJPY.toLocaleString('ja-JP')}`}
+  return item;
+}
 
 function mergeOwnedRecords(records=[]){
   const output=new Map();
@@ -122,7 +128,8 @@ async function excludeOwnedAndUploaded(items,owned,dismissed=[]){
 async function publishExisting(prior){
   const latest=await latestPriceSnapshot(),owned=await completeOwnedScope(latest);
   const dismissed=Object.values(latest?.dismissedDiscoveries||{});
-  const products=rankDiscoveryCandidates(await excludeOwnedAndUploaded(prior.products||[],owned,dismissed),{
+  const costFiltered=(prior.products||[]).map(item=>applyDiscoveryProfit({...item})).filter(item=>item.status!=='rejected_low_profit');
+  const products=rankDiscoveryCandidates(await excludeOwnedAndUploaded(costFiltered,owned,dismissed),{
     maxProducts:Number(cfg.maxProducts),minSales:Number(cfg.minSalesPerSeller),perSeller:Number(cfg.maxProductsPerSeller||4)
   });
   const refreshed={...prior,version:DISCOVERY_VERSION,products,stats:{...(prior.stats||{}),ready:products.filter(item=>item.status==='ready').length,
@@ -164,7 +171,7 @@ async function refreshCachedDiscoveryCosts(prior){
         Object.assign(item,{xianyu,purchaseCNY:validated.ready?xianyu.averageCNY:null,referenceCNY:xianyu.averageCNY,
           images:validated.images.length?validated.images:(item.images||[]),imageSource:validated.imageSource||item.imageSource,
           status:validated.ready?'ready':'needs_xianyu_review',xianyuSearchUrl:xianyu.searchUrl,
-          confidence:validated.ready?'自动核验参考价':xianyuReviewLabel(xianyu.status),costVerification:validated});
+          confidence:validated.ready?'自动核验参考价':xianyuReviewLabel(xianyu.status),costVerification:validated});applyDiscoveryProfit(item);
         console.log(`[选品成本续查] ${item.sourceTitle} 状态=${xianyu.status} 卡片=${xianyu.cardCount??0} 核验=${xianyu.verifiedCount??0} 成本=${item.purchaseCNY??'待核验'}`);
       }catch(error){console.warn(`[选品成本续查] ${item.sourceTitle} ${String(error)}`)}
     }
@@ -470,13 +477,13 @@ try{
   for(const [index,item] of ranked.entries()){
     const review=reviewFor(item),reviewImages=[...new Set(review?.images||[])].filter(url=>/^https?:\/\//i.test(url)).slice(0,12);
     if(Number.isFinite(Number(review?.purchaseCNY))&&reviewImages.length>=3){
-      Object.assign(item,{purchaseCNY:Number(review.purchaseCNY),images:reviewImages,imageSource:'user_verified',status:'ready',confidence:'用户确认',manualReview:review});
+      Object.assign(item,{purchaseCNY:Number(review.purchaseCNY),images:reviewImages,imageSource:'user_verified',status:'ready',confidence:'用户确认',manualReview:review});applyDiscoveryProfit(item);
       console.log(`[选品 ${index+1}/${ranked.length}] ${item.sourcePlatform} 月销${item.salesCount} ${item.sourceTitle} 用户核验=${item.purchaseCNY} 图片=${item.images.length}`);continue;
     }
     try{
       const xianyu=await xianyuCost(xPage,{id:item.id,title:item.sourceTitle,xianyuQuery:item.xianyuQuery,image:item.sourceImages[0],images:item.sourceImages,yahoo:{ownImages:item.sourceImages}},settings);
       const validated=validDiscoveryXianyu(xianyu);Object.assign(item,{xianyu,purchaseCNY:validated.ready?xianyu.averageCNY:null,referenceCNY:xianyu.averageCNY,images:validated.images,
-        imageSource:validated.imageSource,status:validated.ready?'ready':'needs_xianyu_review',xianyuSearchUrl:xianyu.searchUrl,confidence:validated.ready?'自动核验参考价':xianyuReviewLabel(xianyu.status),costVerification:validated});
+        imageSource:validated.imageSource,status:validated.ready?'ready':'needs_xianyu_review',xianyuSearchUrl:xianyu.searchUrl,confidence:validated.ready?'自动核验参考价':xianyuReviewLabel(xianyu.status),costVerification:validated});applyDiscoveryProfit(item);
       if(['login_required','blocked'].includes(xianyu.status))xianyuAuthRequired=true;
     }catch(error){errors.push(`闲鱼${item.id}: ${String(error)}`);Object.assign(item,{status:'needs_xianyu_review',purchaseCNY:null,images:[],confidence:'需人工',xianyuSearchUrl:`https://www.goofish.com/search?q=${encodeURIComponent(item.xianyuQuery)}`})}
     if(review){
@@ -484,14 +491,15 @@ try{
       if(reviewImages.length)item.images=reviewImages;
       item.manualReview=review;
     }
-    console.log(`[选品 ${index+1}/${ranked.length}] ${item.sourcePlatform} 月销${item.salesCount} ${item.sourceTitle} 闲鱼=${item.purchaseCNY??'待核验'} 状态=${item.xianyu?.status||'error'} 卡片=${item.xianyu?.cardCount??0} 初筛=${item.xianyu?.preliminaryCount??0} 核验=${item.xianyu?.verifiedCount??0} 图片=${item.images?.length||0}`);
+    console.log(`[选品 ${index+1}/${ranked.length}] ${item.sourcePlatform} 月销${item.salesCount} ${item.sourceTitle} 闲鱼=${item.purchaseCNY??'待核验'} 状态=${item.xianyu?.status||'error'} 卡片=${item.xianyu?.cardCount??0} 初筛=${item.xianyu?.preliminaryCount??0} 核验=${item.xianyu?.verifiedCount??0} 利润=${item.estimatedProfitJPY??'待核验'} 图片=${item.images?.length||0} 候选=${JSON.stringify(item.xianyu?.topCandidates||[])}`);
     await wait(600);
   }
 }finally{await browser?.close().catch(()=>{})}
 
-const products=ranked;
+const rejectedLowProfit=ranked.filter(item=>item.status==='rejected_low_profit');
+const products=ranked.filter(item=>item.status!=='rejected_low_profit');
 const result={version:DISCOVERY_VERSION,checkedAt:new Date().toISOString(),filters:{keyword:cfg.keyword,soldOnly:true,minPriceJPY:cfg.minPriceJPY,sort:'2d_then_7d_then_30d',windowDays:cfg.windowDays,minSalesPerSeller:cfg.minSalesPerSeller},
-  products,stats:{sourceCandidates:sourceCandidates.length,...sourceScanStats,ready:products.filter(item=>item.status==='ready').length,pending:products.filter(item=>item.status!=='ready').length,
+  products,stats:{sourceCandidates:sourceCandidates.length,...sourceScanStats,rejectedLowProfit:rejectedLowProfit.length,ready:products.filter(item=>item.status==='ready').length,pending:products.filter(item=>item.status!=='ready').length,
     mercari:products.filter(item=>item.sourcePlatform==='mercari'||item.sourcePlatforms?.includes('mercari')).length,
     yahoo:products.filter(item=>item.sourcePlatform==='yahoo'||item.sourcePlatforms?.includes('yahoo')).length},
   login:{xianyuRequired:xianyuAuthRequired},errors:errors.slice(0,30)};
