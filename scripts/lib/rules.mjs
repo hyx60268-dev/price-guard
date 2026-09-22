@@ -3,7 +3,7 @@ const badPattern = /(求购|收购|只收|蹲收|换物|交换|置换|补款|定
 const baitPattern = /(请点进去选项|点击立即购买查看|拍下改价|私聊改价|价格见图|图上价|多个角色|多款可选|任选|标价非实价|自带价|占位价|起步价|最低款价格|标价为最低|标价只是|页面价格不准)/i;
 const selectionPattern = /(请选择|选择规格|选择款式|选款|选图|拍哪款|下单备注|联系客服改价|私聊改价|各款价格|价格不一|每款价格|单独询价|需补差价|补差后发货|以详情价为准|详情价格为准)/i;
 const multiOfferPattern = /(多款|多角色|全系列|合集|系列任选|整套可拆|可拆卖)/i;
-export const MATCHING_RULES_VERSION = 10;
+export const MATCHING_RULES_VERSION = 11;
 
 // 同じIP/シリーズが中国語・日本語・英語や作者名で出品されるケースを、
 // 再利用できる別名辞書で同じ識別語へ寄せる。追加時は商品固有語だけを登録し、
@@ -162,7 +162,7 @@ export function conditionProfile(value=''){
     // 「未開封品」の中の「開封品」を中古扱いしない。
     openedOrUsed:/(?:中古|開封済|(?<!未)開封品|開封しています|飾って|展示品|使用済|使用感|組立済|二手|已开封|展示过)/i.test(text),
     sealedNew:/(?:新品未開封|新品・未開封|未開封|未拆封|全新未拆)/i.test(text),
-    newUnused:/(?:新品[、・]?未使用|新品、未使用|新品未使用|未使用品|(?:^|[\s\n・])未使用(?:$|[\s\n・])|全新未使用|全新仅拆(?:确认|外盒|查看|验货)?|仅拆确认(?:角色)?)/i.test(text)
+    newUnused:/(?:新品[、・]?未使用|新品、未使用|新品未使用|未使用品|(?:^|[\s\n・])新品(?:$|[\s\n・])|(?:^|[\s\n・])未使用(?:$|[\s\n・])|全新未使用|全新仅拆(?:确认|外盒|查看|验货)?|仅拆确认(?:角色)?)/i.test(text)
   };
 }
 
@@ -295,6 +295,12 @@ function listingHeading(value=''){
 function namedIdentityConflict(query='',candidate=''){
   const leftHeading=listingHeading(query),rightHeading=listingHeading(candidate);
   const leftText=normalize(leftHeading),rightText=normalize(rightHeading);
+  // Sellers insert arbitrary spaces inside Japanese product names.  If the fully
+  // normalized heading is a substring of the other heading, token boundaries alone
+  // must never manufacture a character/version conflict (e.g. 「超スーパー」 vs
+  // 「超 スーパー」).  Real extra variants are still caught by the facet/quantity
+  // guards before this function.
+  if(leftText&&rightText&&(leftText.includes(rightText)||rightText.includes(leftText)))return false;
   const strong=token=>{
     const value=normalize(token);
     return value.length>=4||(/^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+$/u.test(value)&&value.length>=2);
@@ -356,6 +362,10 @@ function lotteryPrefixTokens(value=''){
 function lotterySeriesDelta(query='',candidate=''){
   const left=lotteryPrefixTokens(query),right=lotteryPrefixTokens(candidate);
   if(!left.size||!right.size)return {applicable:false,leftOnly:new Set(),rightOnly:new Set()};
+  // Tokenization may split one seller's 「ドラゴンボール超スーパーヒーロー」 into
+  // 「ドラゴンボール超」「スーパーヒーロー」.  Compare the ordered, concatenated
+  // identity before declaring two release subtitles different.
+  if([...left].join('')===[...right].join(''))return {applicable:true,leftOnly:new Set(),rightOnly:new Set()};
   return {
     applicable:true,
     leftOnly:new Set([...left].filter(token=>!right.has(token))),

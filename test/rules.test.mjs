@@ -116,6 +116,13 @@ test('Ichiban Kuji release subtitles are product identity, not optional wording'
   assert.equal(lotterySeriesEquivalent(bonds,same.replace('うずまきナルト','うちはサスケ')),false);
   assert.equal(hasLotterySeriesMismatch('一番くじ 鬼滅の刃 無限列車編 A賞 煉獄杏寿郎','一番くじ 鬼滅の刃 刀鍛冶の里編 A賞 煉獄杏寿郎'),true);
 });
+test('spaces inside the same Ichiban Kuji release name are not a variant conflict',()=>{
+  const own='一番くじ ドラゴンボール超スーパーヒーロー ラストワン賞 神龍フィギュア';
+  const competitor='海外正規品　一番くじ ドラゴンボール超 スーパーヒーロー ラストワン賞 神龍 フィギュア';
+  assert.equal(hasIdentityVariantMismatch(own,competitor),false);
+  assert.equal(semanticSameItem({query:own,candidate:competitor}).accepted,true);
+  assert.equal(exactIdentityTitleEquivalent(own,competitor),true);
+});
 test('rejects different characters, book titles, and named variants inside one series',()=>{
   const sukuna='中国限定 POP MART 呪術廻戦 両面宿儺 シーンブロック 正規品';
   const itadori='中国限定 POP MART 呪術廻戦 虎杖悠仁 シーンブロック 正規品';
@@ -193,6 +200,7 @@ test('new sealed full products reject opened, no-box, and box-only listings',()=
   assert.equal(conditionCompatible('新品未開封 MASTERLISE フィギュア','MASTERLISE 外箱のみ'),false);
   assert.equal(conditionCompatible('新品未開封 フィギュア','新品未開封 フィギュア'),true);
   assert.equal(conditionCompatible('未使用品です','新品・未開封品（OPP袋入り）'),true);
+  assert.equal(conditionCompatible('未使用 フィギュア','海外正規品 新品\n未使用に近い'),true);
 });
 test('rejects xianyu multi-variant bait but allows a whole-set query',()=>{
   assert.equal(isLikelyVariantOffer('全系列多款可选，标价为最低款价格','角色A 徽章'),true);
