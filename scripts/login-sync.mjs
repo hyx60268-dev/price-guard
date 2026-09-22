@@ -38,13 +38,16 @@ async function verifyRealCost(context){
       process.stdout.write(`\n真实成本验证：${item.title}\n`);
       const result=await xianyuCost(page,item,{...settings,maxXianyuDetailChecks:8,maxXianyuSamples:5});
       console.log(`状态 ${result.status}；候选 ${result.cardCount||0}；核验通过 ${result.verifiedCount||0}`);
-      if(result.status==='ok'&&Number.isFinite(result.averageCNY)){
-        console.log(`验证成功：闲鱼参考成本 ¥${result.averageCNY}`);
+      // 这里验证的是“登录会话确实能读到真实搜索与详情”，不是直接批准成本。
+      // 正式扫描仍由 xianyuCost 要求至少两个独立卖家的同款价格样本。
+      // 若把登录同步也绑定到两个样本，会让有效登录因冷门商品只有一个卖家而无法上传。
+      if((result.cardCount||0)>0&&(result.verifiedCount||0)>=1){
+        console.log(`登录会话验证成功：${result.cardCount} 个真实候选，${result.verifiedCount} 个详情严格通过。`);
         return {item,result};
       }
     }
   }finally{await page.close().catch(()=>{})}
-  throw new Error('登录虽成功，但尚未取得至少两个同款、同规格、价格一致的真实闲鱼样本；已停止同步。');
+  throw new Error('登录虽成功，但测试商品尚未取得任何严格核验通过的闲鱼详情；已停止同步。');
 }
 
 const browser=await chromium.launch({headless:false});
