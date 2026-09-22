@@ -169,5 +169,5 @@ export async function xianyuCost(page,item,settings){
     pricedCardCount:eligible.length,unpricedCardCount:priced.length-eligible.length,
     topCandidates:ranked.slice(0,5).map(card=>({title:card.title.slice(0,120),titleScore:Number(card.titleScore.toFixed(3)),imageScore:Number.isFinite(card.imageScore)?Number(card.imageScore.toFixed(3)):null,price:card.price})),
     sellerCount,priceSpread,
-    verification:'detail_text_images_price_cluster_v4',checkedAt:new Date().toISOString(),method:'verified_detail_median_multi_image'};
+    verification:'detail_text_images_price_cluster_v5',checkedAt:new Date().toISOString(),method:'verified_detail_median_multi_image'};
 }
