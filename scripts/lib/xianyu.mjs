@@ -1,6 +1,6 @@
 import { cardsFromPage,settle } from './browser.mjs';
 import { coherentIndependentImages,imageFingerprints,imageSetSimilarity } from './image.mjs';
-import { coherentPrices,conditionCompatible,hasExplicitDefect,hasVariantMismatch,isLikelyVariantOffer,isRejected,productFamily,semanticSameItem,titleScore,yen } from './rules.mjs';
+import { coherentPrices,conditionCompatible,hasExplicitDefect,hasVariantMismatch,isLikelyVariantOffer,isRejected,productFamily,semanticQuantity,semanticSameItem,titleScore,yen } from './rules.mjs';
 
 async function mapLimit(values,limit,worker){
   const output=new Array(values.length);let cursor=0;
@@ -68,9 +68,15 @@ async function verifyDetail(context,candidate,item,settings,ownFingerprints){
       .split(/【(?:商品信息|商品状态|成色|包装|配送|温馨提示|提醒)】|(?:商品信息|商品状态|成色|包装|配送方式)[:：]/)[0]
       .replace(/\s+/g,' ').trim().slice(0,220)||String(candidate.title||'').slice(0,220);
     const titleMatch=titleScore(query,identityTitle);
-    const variantMismatch=hasVariantMismatch(query,identityTitle);
+    const queryQuantity=semanticQuantity(query),candidateQuantity=semanticQuantity(identityTitle);
+    const quantityMismatch=Number.isFinite(queryQuantity)&&Number.isFinite(candidateQuantity)&&queryQuantity!==candidateQuantity||
+      Number.isFinite(candidateQuantity)&&candidateQuantity>1&&!Number.isFinite(queryQuantity)||
+      Number.isFinite(queryQuantity)&&queryQuantity>1&&!Number.isFinite(candidateQuantity);
+    // 通用标题规则会把卖家的包邮、尺寸、活动说明当成“另一款”固有名。
+    // 中文标题已覆盖大部分商品锚点时，只保留明确数量冲突；多款/选款仍在下一关拦截。
+    const variantMismatch=quantityMismatch||(hasVariantMismatch(query,identityTitle)&&titleMatch<.62);
     const explicitDefect=hasExplicitDefect(identityTitle,state.text);
-    if(variantMismatch||explicitDefect)return {accepted:false,reason:variantMismatch?'detail_variant_mismatch':'detail_explicit_defect',detailTitle:identityTitle,titleMatch};
+    if(variantMismatch||explicitDefect)return {accepted:false,reason:variantMismatch?'detail_variant_mismatch':'detail_explicit_defect',detailTitle:identityTitle,titleMatch,queryQuantity,candidateQuantity};
     if(state.optionCount>1||isLikelyVariantOffer(`${candidate.text} ${state.text}`,query))return {accepted:false,reason:'multi_variant_or_bait',detailTitle:identityTitle,titleMatch,optionCount:state.optionCount};
     if(!conditionCompatible(item.title||query,`${identityTitle}\n${state.text}`))return {accepted:false,reason:'condition_or_packaging_mismatch',detailTitle:identityTitle,titleMatch};
     const queryFamily=productFamily(query),candidateFamily=productFamily(`${identityTitle}\n${state.text}`);
