@@ -64,7 +64,7 @@ try{
   console.log('\n请在打开的浏览器登录闲鱼，并搜索任意商品确认能看到真实结果。');
   await rl.question('确认已登录后回到这里按回车，程序会保存登录状态并同步 GitHub：');
   const session=await context.storageState();
-  const xianyuCookies=session.cookies.filter(cookie=>/(?:goofish|idlefish)\\.com$/i.test(cookie.domain.replace(/^\\./,'')));
+  const xianyuCookies=session.cookies.filter(cookie=>/(?:goofish|idlefish)\.com$/i.test(cookie.domain.replace(/^\./,'')));
   if(!xianyuCookies.length)throw new Error('未检测到闲鱼登录 Cookie，请先在浏览器内完成登录。');
   await fs.writeFile(authFile,JSON.stringify(session));
   console.log(`闲鱼登录状态已保存：${xianyuCookies.length} 个会话 Cookie。同步阶段不再自动搜索，避免触发滑块验证。`);
