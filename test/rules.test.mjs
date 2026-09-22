@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateCost,advice,coherentPrices,conditionCompatible,distinctiveCoverage,exactIdentityTitleEquivalent,hasExplicitDefect,hasExplicitVariantMismatch,hasIdentityVariantMismatch,hasLotterySeriesMismatch,hasVariantMismatch,isLikelyVariantOffer,listingSpecificationEquivalent,listingTextEquivalent,lotterySeriesEquivalent,lotterySeriesNeedsVisualConfirmation,packagedAssortmentEquivalent,productFamily,saleUnitEquivalent,semanticQuantity,semanticSameItem,titleScore,visualListingEquivalent } from '../scripts/lib/rules.mjs';
+import { calculateCost,advice,coherentPrices,collectibleIdentityRequiresVisualProof,conditionCompatible,distinctiveCoverage,exactIdentityTitleEquivalent,hasExplicitDefect,hasExplicitVariantMismatch,hasIdentityVariantMismatch,hasLotterySeriesMismatch,hasVariantMismatch,isLikelyVariantOffer,listingSpecificationEquivalent,listingTextEquivalent,lotterySeriesEquivalent,lotterySeriesNeedsVisualConfirmation,packagedAssortmentEquivalent,productFamily,saleUnitEquivalent,semanticQuantity,semanticSameItem,titleScore,visualListingEquivalent } from '../scripts/lib/rules.mjs';
 import { encrypt,decrypt } from '../scripts/lib/crypto.mjs';
 const settings={exchangeRate:22.99,costMultiplier:1.05};
 test('manual cost formula',()=>assert.equal(calculateCost(90.5,30,210,settings),3130));
@@ -201,6 +201,28 @@ test('new sealed full products reject opened, no-box, and box-only listings',()=
   assert.equal(conditionCompatible('新品未開封 フィギュア','新品未開封 フィギュア'),true);
   assert.equal(conditionCompatible('未使用品です','新品・未開封品（OPP袋入り）'),true);
   assert.equal(conditionCompatible('未使用 フィギュア','海外正規品 新品\n未使用に近い'),true);
+});
+test('reported generic collectible titles require physical variant image proof',()=>{
+  const pairs=[
+    ['SKULLPANDA Petals in Four Actsシークレット','SKULLPANDA Petals in Four Acts シリーズ シークレット','フィギュア'],
+    ['POPMART RIIZE Fluffy Club ぬいぐるみペンダント ウンソク','POPMART RIIZE Fluffy Club シリーズぬいぐるみペンダント','ぬいぐるみ'],
+    ['POP MART スターウォーズ マンダロリアン グローグー フィギュア','新品 スターウォーズ popmart マンダロリアン グローグー\nミニフィギュアシリーズ、ラインナップ数：12種類','フィギュア'],
+    ['香港限定 激レア チムたん SECRET GARDEN キーチェーン','香港限定 チムたん シークレットガーデン 新品 正規品','キーチェーン'],
+    ['MG 1/100 ガンダムアストレイ クロスコントラストカラーズ 落英白','MG ガンダムアストレイ 海外限定クロスコントラストカラーズ MG ガンダムアストレイ','プラモデル']
+  ];
+  for(const [own,candidate,category] of pairs){
+    assert.equal(collectibleIdentityRequiresVisualProof(own,candidate,category,category),true,`${own} / ${candidate}`);
+  }
+});
+test('sale units in descriptions block whole-box and two-kit false matches',()=>{
+  const singleGrogu='POP MART スターウォーズ マンダロリアン グローグー フィギュア\n開封済み単品';
+  const groguCase='新品 スターウォーズ popmart マンダロリアン グローグー\n未開封 1BOX販売、12個入り';
+  assert.equal(saleUnitEquivalent(singleGrogu,groguCase),false);
+
+  const oneGundam='MG 1/100 ガンダムアストレイ クロスコントラストカラーズ 落英白';
+  const twoGundams='MG ガンダムアストレイ 海外限定クロスコントラストカラーズ\n商品内容 2点セット\n朽木黒、落英白の上記2点セットになります。';
+  assert.equal(saleUnitEquivalent(oneGundam,twoGundams),false);
+  assert.equal(hasVariantMismatch(oneGundam,twoGundams),true);
 });
 test('rejects xianyu multi-variant bait but allows a whole-set query',()=>{
   assert.equal(isLikelyVariantOffer('全系列多款可选，标价为最低款价格','角色A 徽章'),true);

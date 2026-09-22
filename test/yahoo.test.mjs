@@ -112,10 +112,12 @@ test('an unchecked plausible same-item candidate caps a raise recommendation',()
 });
 
 test('sold or definitively mismatched cards do not cap an in-stock raise decision',()=>{
-  const cards=[{id:'sold',price:17000},{id:'same',price:17999},{id:'error',price:17800},{id:'unchecked',price:18000}];
+  const cards=[{id:'sold',price:17000},{id:'same',price:17999},{id:'unit',price:17500},{id:'variant-image',price:17600},{id:'error',price:17800},{id:'unchecked',price:18000}];
   const result=unresolvedRaiseCandidates(cards,[
     {id:'sold',reason:'not_open'},
     {id:'same',reason:'condition_or_packaging_mismatch'},
+    {id:'unit',reason:'sale_unit_mismatch'},
+    {id:'variant-image',reason:'collectible_variant_image_unconfirmed'},
     {id:'error',reason:'detail_error'}
   ]);
   assert.deepEqual(result.map(item=>item.id),['error','unchecked']);

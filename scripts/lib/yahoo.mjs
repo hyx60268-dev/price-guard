@@ -1,5 +1,5 @@
 import { imageFingerprints,imageSetSimilarity } from './image.mjs';
-import { coherentPrices,conditionCompatible,distinctiveCoverage,exactIdentityTitleEquivalent,hasExplicitDefect,hasExplicitVariantMismatch,isRejected,listingSpecificationEquivalent,listingTextEquivalent,lotterySeriesEquivalent,lotterySeriesNeedsVisualConfirmation,MATCHING_RULES_VERSION,packagedAssortmentEquivalent,productFamily,semanticSameItem,titleScore,visualListingEquivalent } from './rules.mjs';
+import { coherentPrices,collectibleIdentityRequiresVisualProof,conditionCompatible,distinctiveCoverage,exactIdentityTitleEquivalent,hasExplicitDefect,hasExplicitVariantMismatch,isRejected,listingSpecificationEquivalent,listingTextEquivalent,lotterySeriesEquivalent,lotterySeriesNeedsVisualConfirmation,MATCHING_RULES_VERSION,packagedAssortmentEquivalent,productFamily,saleUnitEquivalent,semanticSameItem,titleScore,visualListingEquivalent } from './rules.mjs';
 
 const UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140 Safari/537.36';
 const DEFAULT_REQUEST_INTERVAL_MS=5500;
@@ -207,7 +207,7 @@ export function unresolvedRaiseCandidates(preliminary=[],rejected=[]){
   // 或详情请求失败而仍有疑点的候选，才作为提价安全上限继续保留。
   const decisions=new Map();
   for(const item of rejected)if(item?.id&&preliminary.some(card=>card.id===item.id))decisions.set(item.id,item.reason||'rejected');
-  const definitive=new Set(['not_open','own_seller','defect','condition_or_packaging_mismatch','physical_product_type_unconfirmed','variant_mismatch','product_mismatch','title_rejected']);
+  const definitive=new Set(['not_open','own_seller','defect','condition_or_packaging_mismatch','physical_product_type_unconfirmed','sale_unit_mismatch','collectible_variant_image_unconfirmed','variant_mismatch','product_mismatch','title_rejected']);
   // 图片不足、系列信息不全或详情请求失败只是“尚未证实”，不是“已经证伪”。
   // 这些低价项必须继续限制提价上限，避免证据不足反而导致激进提价。
   return preliminary.filter(card=>!definitive.has(decisions.get(card.id)));
@@ -353,6 +353,12 @@ export async function yahooCompare(_unusedPage,item,settings={}){
       if(!familyConfirmed){rejected.push({id:card.id,price:Number(detail.price),reason:'physical_product_type_unconfirmed',queryFamily,candidateFamily,titleScore:detailTitleScore});continue}
       const ownFullText=`${ownDetail?.title||item.title}\n${ownDetail?.description||''}`;
       const candidateFullText=`${detail.title||''}\n${detail.description||''}`;
+      // The title is not the whole offer.  A seller may put "2点セット" or
+      // "1BOX" only in the description; no title/image shortcut may override that
+      // explicit sale-unit conflict.
+      if(!saleUnitEquivalent(ownFullText,candidateFullText)){
+        rejected.push({id:card.id,price:Number(detail.price),reason:'sale_unit_mismatch'});continue
+      }
       const specificationEquivalent=listingSpecificationEquivalent(ownFullText,candidateFullText,ownCategory,detailCategory);
       // Identity equivalence is a title-to-title check.  Descriptions often contain
       // related artists, bonus names or search keywords that are not variants of the
@@ -368,6 +374,12 @@ export async function yahooCompare(_unusedPage,item,settings={}){
       const imageThreshold=Math.max(.75,Number(settings.yahooImageMatchThreshold)||.80);
       const visualThreshold=Math.max(imageThreshold,Number(settings.yahooStrongVisualMatchThreshold)||.86);
       const visualEquivalent=visualListingEquivalent({query:ownFullText,candidate:candidateFullText,queryCategory:ownCategory,candidateCategory:detailCategory,imageScore,threshold:visualThreshold});
+      const identityNeedsVisualProof=collectibleIdentityRequiresVisualProof(
+        ownFullText,candidateFullText,ownCategory,detailCategory
+      );
+      if(identityNeedsVisualProof&&!visualEquivalent){
+        rejected.push({id:card.id,price:Number(detail.price),reason:'collectible_variant_image_unconfirmed',titleScore:detailTitleScore,imageScore});continue
+      }
       const lotterySeriesUnconfirmed=lotterySeriesNeedsVisualConfirmation(ownFullText,candidateFullText)&&!visualEquivalent;
       if(lotterySeriesUnconfirmed){
         rejected.push({id:card.id,price:Number(detail.price),reason:'lottery_series_unconfirmed',titleScore:detailTitleScore,imageScore});continue
@@ -378,8 +390,7 @@ export async function yahooCompare(_unusedPage,item,settings={}){
       const lotteryEquivalent=lotterySeriesEquivalent(ownFullText,candidateFullText);
       if(!semantic.accepted&&!specificationEquivalent&&!exactTitleEquivalent&&!visualEquivalent&&!assortmentEquivalent&&!lotteryEquivalent){rejected.push({id:card.id,price:Number(detail.price),reason:semantic.reason||'detail_mismatch',titleScore:detailTitleScore,imageScore});continue}
       if(!specificationEquivalent&&!exactTitleEquivalent&&!visualEquivalent&&!assortmentEquivalent&&!lotteryEquivalent&&detailTitleScore<.72){rejected.push({id:card.id,price:Number(detail.price),reason:'weak_detail_title',titleScore:detailTitleScore,imageScore});continue}
-      const recommendationCorroborated=card.fromRecommendation&&Number(card.recommendationScore)>=.9&&semantic.accepted&&familyConfirmed;
-      const textEquivalent=listingTextEquivalent(ownDetail?.title||item.title,ownDetail?.description||'',detail.title||'',detail.description||'')||specificationEquivalent||exactTitleEquivalent||recommendationCorroborated||assortmentEquivalent||lotteryEquivalent;
+      const textEquivalent=listingTextEquivalent(ownDetail?.title||item.title,ownDetail?.description||'',detail.title||'',detail.description||'')||specificationEquivalent||exactTitleEquivalent||assortmentEquivalent||lotteryEquivalent;
       if(!textEquivalent&&!visualEquivalent&&(!ownFingerprints.length||!detailFingerprints.length||!Number.isFinite(imageScore)||imageScore<imageThreshold)){
         rejected.push({id:card.id,price:Number(detail.price),reason:'physical_image_unconfirmed',titleScore:detailTitleScore,imageScore});continue
       }
@@ -387,7 +398,7 @@ export async function yahooCompare(_unusedPage,item,settings={}){
       competitors.push({...card,url:`https://paypayfleamarket.yahoo.co.jp/item/${detail.id}`,title:detail.title,
         text:`${detail.title}\n${detail.description||''}`,image:detailImage,price:Number(detail.price),itemStatus:detail.status,
         titleScore:detailTitleScore,imageScore,semantic,queryFamily,candidateFamily,
-        matchMethod:lotteryEquivalent?'lottery_release_prize_character':assortmentEquivalent?'same_packaging_assortment':exactTitleEquivalent?'exact_bidirectional_title_identity':visualEquivalent?'strong_visual_primary_product':recommendationCorroborated?'yahoo_recommendation_full_text_verified':textEquivalent?'detail_type_quantity_equivalent_text':'detail_type_quantity_text_images'});
+        matchMethod:lotteryEquivalent?'lottery_release_prize_character':assortmentEquivalent?'same_packaging_assortment':exactTitleEquivalent?'exact_bidirectional_title_identity':visualEquivalent?'strong_visual_primary_product':textEquivalent?'detail_type_quantity_equivalent_text':'detail_type_quantity_text_images'});
     }catch(error){rejected.push({id:card.id,price:card.price,reason:'detail_error',error:String(error)})}
   }
 

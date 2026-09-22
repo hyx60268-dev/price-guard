@@ -3,7 +3,7 @@ const badPattern = /(求购|收购|只收|蹲收|换物|交换|置换|补款|定
 const baitPattern = /(请点进去选项|点击立即购买查看|拍下改价|私聊改价|价格见图|图上价|多个角色|多款可选|任选|标价非实价|自带价|占位价|起步价|最低款价格|标价为最低|标价只是|页面价格不准)/i;
 const selectionPattern = /(请选择|选择规格|选择款式|选款|选图|拍哪款|下单备注|联系客服改价|私聊改价|各款价格|价格不一|每款价格|单独询价|需补差价|补差后发货|以详情价为准|详情价格为准)/i;
 const multiOfferPattern = /(多款|多角色|全系列|合集|系列任选|整套可拆|可拆卖)/i;
-export const MATCHING_RULES_VERSION = 11;
+export const MATCHING_RULES_VERSION = 12;
 
 // 同じIP/シリーズが中国語・日本語・英語や作者名で出品されるケースを、
 // 再利用できる別名辞書で同じ識別語へ寄せる。追加時は商品固有語だけを登録し、
@@ -102,14 +102,21 @@ export function saleUnitProfile(value='') {
   // Only the heading describes what is actually being sold.  Descriptions often
   // mention the complete line-up or say that a bonus was randomly enclosed; those
   // words must not turn a specific item into a random/set listing.
-  const text=normalizedJapanese(listingHeading(value));
-  const fullBox=/(?:アソート\s*(?:box|ボックス|ケース)|\d+\s*(?:box|ボックス|ケース)|\d+\s*小箱\s*(?:セット|入り|入)?|(?:box|ボックス|ケース).{0,12}\d+\s*(?:個|点|体|種|ピース)|\d+\s*(?:個|点|体|種|ピース)(?:入り|入|セット)?.{0,12}(?:アソート\s*)?(?:box|ボックス|ケース))/i.test(text);
-  const completeSet=/(?:フルコンプ|コンプリート(?:セット)?|(?:全\s*)?\d+\s*種\s*(?:セット|コンプ(?:リート)?|complete))/i.test(text);
+  const fullText=normalizedJapanese(value),text=normalizedJapanese(listingHeading(value));
+  // Strong sale-unit statements in the description are part of the offer.  Do not
+  // ignore "2点セット" or "1BOX/12個入り" merely because the seller omitted it
+  // from the title.  Plain line-up explanations (e.g. "全12種類") are deliberately
+  // not treated as a full box here.
+  const strongFullBox=/(?:端盒|整盒|一整端|一整盒|整箱|未開封\s*(?:box|ボックス|ケース)|(?:1|一)\s*(?:box|ボックス|ケース)(?:\s*(?:販売|売り|セット|入り|入))?|(?:box|ボックス|ケース)\s*(?:販売|売り)|\d+\s*小箱\s*(?:セット|入り|入)|(?:box|ボックス|ケース).{0,12}\d+\s*(?:個|点|体|種|ピース)(?:入り|入)?|\d+\s*(?:個|点|体|種|ピース)(?:入り|入).{0,12}(?:アソート\s*)?(?:box|ボックス|ケース))/i.test(fullText);
+  const fullBox=strongFullBox||/(?:アソート\s*(?:box|ボックス|ケース)|\d+\s*(?:box|ボックス|ケース)|\d+\s*小箱\s*(?:セット|入り|入)?|(?:box|ボックス|ケース).{0,12}\d+\s*(?:個|点|体|種|ピース)|\d+\s*(?:個|点|体|種|ピース)(?:入り|入|セット)?.{0,12}(?:アソート\s*)?(?:box|ボックス|ケース))/i.test(text);
+  const completeSet=/(?:フルコンプ|コンプリート(?:セット)?|(?:全\s*)?\d+\s*種\s*(?:セット|コンプ(?:リート)?|complete))/i.test(text)||
+    /(?:商品内容|出品内容|セット内容|上記|こちら).{0,24}(?:全\s*)?\d+\s*種\s*(?:セット|コンプ(?:リート)?|complete)/i.test(fullText);
   const explicitSingle=/(?:単品|ばら売り|バラ売り|1\s*(?:点|個|体|枚|本|ピース))(?:\s|$|[、。・])/i.test(text);
   const randomUnit=/(?:ランダム|random|随机|ブラインド)/i.test(text)&&!fullBox&&!completeSet;
   // A title ending in 「セット」 is a bundle even when the seller omitted the
   // count.  That is not interchangeable with a named SS card or one character.
-  const genericBundle=/(?:セット|まとめ売り|抱き合わせ)/i.test(text)&&!fullBox&&!completeSet;
+  const explicitMultiBundle=/(?:^|[\n。]|商品内容|出品内容|セット内容|上記|こちら).{0,40}(?:[2-9]|[一二三四五六七八九])\s*(?:点|個|体|枚|本|箱|ピース|種)\s*(?:セット|まとめ売り|組)|(?:[2-9]|[一二三四五六七八九])\s*(?:点|個|体|枚|本|箱|ピース|種)\s*セット\s*(?:です|になります|となります)/im.test(fullText);
+  const genericBundle=(/(?:セット|まとめ売り|抱き合わせ)/i.test(text)||explicitMultiBundle)&&!fullBox&&!completeSet;
   return {fullBox,completeSet,explicitSingle,randomUnit,genericBundle};
 }
 
@@ -300,7 +307,7 @@ function namedIdentityConflict(query='',candidate=''){
   // must never manufacture a character/version conflict (e.g. 「超スーパー」 vs
   // 「超 スーパー」).  Real extra variants are still caught by the facet/quantity
   // guards before this function.
-  if(leftText&&rightText&&(leftText.includes(rightText)||rightText.includes(leftText)))return false;
+  if(leftText&&rightText&&leftText===rightText)return false;
   const strong=token=>{
     const value=normalize(token);
     return value.length>=4||(/^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+$/u.test(value)&&value.length>=2);
@@ -309,6 +316,35 @@ function namedIdentityConflict(query='',candidate=''){
     .filter(token=>token&&strong(token)&&!targetText.includes(token));
   const leftOnly=uniqueStrong(leftHeading,rightText),rightOnly=uniqueStrong(rightHeading,leftText);
   return leftOnly.length>0&&rightOnly.length>0;
+}
+
+function namedIdentityOmission(query='',candidate=''){
+  const leftHeading=listingHeading(query),rightHeading=listingHeading(candidate);
+  const leftText=normalize(leftHeading),rightText=normalize(rightHeading);
+  if(!leftText||!rightText||leftText===rightText)return false;
+  const strong=token=>{
+    const value=normalize(token);
+    return value.length>=4||(/^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+$/u.test(value)&&value.length>=2);
+  };
+  const leftOnly=[...new Set(distinctiveTokens(leftHeading).map(normalize))]
+    .filter(token=>token&&strong(token)&&!rightText.includes(token));
+  const rightOnly=[...new Set(distinctiveTokens(rightHeading).map(normalize))]
+    .filter(token=>token&&strong(token)&&!leftText.includes(token));
+  return leftOnly.length>0&&rightOnly.length===0;
+}
+
+// Generic collectible listings frequently name only a series, "secret", or the
+// character family while selling a different design.  Yahoo's recommendation rail
+// is recall evidence, never proof of the physical variant.  When one title omits a
+// named model/colour, or either full description is only a series/line-up offer,
+// require a strong product-image match before accepting it as the same item.
+export function collectibleIdentityRequiresVisualProof(query='',candidate='',queryCategory='',candidateCategory=''){
+  const leftFamily=productFamily(query,queryCategory),rightFamily=productFamily(candidate,candidateCategory);
+  const collectible=new Set(['figure','plush','keychain','model_kit','acrylic_stand','acrylic_block','acrylic_shaker']);
+  if(!leftFamily||leftFamily!==rightFamily||!collectible.has(leftFamily))return false;
+  const text=normalizedJapanese(`${query}\n${candidate}`);
+  const genericSeries=/(?:シリーズ|series|シークレット|secret|ランダム|random|ブラインド|ラインナップ\s*(?:数)?\s*[:：]?\s*\d+\s*種)/i.test(text);
+  return genericSeries||namedIdentityOmission(query,candidate)||namedIdentityOmission(candidate,query);
 }
 
 // 抽選フィギュアの「A賞 / ラストワン賞」やタロットの「V / XX」は、
