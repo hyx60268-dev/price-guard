@@ -8,6 +8,21 @@ async function mapLimit(values,limit,worker){
   await Promise.all(Array.from({length:Math.min(limit,values.length)},run));return output;
 }
 
+const transientNavigationError=error=>/ERR_(?:NETWORK_IO_SUSPENDED|NETWORK_CHANGED|INTERNET_DISCONNECTED|CONNECTION_RESET|CONNECTION_CLOSED|TIMED_OUT)|Navigation timeout|Target page, context or browser has been closed/i.test(String(error?.message||error));
+
+async function gotoWithRetry(page,url,options={},attempts=3){
+  let lastError;
+  for(let attempt=1;attempt<=attempts;attempt++){
+    try{return await page.goto(url,options)}catch(error){
+      lastError=error;
+      if(!transientNavigationError(error)||attempt===attempts)throw error;
+      await page.waitForTimeout(800*attempt).catch(()=>{});
+      await page.goto('about:blank',{waitUntil:'commit',timeout:5000}).catch(()=>{});
+    }
+  }
+  throw lastError;
+}
+
 // 闲鱼搜索卡片的价格节点有时只有数字，没有 ￥ 符号；正文里还会混有
 // “10 人想要”等数字。因此优先解析专用价格节点，只有节点缺失时才回退正文。
 function cardPrice(card={}){
@@ -21,7 +36,7 @@ async function verifyDetail(context,candidate,item,settings,ownFingerprints){
   const query=item.xianyuQuery||item.title||'';
   const detail=await context.newPage();
   try{
-    await detail.goto(candidate.url,{waitUntil:'domcontentloaded',timeout:25000});
+    await gotoWithRetry(detail,candidate.url,{waitUntil:'domcontentloaded',timeout:25000});
     await settle(detail,Math.max(900,Math.min(1600,settings.scanDelayMs||1200)));
     const state=await detail.evaluate(()=>{
       const visible=element=>{const style=getComputedStyle(element),rect=element.getBoundingClientRect();return style.display!=='none'&&style.visibility!=='hidden'&&rect.width>0&&rect.height>0};
@@ -82,7 +97,7 @@ export async function xianyuCost(page,item,settings){
   let cards=[],pageState={loginVisible:false,blocked:false,snippet:''},usedQuery=query,url='';
   for(const candidateQuery of searchQueries){
     usedQuery=candidateQuery;url=`https://www.goofish.com/search?q=${encodeURIComponent(candidateQuery)}`;
-    await page.goto(url,{waitUntil:'domcontentloaded',timeout:35000});await settle(page,Math.max(2500,settings.scanDelayMs||1200));
+    await gotoWithRetry(page,url,{waitUntil:'domcontentloaded',timeout:35000});await settle(page,Math.max(2500,settings.scanDelayMs||1200));
     await page.waitForSelector('a[href*="/item?id="], a[href*="/item/"]',{timeout:6000}).catch(()=>{});
     cards=await cardsFromPage(page,'xianyu');
     pageState=await page.evaluate(()=>{
