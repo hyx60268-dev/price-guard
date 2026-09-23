@@ -3,6 +3,7 @@ import path from 'node:path';
 import { compareSnapshots } from './changes.mjs';
 import { encryptFile } from './crypto.mjs';
 import { makeWorkbook } from './excel.mjs';
+import { cloudCostStatus } from './cloud-cost-status.mjs';
 
 function safeUsername(value=''){return String(value).trim().toLowerCase().replace(/[^a-z0-9_-]/g,'').slice(0,48)}
 function safeEmail(value=''){
@@ -80,6 +81,7 @@ export function dashboardSummary(result,changeSummary){
     afterLow:items.filter(item=>item.afterUnder1500).length,
     manual:items.filter(item=>item.confidence!=='高').length,
     needsManualPurchase:items.filter(item=>item.needsManualPurchase).length,scanTotals,
+    cloudCost:cloudCostStatus(result),
     xianyuLoginRequired:Boolean(result.login?.xianyuRequired),xianyuAuthExpired:Boolean(result.login?.xianyuAuthExpired),xianyuMode:result.login?.xianyuMode||'unknown',
     changes:{total:changeSummary.total,firstRun:changeSummary.firstRun},durationSeconds:result.scanMeta?.durationSeconds??null
   };

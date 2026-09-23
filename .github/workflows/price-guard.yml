@@ -131,3 +131,5 @@ jobs:
         uses: actions/deploy-pages@v4
         with:
           artifact_name: github-pages-${{ github.run_attempt }}
+      - name: 验收云端闲鱼自动成本（独立于网页发布）
+        run: node scripts/check-cloud-cost.mjs
