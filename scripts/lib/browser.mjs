@@ -17,6 +17,8 @@ export async function cardsFromPage(page, domain) {
       const href=a.href;if(!href||seen.has(href))continue;seen.add(href);
       let box=a; for(let i=0;i<4&&box.parentElement;i++){
         if((box.innerText||'').length>40)break; box=box.parentElement;
+        // Do not turn a grid of unrelated listings into one price/title card.
+        if(box.querySelectorAll('a[href*="/item"]').length>1){box=a;break}
       }
       const text=(box.innerText||a.innerText||'').replace(/\s+/g,' ').trim();
       const img=box.querySelector('img')||a.querySelector('img');

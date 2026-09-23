@@ -24,6 +24,8 @@ try{
     const result=await xianyuCost(page,item,{...settings,maxXianyuDetailChecks:8,maxXianyuSamples:5,scanDelayMs:800});
     console.log('[PROOF RESULT]',JSON.stringify({id:item.id,status:result.status,cardCount:result.cardCount,preliminaryCount:result.preliminaryCount,verifiedCount:result.verifiedCount,sellerCount:result.sellerCount,averageCNY:result.averageCNY,rejected:result.rejected}));
     if(result.status==='ok'&&Number.isFinite(result.averageCNY))accepted++;
+    if(['blocked','login_required'].includes(result.status)){console.error('[PROOF BLOCKED]',result.diagnostic||result.status);break}
   }
 }finally{await browser.close()}
 console.log('[PROOF SUMMARY]',JSON.stringify({tested:selected.length,accepted}));
+if(!accepted){console.error('闲鱼验收未通过：没有取得可核验的目标详情、多卖家及实价证据。搜索返回卡片不等于成本成功。');process.exitCode=1}

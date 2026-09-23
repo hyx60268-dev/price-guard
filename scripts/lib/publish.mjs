@@ -71,7 +71,7 @@ export function dashboardSummary(result,changeSummary){
     xianyuSkipped:sum.xianyuSkipped+(account.scanStats?.xianyuSkipped||0)
   }),{yahoo:0,yahooLive:0,yahooCached:0,yahooDeferred:0,xianyuRequested:0,xianyuScanned:0,xianyuVerifiedNew:0,xianyuCached:0,xianyuSkipped:0});
   return {
-    version:result.version,checkedAt:result.checkedAt,cloudSyncedAt:result.cloudSyncedAt||null,
+    version:result.version,checkedAt:result.checkedAt,codeSha:result.scanMeta?.codeSha||null,cloudSyncedAt:result.cloudSyncedAt||null,
     dataRevision:result.dataRevision||result.cloudSyncedAt||result.checkedAt,total:items.length,
     accounts:(result.accounts||[]).map(account=>({id:account.id,name:account.name,count:account.itemCount,profileStatus:account.profileStatus,profileDelta:account.profileDelta,scanStats:account.scanStats})),
     repricing:items.filter(item=>item.recommendedPrice!==item.ownPrice).length,

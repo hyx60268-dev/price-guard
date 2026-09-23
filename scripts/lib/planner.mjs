@@ -1,5 +1,6 @@
 import { inferSize } from './rules.mjs';
 import { normalizeProductIdentity } from './state.mjs';
+import { verifiedCostEvidence,XIANYU_VERIFICATION } from './xianyu-evidence.mjs';
 
 export function reconcileLiveItems(catalogItems=[],previousItems=[],liveItems=[],accountId='default'){
   const previous=new Map(previousItems.map(item=>[item.id,item]));
@@ -59,7 +60,7 @@ export function shouldScanXianyu(item,yahooResult){
 }
 
 export function verifiedXianyuCache(item={}){
-  if(!['detail_and_price_cluster','detail_text_images_price_cluster_v2','detail_text_images_price_cluster_v3','detail_text_images_price_cluster_v4','detail_text_images_price_cluster_v5'].includes(item.xianyu?.verification)||!Number.isFinite(item.averageCNY))return null;
+  if(item.xianyu?.verification!==XIANYU_VERIFICATION||!verifiedCostEvidence(item.xianyu.samples).ready||!Number.isFinite(item.averageCNY)||item.averageCNY<=0)return null;
   return {averageCNY:item.averageCNY,samples:item.xianyu.samples||[],checkedAt:item.xianyu.checkedAt||item.checkedAt||null,verification:item.xianyu.verification};
 }
 

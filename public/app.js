@@ -180,7 +180,8 @@ function renderDiscovery(){
     $('#discoveryStamp').textContent='等待首次云端选品扫描';$('#discoveryStats').innerHTML='<span>尚无数据</span>';container.innerHTML='';$('#discoveryEmpty').hidden=false;return;
   }
   const checked=new Date(discoveryData.checkedAt),visible=discoveryProducts(),shown=discoverySelected();
-  $('#discoveryStamp').textContent=`最近扫描：${Number.isNaN(checked.valueOf())?'—':checked.toLocaleString('zh-CN')} · 每6小时深度更新，其他检查轮次复用结果`;
+  const sourceStats=discoveryData.stats||{};
+  $('#discoveryStamp').textContent=`最近扫描：${Number.isNaN(checked.valueOf())?'—':checked.toLocaleString('zh-CN')} · 约每小时分页更新 · 煤炉 ${sourceStats.mercariRawCards||0} 条关键词商品 / ${sourceStats.mercariSearchPages||0} 页 · Yahoo ${sourceStats.yahooSeeds||0} 条成交种子 / ${sourceStats.yahooSearchPages||0} 页${sourceStats.mercariBudgetLimited||sourceStats.yahooBudgetLimited?' · 本轮预算内部分扫描，余下轮换':''}`;
   $('#discoveryStats').innerHTML=`<span>候选 <b>${visible.length}</b></span><span>煤炉 <b>${visible.filter(item=>item.sourcePlatform==='mercari'||item.sourcePlatforms?.includes('mercari')).length}</b></span><span>Yahoo <b>${visible.filter(item=>item.sourcePlatform==='yahoo'||item.sourcePlatforms?.includes('yahoo')).length}</b></span>`;
   $('#discoveryEmpty').hidden=shown.length>0;
   container.innerHTML=shown.map(item=>{
@@ -191,7 +192,8 @@ function renderDiscovery(){
       <div class="discoveryimages ${photos.length<3?'incomplete':''}">${imageGrid||'<div class="imageplaceholder">来源商品暂未提取到图片</div>'}</div>
       <div class="statusline"><span class="pill">来源商家图片</span><small>${discoveryPlatform(item.sourcePlatforms?.length>1?'combined':item.sourcePlatform)}</small></div>
       <h3>${escapeHtml(item.proposedTitle||item.sourceTitle)}</h3><p class="source-title">原始：${escapeHtml(item.sourceTitle)}</p>
-      <div class="discoverymetrics"><div><small>热卖优先级</small><b>近 ${item.priorityWindow||30} 天</b><small>2天 ${item.salesWindows?.days2||0} · 7天 ${item.salesWindows?.days7||0} · 30天 ${item.salesWindows?.days30||item.salesCount||0}</small><small>最近成交 ${item.saleDates?.[0]?new Date(item.saleDates[0]).toLocaleDateString('zh-CN'):'—'}</small></div><div><small>日本成交中位价</small><b>${money(item.sourcePriceJPY)}</b><small>${item.sellerCount||1} 个独立商家来源</small></div><div><small>闲鱼成本 / 预计到手利润</small><b>${Number.isFinite(Number(item.purchaseCNY))?`¥${Number(item.purchaseCNY).toFixed(1)} / ${money(item.estimatedProfitJPY)}`:'待核验'}</b><small>${escapeHtml(item.confidence||'待核验')}</small></div></div>
+      ${item.timeEvidence==='listing_page_relative'?'<p class="muted">时间提示：煤炉仅提供商品页相对时间，下方窗口计数为线索，不是已确认的精确成交日期。</p>':''}
+      <div class="discoverymetrics"><div><small>热卖优先级</small><b>近 ${item.priorityWindow||30} 天</b><small>2天 ${item.salesWindows?.days2||0} · 7天 ${item.salesWindows?.days7||0} · 30天 ${item.salesWindows?.days30||item.salesCount||0}</small><small>最近成交 ${item.saleDates?.[0]?new Date(item.saleDates[0]).toLocaleDateString('zh-CN'):'—'}</small></div><div><small>日本成交中位价</small><b>${money(item.sourcePriceJPY)}</b><small>${item.sellerCount||1} 个独立商家来源</small></div><div><small>闲鱼成本 / 预计到手利润</small><b>${Number.isFinite(item.purchaseCNY)&&item.purchaseCNY>0?`¥${item.purchaseCNY.toFixed(1)} / ${money(item.estimatedProfitJPY)}`:'待核验（不计算利润）'}</b><small>${escapeHtml(item.confidence||'待核验')}</small></div></div>
       <p class="listingcopy">${escapeHtml(item.proposedDescription||'')}</p>
       <div class="discoveryactions"><button class="soft" data-copy-title="${escapeHtml(item.id)}">复制标题</button><button class="soft" data-copy-description="${escapeHtml(item.id)}">复制简介</button><button class="soft" data-uploaded="${escapeHtml(item.id)}">标记仓库已有/已上传</button><a class="soft linkbtn" target="_blank" href="${escapeHtml(item.sourceUrl||'#')}">成交商品</a><a class="soft linkbtn" target="_blank" href="${escapeHtml(item.seller?.url||'#')}">商家主页</a></div>
       <section class="reviewbox"><h4>来源商家图片与找图入口</h4>
@@ -285,8 +287,8 @@ function render(){
   const list=items(),scan=current.scanStats||{},date=new Date(data.checkedAt);
   $('#stamp').textContent=`最近检查：${Number.isNaN(date.valueOf())?'等待首次扫描':date.toLocaleString('zh-CN')} · 页面会自动接收新结果`;
   const login=data.login||{};$('#loginNotice').hidden=!(login.xianyuRequired||login.xianyuAuthExpired);
-  $('#loginTitle').textContent=login.xianyuRequired?'闲鱼自动核验暂不可用':'闲鱼云端会话未复用，已切换匿名核验';
-  $('#loginText').textContent=login.xianyuRequired?'本轮闲鱼页面要求验证，未新增采购参考；旧成本不会删除。':'匿名模式仍会读取搜索和详情，并只保存通过正文、规格、图片及多卖家价格核验的成本；未通过的商品继续显示待核验。';
+  $('#loginTitle').textContent=login.xianyuAuthExpired?'闲鱼目标详情需要重新登录':'闲鱼目标详情验证受阻';
+  $('#loginText').textContent='已停止本轮闲鱼检查，不使用下方推荐商品代替目标详情。人工采购成本保留；不符合新版详情、实价及独立卖家证据的历史自动参考需重新核验。';
   const changes=data.changes;$('#changeNotice').hidden=!changes?.hasChanges;
   $('#changeText').textContent=changes?.hasChanges?`本次共 ${changes.total} 项变化：新增 ${changes.added}、下架 ${changes.removed}、价格/利润变化 ${changes.updated}。`:'';
   $('#profileLink').href=current.profileUrl;

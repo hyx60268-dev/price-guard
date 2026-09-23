@@ -13,7 +13,8 @@ permissions:
   id-token: write
 concurrency:
   group: pages
-  # 扫描、用户同步和发布共用一条队列，避免多人输入或加密状态被取消覆盖。
+  # 同时只允许一轮发布。GitHub 仍会替换旧 pending 任务；以 status.json
+  # 的 codeSha 和成功的 deployment 为准，不把排队视为已执行。
   cancel-in-progress: false
 jobs:
   scan-and-publish:
@@ -44,6 +45,8 @@ jobs:
           PUBLISHED_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data
           PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
       - run: npm ci
+      - name: 验证比价与成本回归测试
+        run: npm test
       - name: 合并等待中的多人同步请求
         id: sync
         run: node scripts/process-sync-queue.mjs
@@ -78,7 +81,7 @@ jobs:
           XIANYU_STORAGE_STATE_B64: ${{ secrets.XIANYU_STORAGE_STATE_B64 }}
           SCAN_TRIGGER: ${{ github.event_name }}
           PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
-      - name: 更新热卖选品（6小时内复用缓存）
+      - name: 更新热卖选品（1小时缓存、分页及卖家轮换）
         run: npm run discovery
         env:
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}

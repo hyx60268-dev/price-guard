@@ -27,12 +27,10 @@ test('xianyu only runs when a verified yahoo competitor is lower',()=>{
   assert.equal(shouldScanXianyu(item,{status:'error',lowestPrice:80}),false);
 });
 
-test('v3 card-only xianyu prices are never reused as trusted cache',()=>{
+test('legacy xianyu prices without target price and seller evidence are invalidated',()=>{
   assert.equal(verifiedXianyuCache({averageCNY:3,xianyu:{status:'ok'}}),null);
-  assert.deepEqual(verifiedXianyuCache({averageCNY:28,xianyu:{verification:'detail_and_price_cluster',samples:[{price:28},{price:30}]}}),{
-    averageCNY:28,samples:[{price:28},{price:30}],checkedAt:null,verification:'detail_and_price_cluster'
-  });
-  assert.equal(verifiedXianyuCache({averageCNY:88,xianyu:{verification:'detail_text_images_price_cluster_v3',samples:[{price:86},{price:90}]}})?.averageCNY,88);
+  assert.equal(verifiedXianyuCache({averageCNY:28,xianyu:{verification:'detail_and_price_cluster',samples:[{price:28},{price:30}]}}),null);
+  assert.equal(verifiedXianyuCache({averageCNY:88,xianyu:{verification:'detail_text_images_price_cluster_v5',samples:[{price:86},{price:90}]}}),null);
 });
 
 test('relisted item inherits metadata and is reported as a relist instead of add/remove',()=>{

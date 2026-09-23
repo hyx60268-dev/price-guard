@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { XIANYU_VERIFICATION } from '../scripts/lib/xianyu-evidence.mjs';
+const evidence = result => ({...result,verification:XIANYU_VERIFICATION,samples:result.samples.map((sample,index)=>({...sample,id:String(index),priceSource:'target_detail'}))});
 import { canonicalSaleTitle,clusterSellerSales,containsDiscoveryKeyword,discoveryProfit,eligibleDiscoveryCard,groupDiscoveryCandidates,isOwnedDiscoverySource,isWithinDays,mercariDiscoverySearchUrl,mercariSoldEvidence,parseListingTime,rankDiscoveryCandidates,rewriteListing,salesWindowCounts,sameDiscoveryProduct,sameSaleProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor,yahooDiscoverySearchUrl } from '../scripts/lib/discovery.mjs';
 
 test('discovery URLs use the live sold and price filters',()=>{
@@ -66,7 +68,7 @@ test('discovery enforces sold price date and valid xianyu images',()=>{
   const now=Date.parse('2026-09-13T03:00:00Z');
   assert.equal(eligibleDiscoveryCard({sold:true,price:4999,soldAt:'2026-09-12T03:00:00Z',title:'中国限定 商品'},{minPriceJPY:4999,windowDays:30},now),true);
   assert.equal(eligibleDiscoveryCard({sold:false,price:9000,soldAt:'2026-09-12T03:00:00Z',title:'中国限定 商品'},{minPriceJPY:4999,windowDays:30},now),false);
-  assert.equal(validDiscoveryXianyu({status:'ok',query:'商品',averageCNY:28,samples:[{price:28,sellerKey:'a',independentImages:['https://a/1','https://a/2','https://a/3']},{price:30,sellerKey:'b'}]}).ready,true);
+  assert.equal(validDiscoveryXianyu(evidence({status:'ok',query:'商品',averageCNY:28,samples:[{price:28,sellerKey:'a',independentImages:['https://a/1','https://a/2','https://a/3']},{price:30,sellerKey:'b'}]})).ready,true);
   assert.equal(validDiscoveryXianyu({status:'ok',query:'商品',averageCNY:28,samples:[{price:28,independentImages:['https://a/1','https://a/2']},{price:30}]}).ready,false);
   assert.equal(validDiscoveryXianyu({status:'ok',query:'商品',averageCNY:3,samples:[{price:3,independentImages:['https://a/1']},{price:28}]}).ready,false);
 });
@@ -111,9 +113,9 @@ test('discovery ranks 2 days before 7 days before 30 days and diversifies seller
 });
 
 test('xianyu automatic reference requires coherent prices and independent evidence',()=>{
-  const good=validDiscoveryXianyu({status:'ok',query:'商品',averageCNY:101,samples:[
+  const good=validDiscoveryXianyu(evidence({status:'ok',query:'商品',averageCNY:101,samples:[
     {price:100,sellerKey:'a',independentImages:['https://a/1','https://a/2','https://a/3']},{price:102,sellerKey:'b'}
-  ]});
+  ]}));
   assert.equal(good.ready,true);
   const wide=validDiscoveryXianyu({status:'ok',query:'商品',averageCNY:200,samples:[
     {price:100,sellerKey:'a',independentImages:['https://a/1','https://a/2','https://a/3']},{price:300,sellerKey:'b'}

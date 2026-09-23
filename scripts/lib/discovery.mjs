@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { distinctiveTokens,hasExplicitDefect,hasVariantMismatch,isLikelyVariantOffer,isRejected,productFamily,semanticQuantity,titleScore } from './rules.mjs';
+import { positivePrice,verifiedCostEvidence,XIANYU_VERIFICATION } from './xianyu-evidence.mjs';
 
 const listingNoise=/(?:中国限定|海外限定|日本未発売|日本非売品|限定|正規品|公式|新品(?:、未使用)?|未使用|未開封|即日発送|当日発送|翌日発送|国内発送|即納|スピード発送|匿名配送|送料無料|送料込み|即購入(?:可|可能|ok)?|希少|レア|現品限り|ラスト\s*1点|残り\s*1点|在庫あり|在庫複数|複数在庫|早い者勝ち|お?値下げ不可|\d+月\d+日(?:まで|以降)?|\d+\/\d+(?:まで|以降)?|発送予定)/gi;
 const rejectSale=/(?:様専用|専用出品|リクエスト|まとめ商品|オーダー|確認用|取り置き|ばら売り|バラ売り|訳あり|ジャンク|破損|欠品|箱潰れ)/i;
@@ -155,6 +156,18 @@ export function sellerIdFromProfile(value=''){
   return (String(value).match(/\/user\/(?:profile\/)?([^/?#]+)/i)||[])[1]||'';
 }
 
+export function rotateDiscoverySellers(sellers=[],attempts={},limit=80){
+  return [...sellers].sort((a,b)=>(Date.parse(attempts[a.id]||'')||0)-(Date.parse(attempts[b.id]||'')||0)).slice(0,limit);
+}
+
+export function nextMercariPage(href='',current=''){
+  if(!href)return null;
+  try{const url=new URL(href,current),from=new URL(current);
+    if(url.origin!=='https://jp.mercari.com'||url.pathname!==from.pathname||url.href===from.href)return null;
+    return url.href;
+  }catch{return null}
+}
+
 export function isOwnedDiscoverySource(card={},owned={}){
   const sellerIds=owned.sellerIds instanceof Set?owned.sellerIds:new Set(owned.sellerIds||[]);
   const itemIds=owned.itemIds instanceof Set?owned.itemIds:new Set(owned.itemIds||[]);
@@ -168,16 +181,15 @@ export function validDiscoveryXianyu(result={}){
   const images=(richest?.images||[]).slice(0,8);
   const prices=samples.map(sample=>Number(sample.price)).sort((a,b)=>a-b);
   const spread=prices.length>=2?(prices.at(-1)-prices[0])/Math.max(1,prices[Math.floor(prices.length/2)]):Infinity;
-  const sellerKeys=new Set(samples.map(sample=>sample.sellerKey).filter(Boolean));
-  const sellerEvidence=sellerKeys.size>=2||samples.length>=3;
-  return {ready:result.status==='ok'&&samples.length>=2&&sellerEvidence&&spread<=.30&&Number.isFinite(Number(result.averageCNY))&&images.length>=3,
+  const evidence=verifiedCostEvidence(samples);
+  return {ready:result.verification===XIANYU_VERIFICATION&&result.status==='ok'&&evidence.ready&&spread<=.30&&positivePrice(result.averageCNY)!==null&&images.length>=3,
     images,sample:richest?.sample||null,imageSource:images.length>=3?'xianyu_independent_coherent':null,
-    sampleCount:samples.length,sellerCount:sellerKeys.size,priceSpread:spread};
+    sampleCount:evidence.samples.length,sellerCount:evidence.sellerCount,priceSpread:spread};
 }
 
 export function discoveryProfit(item={},settings={}){
-  const purchaseCNY=Number(item.purchaseCNY),salePriceJPY=Number(item.sourcePriceJPY),cfg=settings.discovery||{};
-  if(!Number.isFinite(purchaseCNY)||!Number.isFinite(salePriceJPY))return {ready:false,estimatedCostJPY:null,estimatedNetRevenueJPY:null,estimatedProfitJPY:null,qualified:false};
+  const purchaseCNY=positivePrice(item.purchaseCNY),salePriceJPY=positivePrice(item.sourcePriceJPY),cfg=settings.discovery||{};
+  if(purchaseCNY===null||salePriceJPY===null)return {ready:false,estimatedCostJPY:null,estimatedNetRevenueJPY:null,estimatedProfitJPY:null,qualified:false};
   const manualFeeCNY=Number(cfg.estimatedManualFeeCNY??10),shippingJPY=Number(cfg.estimatedShippingJPY??750);
   const sellerFeeRate=Number(cfg.sellerFeeRate??0.05),minimumProfitJPY=Number(cfg.minimumProfitJPY??1500);
   const estimatedCostJPY=Math.ceil(((purchaseCNY+manualFeeCNY)*Number(settings.exchangeRate||0)+shippingJPY)*Number(settings.costMultiplier||1));
@@ -223,6 +235,11 @@ export function discoveryId(platform,sellerId,title=''){
 }
 
 const chineseNames=new Map([
+  ['スターバックス','星巴克'],['ステンレス','不锈钢'],['ブルー','蓝色'],['ブラウン','棕色'],['ブラック','黑色'],['ホワイト','白色'],
+  ['時透無一郎','时透无一郎'],['不死川実弥','不死川实弥'],['冨岡義勇','富冈义勇'],['富岡義勇','富冈义勇'],['新繹','新绎'],
+  ['ジョジョの奇妙な冒険','JOJO的奇妙冒险'],['ジョニィ','乔尼'],['エイリアンステージ','异星舞台'],['ルカ','LUKA'],
+  ['一番くじ','一番赏'],['ラストワン賞','最后赏'],['ポルンガ','波仑伽'],['ブラインドボックス','盲盒'],
+  ['新繹シリーズ','新绎系列'],['クリア色紙','透明色纸'],['コレクションカード','收藏卡'],['カード','卡牌'],
   ['鬼滅の刃','鬼灭之刃'],['呪術廻戦','咒术回战'],['進撃の巨人','进击的巨人'],['名探偵コナン','名侦探柯南'],
   ['あんさんぶるスターズ','偶像梦幻祭'],['あんスタ','偶像梦幻祭'],['ブルーアーカイブ','碧蓝档案'],['アズールレーン','碧蓝航线'],
   ['ポケットモンスター','宝可梦'],['ポケモン','宝可梦'],['ちいかわ','吉伊卡哇'],['ハチワレ','小八'],['うさぎ','乌萨奇'],

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { openContext } from './lib/browser.mjs';
 import { discoverYahooProfile,yahooCompare } from './lib/yahoo.mjs';
 import { xianyuCost } from './lib/xianyu.mjs';
+import { XIANYU_VERIFICATION } from './lib/xianyu-evidence.mjs';
 import { fairRoundRobin,inventoryDelta,isFresh,isFreshMinutes,reconcileLiveItems,verifiedXianyuCache } from './lib/planner.mjs';
 import { decrypt } from './lib/crypto.mjs';
 import { writeOutputs } from './lib/publish.mjs';
@@ -144,12 +145,6 @@ async function ensureXianyuPage(){
   if(xPage)return xPage;
   const opened=await openContext(xianyuState);xBrowser=opened.browser;xContext=opened.context;xPage=await xContext.newPage();return xPage;
 }
-async function switchXianyuToAnonymous(){
-  const page=await ensureXianyuPage();await xContext.clearCookies();
-  await page.goto('https://www.goofish.com',{waitUntil:'domcontentloaded',timeout:25000}).catch(()=>{});
-  await page.evaluate(()=>{localStorage.clear();sessionStorage.clear()}).catch(()=>{});xianyuMode='anonymous';
-}
-
 const xianyuFreshHours=Number(settings.xianyuFreshHours)||168;
 const xianyuRetryHours=Number(settings.xianyuRetryHours)||24;
 const xianyuLimit=Math.max(0,Number(settings.maxXianyuItemsPerRun)||3);
@@ -165,7 +160,7 @@ for(const [contextIndex,context] of contexts.entries())for(const item of context
   // Login/challenge/errors and deferred rows must be retried/rotated; otherwise
   // one failed batch stamps checkedAt and can freeze the whole inventory for a day.
   const priorXianyuStatus=String(prior.xianyu?.status||'');
-  if(prior.xianyu?.verification==='detail_text_images_price_cluster_v5'&&['manual_review','page_empty'].includes(priorXianyuStatus)&&prior.xianyu?.checkedAt&&isFresh(prior.xianyu.checkedAt,xianyuRetryHours)){
+  if(prior.xianyu?.verification===XIANYU_VERIFICATION&&['manual_review','page_empty'].includes(priorXianyuStatus)&&prior.xianyu?.checkedAt&&isFresh(prior.xianyu.checkedAt,xianyuRetryHours)){
     context.xianyuById.set(item.id,{status:'skipped_recent_review',samples:[],averageCNY:null,checkedAt:prior.xianyu.checkedAt});continue;
   }
   // Refresh an automatic market reference for every listing. A user-confirmed
@@ -192,8 +187,7 @@ try{
       const yc=context.yahooById.get(item.id)||{};
       result=await xianyuCost(await ensureXianyuPage(),{...item,yahoo:{...(item.yahoo||{}),...yc}},settings);
       if(result.status==='login_required'&&xianyuMode==='saved'){
-        xianyuAuthExpired=true;console.warn('[闲鱼授权] 登录状态失效，切换匿名搜索重试');
-        await switchXianyuToAnonymous();result=await xianyuCost(xPage,{...item,yahoo:{...(item.yahoo||{}),...yc}},settings);result.fallback='anonymous';
+        xianyuAuthExpired=true;console.warn('[闲鱼授权] 目标详情需要登录，停止本轮闲鱼检查，不切换身份绕过');
       }
     }catch(error){console.error(`[闲鱼 ERROR][${item.id}]`,String(error));result={status:'error',error:String(error),samples:[],averageCNY:null}}
     result.checkedAt=result.checkedAt||new Date().toISOString();
@@ -249,7 +243,9 @@ for(const context of contexts){
     xianyuScanned:xianyuValues.filter(value=>['ok','manual_review','page_empty','login_required','blocked','error'].includes(value.status)).length,
     xianyuVerifiedNew,
     xianyuCached:xianyuValues.filter(value=>value.status==='cached_verified').length,
-    xianyuSkipped:xianyuValues.filter(value=>String(value.status).startsWith('skipped')||String(value.status).startsWith('deferred')).length
+    xianyuSkipped:xianyuValues.filter(value=>String(value.status).startsWith('skipped')||String(value.status).startsWith('deferred')).length,
+    xianyuStatuses:xianyuValues.reduce((counts,value)=>{counts[value.status]=(counts[value.status]||0)+1;return counts},{}),
+    xianyuRejectionReasons:xianyuValues.flatMap(value=>value.rejected||[]).reduce((counts,value)=>{counts[value.reason]=(counts[value.reason]||0)+1;return counts},{})
   };
   accountResults.push({id:context.account.id,name:context.account.name,profileUrl:context.account.profileUrl,managed:context.account.managed,
     profileStatus:context.profileStatus,profileError:context.profileError,profileDelta:context.profileDelta,itemCount:rows.length,
@@ -269,7 +265,7 @@ const ownedTitleHistory=[...new Set([
 const result={
   version:6,checkedAt,dataRevision:checkedAt,settings,accounts:accountResults,managedAccounts,portalUsers,
   manualCosts,portalPreferences,dismissedDiscoveries,discoveryReviews,ownedTitleHistory,relistAliases,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode},items:allItems,
-  scanMeta:{trigger:process.env.SCAN_TRIGGER||'local',startedAt:new Date(startedAt).toISOString(),durationSeconds:Math.round((Date.now()-startedAt)/1000),
+  scanMeta:{codeSha:process.env.GITHUB_SHA||null,trigger:process.env.SCAN_TRIGGER||'local',startedAt:new Date(startedAt).toISOString(),durationSeconds:Math.round((Date.now()-startedAt)/1000),
     budgetMinutes:Number(settings.scanBudgetMinutes)||12,profileConcurrency,yahooConcurrency,xianyuLimit}
 };
 const {summary}=await writeOutputs({root,result,previous,password});
