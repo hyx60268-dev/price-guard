@@ -3,7 +3,7 @@ const badPattern = /(求购|收购|只收|蹲收|换物|交换|置换|补款|定
 const baitPattern = /(请点进去选项|点击立即购买查看|拍下改价|私聊改价|价格见图|图上价|多个角色|多款可选|任选|标价非实价|自带价|占位价|起步价|最低款价格|标价为最低|标价只是|页面价格不准)/i;
 const selectionPattern = /(请选择|选择规格|选择款式|选款|选图|拍哪款|下单备注|联系客服改价|私聊改价|各款价格|价格不一|每款价格|单独询价|需补差价|补差后发货|以详情价为准|详情价格为准)/i;
 const multiOfferPattern = /(多款|多角色|全系列|合集|系列任选|整套可拆|可拆卖)/i;
-export const MATCHING_RULES_VERSION = 13;
+export const MATCHING_RULES_VERSION = 14;
 
 // 同じIP/シリーズが中国語・日本語・英語や作者名で出品されるケースを、
 // 再利用できる別名辞書で同じ識別語へ寄せる。追加時は商品固有語だけを登録し、
@@ -78,13 +78,15 @@ function normalizedJapanese(value='') {
 // 「全8種 ランダム」は8点セットではなくランダム1点として扱う。
 export function semanticQuantity(value='') {
   const text=normalizedJapanese(value);
+  const offer=explicitSaleContents(value);
+  if(offer.quantity!==null)return offer.quantity;
   const random=/(?:ランダム|random|随机)/i.test(text);
   // 「BOX 6種セット」「6種コンプリート」は6点の商品。説明文に
   // 「ランダム封入」があっても、出品単位そのものを1点に落としてはいけない。
   const kindSets=[...text.matchAll(/(?:全\s*)?(\d+)\s*種\s*(?:セット|コンプ(?:リート)?|complete|入り|入|box|ボックス)|(?:box|ボックス|アソート)\s*(\d+)\s*種/gi)]
     .flatMap(match=>[Number(match[1]),Number(match[2])]).filter(Number.isFinite);
   const complete=kindSets.length>0||/(?:コンプリート|complete|フルコンプ)\s*(?:セット)?/i.test(text);
-  const explicit=[...text.matchAll(/(\d+)\s*(?:点|個|体|枚|本|箱|ピース|個入|入り|件|キャラクター|キャラ)/gi)]
+  const explicit=[...text.matchAll(/(\d+)\s*(?:点|個|体|枚|本|冊|箱|ピース|個入|入り|件|キャラクター|キャラ)/gi)]
     .map(match=>Number(match[1])).filter(Number.isFinite);
   if(kindSets.length)return Math.max(...kindSets);
   if(explicit.length)return Math.max(...explicit);
@@ -94,6 +96,26 @@ export function semanticQuantity(value='') {
   if(/(?:ペア|pair|カップル|情侣|一対|1対|男女|男の子.{0,12}女の子|boy.{0,12}girl|girl.{0,12}boy)/i.test(text))return 2;
   if(/(?:単品|ばら売り|バラ売り|1\s*(?:点|個|体|枚|本|箱|ピース|件))/i.test(text))return 1;
   return null;
+}
+
+// Read explicit sale contents, not the series name (「三部作」) or advertising
+// line-up. A description can restrict what the title/photo appears to offer.
+export function explicitSaleContents(value='') {
+  const lines=normalizedJapanese(value).split(/[\n。]/).filter(line=>
+    !/(?:場合|可能性|別売りも|他にも出品)/.test(line));
+  const counts=new Set();let restricted=false;
+  const number=value=>/^\d+$/.test(value)?Number(value):'一二三四五六七八九'.indexOf(value)+1;
+  for(const line of lines){
+    for(const match of line.matchAll(/(\d+|[一二三四五六七八九])\s*(?:冊|本|点|個|体|枚|件)\s*(?:セット|組|のみ|だけ|まとめ売り)/g))counts.add(number(match[1]));
+    // 「黒とベージュセット売り」 is two members even without "2冊".
+    const colors=line.match(/((?:(?:ブラック|黒|ホワイト|白|ベージュ|ブルー|ブラウン|ピンク|レッド|グリーン)(?:\s*(?:と|及び|、|・|＆|&)\s*)?){2,})\s*(?:の)?\s*(?:セット売り|セット|のみ|だけ)/);
+    if(colors){
+      const members=colors[1].match(/ブラック|黒|ホワイト|白|ベージュ|ブルー|ブラウン|ピンク|レッド|グリーン/g)||[];
+      counts.add(members.length);restricted=true;
+    }
+    if(/(?:セット売り|のみ販売|のみ出品|だけ販売)/.test(line))restricted=true;
+  }
+  return {quantity:counts.size===1?[...counts][0]:null,ambiguous:counts.size>1,restricted};
 }
 
 // 同じ数量でも、未開封アソートBOXと箱なしの6体まとめ売りは別条件。
@@ -116,11 +138,19 @@ export function saleUnitProfile(value='') {
   // A title ending in 「セット」 is a bundle even when the seller omitted the
   // count.  That is not interchangeable with a named SS card or one character.
   const explicitMultiBundle=/(?:^|[\n。]|商品内容|出品内容|セット内容|上記|こちら).{0,40}(?:[2-9]|[一二三四五六七八九])\s*(?:点|個|体|枚|本|箱|ピース|種)\s*(?:セット|まとめ売り|組)|(?:[2-9]|[一二三四五六七八九])\s*(?:点|個|体|枚|本|箱|ピース|種)\s*セット\s*(?:です|になります|となります)/im.test(fullText);
-  const genericBundle=(/(?:セット|まとめ売り|抱き合わせ)/i.test(text)||explicitMultiBundle)&&!fullBox&&!completeSet;
+  const contents=explicitSaleContents(value);
+  const genericBundle=(/(?:セット|まとめ売り|抱き合わせ)/i.test(text)||explicitMultiBundle||contents.restricted||contents.quantity>1)&&!fullBox&&!completeSet;
   return {fullBox,completeSet,explicitSingle,randomUnit,genericBundle};
 }
 
 export function saleUnitEquivalent(query='',candidate='') {
+  const qContents=explicitSaleContents(query),cContents=explicitSaleContents(candidate);
+  if(qContents.ambiguous||cContents.ambiguous)return false;
+  const qCount=semanticQuantity(query),cCount=semanticQuantity(candidate);
+  if(Number.isFinite(qCount)&&Number.isFinite(cCount)&&qCount!==cCount)return false;
+  // A restricted offer cannot inherit a complete-set identity from its title.
+  if((qContents.restricted||cContents.restricted)&&
+    (!Number.isFinite(qCount)||!Number.isFinite(cCount)))return false;
   const left=saleUnitProfile(query),right=saleUnitProfile(candidate);
   if(left.fullBox||right.fullBox)return left.fullBox&&right.fullBox;
   if(left.completeSet||right.completeSet)return left.completeSet&&right.completeSet;
@@ -142,7 +172,20 @@ function setMultiplier(value='') {
 }
 
 export function productFamily(value='',category='') {
+  // Seller-selected categories can be wrong (a photography book in a card or
+  // keychain category). Explicit product type in the heading wins; descriptions
+  // may also mention bonus cards that are not the product being sold.
+  const heading=listingHeading(value);
+  if(String(value)!==heading){const family=productFamily(heading,category);if(family)return family}
+  if(category){
+    const family=productFamily(value);
+    // A plush keychain is still plush; "keychain" alone specifies the attachment,
+    // not the material. This narrow refinement must not reclassify books/cards.
+    if(family==='keychain'&&productFamily('',category)==='plush')return 'plush';
+    if(family)return family;
+  }
   const text=normalizedJapanese(`${value} ${category}`);
+  if(/(?:ネックピロー|neck\s*pillow|颈枕|頸枕)/i.test(text))return 'neck_pillow';
   if(/(?:レーザーチケット|ホログラムチケット|チケット|ticket|票卡|镭射票)/i.test(text))return 'ticket';
   if(/(?:シールウエハース|ウエハースシール|ステッカー|sticker|贴纸|贴片)/i.test(text))return 'sticker';
   if(/(?:アクリルブロック|シーンブロック|acrylic\s*block|scene\s*block|亚克力砖)/i.test(text))return 'acrylic_block';
@@ -241,9 +284,9 @@ export function exactIdentityTitleEquivalent(query='',candidate='',queryCategory
 export function hasExplicitDefect(title='',description='') {
   if(badPattern.test(title))return true;
   return `${title}\n${description}`.split(/[\n。]/).some(line=>{
-    if(!/(?:破損|破れ|欠品|キズ|傷|汚れ|凹み|割れ|剥がれ|箱潰れ|箱ダメージ)/i.test(line))return false;
+    if(!/(?:破損|破れ|欠品|きず|キズ|傷|スレ|擦れ|汚れ|凹み|割れ|剥がれ|箱潰れ|箱ダメージ)/i.test(line))return false;
     if(/(?:場合|可能性|ことが|あり得|海外製品|海外輸送|製造上|初期.{0,8}(?:場合|可能性)|ご了承ください)/i.test(line))return false;
-    return /(?:あります|あり|アリ|ございます|しています|見られます|欠けています|付属しません|なし)/i.test(line);
+    return /(?:あります|あり|アリ|ございます|しています|見られます|欠けています|付属しません|不明)/i.test(line);
   });
 }
 
@@ -340,13 +383,13 @@ function namedIdentityOmission(query='',candidate=''){
 // require a strong product-image match before accepting it as the same item.
 export function collectibleIdentityRequiresVisualProof(query='',candidate='',queryCategory='',candidateCategory=''){
   const leftFamily=productFamily(query,queryCategory),rightFamily=productFamily(candidate,candidateCategory);
-  const collectible=new Set(['figure','plush','keychain','model_kit','acrylic_stand','acrylic_block','acrylic_shaker','card']);
+  const collectible=new Set(['figure','plush','keychain','model_kit','acrylic_stand','acrylic_block','acrylic_shaker','card','neck_pillow']);
   if(!leftFamily||leftFamily!==rightFamily||!collectible.has(leftFamily))return false;
   // A character/series name does not identify one trading card.  The same Naruto
   // character has many different KAYOU artworks, card numbers and rarities, and
   // sellers often omit the number from the title.  Unless the physical card image
   // itself agrees at the strong threshold, never use it as price evidence.
-  if(leftFamily==='card')return true;
+  if(['card','acrylic_stand','acrylic_block','acrylic_shaker','neck_pillow'].includes(leftFamily))return true;
   const text=normalizedJapanese(`${query}\n${candidate}`);
   const genericSeries=/(?:シリーズ|series|シークレット|secret|ランダム|random|ブラインド|ラインナップ\s*(?:数)?\s*[:：]?\s*\d+\s*種)/i.test(text);
   return genericSeries||namedIdentityOmission(query,candidate)||namedIdentityOmission(candidate,query);
@@ -442,6 +485,19 @@ export function hasIdentityVariantMismatch(query='',candidate=''){
     disjointNonEmpty(left.anniversaries,right.anniversaries)||disjointNonEmpty(left.cardGrades,right.cardGrades)||
     disjointNonEmpty(left.colors,right.colors)||
     hasLotterySeriesMismatch(query,candidate)||namedIdentityConflict(query,candidate);
+}
+
+export function descriptionColorMismatch(query='',candidate=''){
+  const colors=value=>{
+    const lines=String(value).split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
+    // Only product/attribute lines, not unrelated prose or manufacturing notes.
+    const selected=[lines[0],lines[1],...lines.filter(line=>/^(?:【(?:カラー|色)】|(?:カラー|色|颜色|顏色)\s*[:：])/i.test(line))].filter(Boolean);
+    return new Set(selected.flatMap(line=>[...identityVariantFacets(line
+      .replace(/【(?:カラー|色)】/g,' ').replace(/[×＋]/g,' ').replace(/系(?=$|[\s、。])/g,' ')).colors]));
+  };
+  const left=colors(query),right=colors(candidate);
+  return disjointNonEmpty(left,right)||(left.size>1&&right.size>1&&
+    (left.size!==right.size||[...left].some(value=>!right.has(value))));
 }
 
 export function lotterySeriesEquivalent(query='',candidate=''){

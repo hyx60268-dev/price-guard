@@ -40,9 +40,10 @@ async function makeFingerprints(url){
   const buffer=await download(url);if(!buffer)return null;
   try{
     const center=await sharp(buffer).resize(256,256,{fit:'cover',position:'centre'}).png().toBuffer();
-    const [dHash,aHash,centerHash,stats,metadata,border]=await Promise.all([
+    const [dHash,aHash,centerHash,stats,metadata,border,grid]=await Promise.all([
       differenceHash(buffer),averageHash(buffer),differenceHash(center),sharp(buffer).resize(32,32,{fit:'inside'}).stats(),sharp(buffer).metadata(),
-      sharp(buffer).rotate().resize(48,48,{fit:'fill'}).removeAlpha().raw().toBuffer({resolveWithObject:true})
+      sharp(buffer).rotate().resize(48,48,{fit:'fill'}).removeAlpha().raw().toBuffer({resolveWithObject:true}),
+      sharp(buffer).rotate().toColourspace('srgb').removeAlpha().resize(16,16,{fit:'fill'}).raw().toBuffer()
     ]);
     const color=(stats.channels||[]).slice(0,3).map(channel=>Math.round(channel.mean||0));
     const sums=[0,0,0],squares=[0,0,0];let count=0;
@@ -54,7 +55,7 @@ async function makeFingerprints(url){
     const background=sums.map(value=>Math.round(value/Math.max(1,count)));
     const backgroundSpread=squares.map((value,index)=>Math.round(Math.sqrt(Math.max(0,value/Math.max(1,count)-(sums[index]/Math.max(1,count))**2))));
     const aspectRatio=metadata.width&&metadata.height?metadata.width/metadata.height:null;
-    return {dHash,aHash,centerHash,color,background,backgroundSpread,aspectRatio,url};
+    return {dHash,aHash,centerHash,color,background,backgroundSpread,aspectRatio,colorGrid:[...grid],url};
   }catch{return null}
 }
 
@@ -100,6 +101,17 @@ export function imageSetSimilarity(left=[],right=[]){
     if(Number.isFinite(score)&&(best===null||score>best))best=score;
   }
   return best;
+}
+
+// For ambiguous variants, a matching secondary box/logo is not product evidence.
+// Require a near-duplicate PRIMARY image, with spatial colour as a hard gate.
+// This is deliberately conservative: different photos go to review, not pricing.
+export function primaryProductSimilarity(a,b){
+  if(!a?.colorGrid?.length||a.colorGrid.length!==b?.colorGrid?.length)return null;
+  const hashes=[imageSimilarity(a.dHash,b.dHash),imageSimilarity(a.aHash,b.aHash),imageSimilarity(a.centerHash,b.centerHash)];
+  if(hashes.some(value=>!Number.isFinite(value)))return null;
+  const distance=a.colorGrid.reduce((sum,value,index)=>sum+Math.abs(value-b.colorGrid[index]),0)/(a.colorGrid.length*255);
+  return Math.min(...hashes,1-distance);
 }
 
 export function backgroundSimilarity(a,b){

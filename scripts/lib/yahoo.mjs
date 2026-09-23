@@ -1,4 +1,5 @@
-import { imageFingerprints,imageSetSimilarity } from './image.mjs';
+import { imageFingerprints,imageSetSimilarity,primaryProductSimilarity } from './image.mjs';
+import { descriptionColorMismatch } from './rules.mjs';
 import { coherentPrices,collectibleIdentityRequiresVisualProof,conditionCompatible,distinctiveCoverage,exactIdentityTitleEquivalent,hasExplicitDefect,hasExplicitVariantMismatch,isRejected,listingSpecificationEquivalent,listingTextEquivalent,lotterySeriesEquivalent,lotterySeriesNeedsVisualConfirmation,MATCHING_RULES_VERSION,packagedAssortmentEquivalent,productFamily,saleUnitEquivalent,semanticSameItem,titleScore,visualListingEquivalent } from './rules.mjs';
 
 const UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140 Safari/537.36';
@@ -207,7 +208,7 @@ export function unresolvedRaiseCandidates(preliminary=[],rejected=[]){
   // 或详情请求失败而仍有疑点的候选，才作为提价安全上限继续保留。
   const decisions=new Map();
   for(const item of rejected)if(item?.id&&preliminary.some(card=>card.id===item.id))decisions.set(item.id,item.reason||'rejected');
-  const definitive=new Set(['not_open','own_seller','defect','condition_or_packaging_mismatch','physical_product_type_unconfirmed','sale_unit_mismatch','collectible_variant_image_unconfirmed','variant_mismatch','product_mismatch','title_rejected']);
+  const definitive=new Set(['not_open','own_seller','defect','condition_or_packaging_mismatch','physical_product_type_unconfirmed','sale_unit_mismatch','description_color_mismatch','collectible_variant_image_unconfirmed','variant_mismatch','product_mismatch','title_rejected']);
   // 图片不足、系列信息不全或详情请求失败只是“尚未证实”，不是“已经证伪”。
   // 这些低价项必须继续限制提价上限，避免证据不足反而导致激进提价。
   return preliminary.filter(card=>!definitive.has(decisions.get(card.id)));
@@ -226,7 +227,10 @@ export async function discoverYahooProfile(_unusedPage,profileUrl,settings={}){
   return {items,totalResults:Number(first.totalResultsAvailable||all.length),pages};
 }
 
-export async function yahooCompare(_unusedPage,item,settings={}){
+export async function yahooCompare(_unusedPage,item,settings={},dependencies={}){
+  const getBundle=dependencies.fetchYahooItemBundle||fetchYahooItemBundle;
+  const getResult=dependencies.fetchYahooResult||fetchYahooResult;
+  const fingerprint=dependencies.imageFingerprints||imageFingerprints;
   applyYahooSettings(settings);
   const ownSellerId=String(item.sellerId||settings.ownSellerId||'').trim();
   const query=queryFor(item.title);
@@ -236,12 +240,12 @@ export async function yahooCompare(_unusedPage,item,settings={}){
   // 商品页里的 vector 推荐正是 App 展示的「この商品に似ている商品」。它比宽泛
   // 搜索更容易召回标题译名不同、但首图和本体相同的商品，因此每轮以商品页为主。
   // 宽泛搜索按小时轮转，避免账号增多后每件商品每 20 分钟都扫描约 100 张无关卡片。
-  try{ownBundle=await fetchYahooItemBundle(item.id,settings)}catch(error){itemPageError=String(error)}
+  try{ownBundle=await getBundle(item.id,settings)}catch(error){itemPageError=String(error)}
   const broadSearchHours=Math.max(1,Number(settings.yahooBroadSearchHours)||6);
   const lastBroadSearch=Date.parse(item.yahoo?.searchCheckedAt||item.yahoo?.checkedAt||'');
   const broadSearchDue=settings.forceYahooBroadSearch===true||!Number.isFinite(lastBroadSearch)||Date.now()-lastBroadSearch>=broadSearchHours*3_600_000;
   if(broadSearchDue||!ownBundle){
-    try{search=await fetchYahooResult(searchUrl,settings)}catch(error){searchError=String(error)}
+    try{search=await getResult(searchUrl,settings)}catch(error){searchError=String(error)}
   }
   if(!search&&!ownBundle)throw new Error(`搜索与商品页均失败：${searchError}; ${itemPageError}`);
 
@@ -287,7 +291,7 @@ export async function yahooCompare(_unusedPage,item,settings={}){
   // 而丢掉这些候选。
   if(preliminary.length&&!ownDetail){
     try{
-      ownBundle=await fetchYahooItemBundle(item.id,settings);ownDetail=ownBundle.detail;ownCategory=categoryText(ownDetail,ownSearchCard)||ownCategory;
+      ownBundle=await getBundle(item.id,settings);ownDetail=ownBundle.detail;ownCategory=categoryText(ownDetail,ownSearchCard)||ownCategory;
       recommendationCards=ownBundle.recommendations||[];cards=mergeCards([searchCards,recommendationCards,priorCards]);
       rejected.length=0;preliminary=screenCards(cards);
     }
@@ -295,7 +299,8 @@ export async function yahooCompare(_unusedPage,item,settings={}){
   }
   const ownImages=[...(ownDetail?.images||[]).map(image=>typeof image==='string'?image:image?.url).filter(Boolean),ownDetail?.thumbnailImageUrl,...(item.yahoo?.ownImages||[]),item.image].filter(Boolean);
   const maxImages=Math.max(3,Math.min(10,Number(settings.maxYahooImages)||8));
-  const ownFingerprints=(await Promise.all([...new Set(ownImages)].slice(0,maxImages).map(imageFingerprints))).filter(Boolean);
+  const ownImageEvidence=await Promise.all([...new Set(ownImages)].slice(0,maxImages).map(fingerprint));
+  const ownFingerprints=ownImageEvidence.filter(Boolean);
 
   // Yahoo's recommendation rail often contains the exact item under a short or translated
   // title.  Give lower-priced recommendation thumbnails a second chance using the image,
@@ -308,7 +313,7 @@ export async function yahooCompare(_unusedPage,item,settings={}){
     !acceptedIds.has(card.id)&&card.id!==item.id&&card.sources?.includes('recommendation')&&card.image&&
     Number.isFinite(card.price)&&card.price<=Number(item.ownPrice)&&(!ownSellerId||card.sellerId!==ownSellerId)&&!isRejected(card.title)
   ).sort((a,b)=>a.price-b.price).slice(0,visualRecallLimit);
-  const visualFingerprints=await Promise.all(visualRecallCards.map(card=>imageFingerprints(card.image)));
+  const visualFingerprints=await Promise.all(visualRecallCards.map(card=>fingerprint(card.image)));
   for(let index=0;index<visualRecallCards.length;index++){
     const card=visualRecallCards[index],candidateCategory=categoryText(null,card);
     const previewImageScore=imageSetSimilarity(ownFingerprints,[visualFingerprints[index]]);
@@ -334,7 +339,11 @@ export async function yahooCompare(_unusedPage,item,settings={}){
     const card=preliminary[index];
     detailCheckedCount++;
     try{
-      const bundle=await fetchYahooItemBundle(card.id,settings),detail=bundle.detail;
+      const bundle=await getBundle(card.id,settings),detail=bundle.detail;
+      // Never compare against a title-only fallback when our sale description is missing.
+      if(!ownDetail?.description?.trim()||!detail?.description?.trim()){
+        rejected.push({id:card.id,price:Number(detail?.price),reason:'sale_description_unavailable'});continue
+      }
       if(detail.status!=='OPEN'){rejected.push({id:card.id,price:card.price,reason:'not_open'});continue}
       const detailSellerId=String(detail.seller?.id||detail.sellerId||card.sellerId||'').trim();
       if(ownSellerId&&detailSellerId===ownSellerId){rejected.push({id:card.id,price:Number(detail.price),reason:'own_seller'});continue}
@@ -353,6 +362,9 @@ export async function yahooCompare(_unusedPage,item,settings={}){
       if(!familyConfirmed){rejected.push({id:card.id,price:Number(detail.price),reason:'physical_product_type_unconfirmed',queryFamily,candidateFamily,titleScore:detailTitleScore});continue}
       const ownFullText=`${ownDetail?.title||item.title}\n${ownDetail?.description||''}`;
       const candidateFullText=`${detail.title||''}\n${detail.description||''}`;
+      if(descriptionColorMismatch(ownFullText,candidateFullText)){
+        rejected.push({id:card.id,price:Number(detail.price),reason:'description_color_mismatch'});continue
+      }
       // The title is not the whole offer.  A seller may put "2点セット" or
       // "1BOX" only in the description; no title/image shortcut may override that
       // explicit sale-unit conflict.
@@ -369,8 +381,17 @@ export async function yahooCompare(_unusedPage,item,settings={}){
       // 商品类型和明确数量规格一致，就允许规格证据补足标题相似度；不同角色、
       // 数量、版本和商品形态仍会在 specificationEquivalent/semantic 中被拒绝。
       const detailImages=[...(detail.images||[]).map(image=>typeof image==='string'?image:image?.url).filter(Boolean),card.image].filter(Boolean);
-      const detailFingerprints=(await Promise.all([...new Set(detailImages)].slice(0,maxImages).map(imageFingerprints))).filter(Boolean);
+      const detailImageEvidence=await Promise.all([...new Set(detailImages)].slice(0,maxImages).map(fingerprint));
+      const detailFingerprints=detailImageEvidence.filter(Boolean);
       const imageScore=imageSetSimilarity(ownFingerprints,detailFingerprints);
+      const primaryImageScore=primaryProductSimilarity(ownImageEvidence[0],detailImageEvidence[0]);
+      // Generic character/type titles identify neither the artwork nor colour.
+      // Hash similarity over ANY photo (including identical logos/backs) is not
+      // enough. Without near-identical primary evidence, leave these for review.
+      if(['neck_pillow','acrylic_stand','acrylic_block','acrylic_shaker','card'].includes(queryFamily)&&
+        (!Number.isFinite(primaryImageScore)||primaryImageScore<.98)){
+        rejected.push({id:card.id,price:Number(detail.price),reason:'primary_variant_unconfirmed',titleScore:detailTitleScore,imageScore,primaryImageScore});continue
+      }
       const imageThreshold=Math.max(.75,Number(settings.yahooImageMatchThreshold)||.80);
       const visualThreshold=Math.max(imageThreshold,Number(settings.yahooStrongVisualMatchThreshold)||.86);
       const visualEquivalent=visualListingEquivalent({query:ownFullText,candidate:candidateFullText,queryCategory:ownCategory,candidateCategory:detailCategory,imageScore,threshold:visualThreshold});
@@ -397,7 +418,7 @@ export async function yahooCompare(_unusedPage,item,settings={}){
       const detailImage=detailImages[0]||card.image;
       competitors.push({...card,url:`https://paypayfleamarket.yahoo.co.jp/item/${detail.id}`,title:detail.title,
         text:`${detail.title}\n${detail.description||''}`,image:detailImage,price:Number(detail.price),itemStatus:detail.status,
-        titleScore:detailTitleScore,imageScore,semantic,queryFamily,candidateFamily,
+        titleScore:detailTitleScore,imageScore,primaryImageScore,semantic,queryFamily,candidateFamily,
         matchMethod:lotteryEquivalent?'lottery_release_prize_character':assortmentEquivalent?'same_packaging_assortment':exactTitleEquivalent?'exact_bidirectional_title_identity':visualEquivalent?'strong_visual_primary_product':textEquivalent?'detail_type_quantity_equivalent_text':'detail_type_quantity_text_images'});
     }catch(error){rejected.push({id:card.id,price:card.price,reason:'detail_error',error:String(error)})}
   }
@@ -412,21 +433,24 @@ export async function yahooCompare(_unusedPage,item,settings={}){
   const uncheckedLowerCandidates=preliminary.filter(candidate=>Number(candidate.price)<provisionalFloor&&!checkedIds.has(candidate.id));
   const market=marketPriceDecision(item.ownPrice,competitors,settings,{plausibleCompetitors:unresolvedCandidates,ownSellerId});
   const {marketPrices,marketMedianPrice,marketMinPrice,marketMaxPrice,underpriced}=market;
-  const verificationIncomplete=uncheckedLowerCandidates.length>0;
+  const reviewReasons=new Set(['primary_variant_unconfirmed','sale_description_unavailable']);
+  const unconfirmedLowerCandidates=rejected.filter(candidate=>reviewReasons.has(candidate.reason)&&Number(candidate.price)<Number(item.ownPrice));
+  const verificationIncomplete=uncheckedLowerCandidates.length>0||unconfirmedLowerCandidates.length>0;
   const recommended=verificationIncomplete?Number(item.ownPrice):lowest&&!lowest.isOwn?Math.max(1,Math.floor(lowest.price)-1):market.recommendedPrice;
   const sourceCovered=Boolean(search||ownBundle);
-  const matchLabel=verificationIncomplete?'存在尚未核验的更低价候选':lowest&&!lowest.isOwn?'已核验在售同款':underpriced?'售价明显低于同款市场':competitors.length?'已核验同款，你当前最低':'未发现同款';
+  const matchLabel=verificationIncomplete?'存在未确认款式或详情的低价候选，暂不改价':lowest&&!lowest.isOwn?'已核验在售同款':underpriced?'售价明显低于同款市场':competitors.length?'已核验同款，你当前最低':'未发现同款';
   return {
     rulesVersion:MATCHING_RULES_VERSION,
     query,searchUrl,lowestPrice:lowest?.price??item.ownPrice,lowestUrl:lowest?.url??item.url,
     recommendedPrice:recommended,candidates:competitors.slice(0,5),cardCount:cards.length,
     searchCardCount:searchCards.length,recommendationCardCount:recommendationCards.length,
-    preliminaryCount:preliminary.length,unresolvedCandidateCount:unresolvedCandidates.length,uncheckedLowerCandidateCount:uncheckedLowerCandidates.length,detailCheckedCount,rejected:rejected.slice(-30),
+    preliminaryCount:preliminary.length,unresolvedCandidateCount:unresolvedCandidates.length,uncheckedLowerCandidateCount:uncheckedLowerCandidates.length,unconfirmedLowerCandidateCount:unconfirmedLowerCandidates.length,detailCheckedCount,rejected:rejected.slice(-30),
     competitorCount:competitors.length,status:verificationIncomplete?'incomplete':'ok',comparisonStatus:verificationIncomplete?'verification_incomplete':lowest?.isOwn?(underpriced?'underpriced':'no_lower_found'):'competitor_lower',
     marketSampleCount:marketPrices.length,marketMedianPrice,marketMinPrice,marketMaxPrice,underpriced,
     verifiedMinPrice:market.verifiedMinPrice,plausibleMinPrice:market.plausibleMinPrice,
     raiseGuardMinPrice:market.raiseGuardMinPrice,raiseRoomJPY:market.raiseRoomJPY,ownIsDefiniteLowest:market.ownIsDefiniteLowest,
     matchLabel,matchConfidence:competitors.length?'高':sourceCovered?'覆盖检查':'需复核',checkedAt:new Date().toISOString(),ownImages:[...new Set(ownImages)].slice(0,8),
+    audit:{ownItemId:item.id,accountId:item.accountId||null,ownDetailLoaded:Boolean(ownDetail?.description?.trim()),rulesVersion:MATCHING_RULES_VERSION},
     ownDescription:ownDetail?.description||item.yahoo?.ownDescription||'',ownCategory,
     searchCheckedAt:search?new Date().toISOString():(item.yahoo?.searchCheckedAt||item.yahoo?.checkedAt||null),
     sourceStatus:{search:search?'ok':broadSearchDue?'error':'rotating_cache',itemPage:ownBundle?'ok':'error'},searchError,itemPageError

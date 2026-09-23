@@ -221,9 +221,9 @@ for(const context of contexts){
     const confidence=yc.status==='ok'&&(!needsXianyu||xc.status==='ok'||Number.isFinite(manual?.purchaseCNY))?'高':(yahooSource==='cached'||costSource==='cached')?'参考缓存':'需人工';
     const priceSignal=yc.underpriced&&recommendedPrice>ownPrice?'raise':recommendedPrice<ownPrice?'lower':'hold';
     const base={...item,accountId:context.account.id,accountName:context.account.name,ownUrl:item.url,lowestPrice,lowestUrl,recommendedPrice,priceSignal,difference:ownPrice-lowestPrice,
-      marketMedianPrice:yc.marketMedianPrice??prior.marketMedianPrice??null,marketSampleCount:yc.marketSampleCount??prior.marketSampleCount??0,
+      marketMedianPrice:yc.marketMedianPrice??null,marketSampleCount:yc.marketSampleCount??0,
       averageCNY,confidence,yahooSource,costSource,needsXianyu,needsManualPurchase:needsXianyu&&!Number.isFinite(averageCNY)&&!Number.isFinite(manual?.purchaseCNY),
-      yahoo:{...(prior.yahoo||{}),...yc,lowestPrice,lowestUrl},xianyu:{...(prior.xianyu||{}),...xc,averageCNY,samples},
+      yahoo:{...yc,lowestPrice,lowestUrl},xianyu:{...(prior.xianyu||{}),...xc,averageCNY,samples},
       xianyuSearchUrl:xc.searchUrl||prior.xianyuSearchUrl||`https://www.goofish.com/search?q=${encodeURIComponent(item.xianyuQuery||item.title||'')}`};
     const calculated=calculateManualFields(base,manual,settings);
     if(yc.underpriced)calculated.advice='售价明显低于同款市场，建议提价';
