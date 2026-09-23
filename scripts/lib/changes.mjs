@@ -1,4 +1,4 @@
-const trackedFields=['ownPrice','lowestPrice','recommendedPrice','priceSignal','averageCNY','costJPY','currentProfitJPY','afterProfitJPY','advice'];
+const trackedFields=['ownPrice','lowestPrice','recommendedPrice','priceSignal','averageCNY','costJPY','currentProfitJPY','afterProfitJPY','advice','staleListingSuggested'];
 
 const same=(a,b)=>Number.isFinite(a)&&Number.isFinite(b)?Math.round(a*100)===Math.round(b*100):a===b;
 
@@ -16,6 +16,7 @@ export function compareSnapshots(previous,current){
       // an "all listings changed" notification; accompanying price/advice fields
       // still surface any genuinely new raise/lower action.
       if(field==='priceSignal'&&!['raise','lower','hold'].includes(old[field])) return false;
+      if(field==='staleListingSuggested')return Boolean(old[field])!==Boolean(item[field]);
       return !same(old[field],item[field]);
     });
     if(fields.length) changes.push({type:'updated',id,title:item.title,accountId:item.accountId,signal:item.priceSignal||null,fields,

@@ -54,7 +54,8 @@ export function scopeResultForPortalUser(result,user){
   const manualCosts=Object.fromEntries(Object.entries(result.manualCosts||{}).filter(([,record])=>allowed.has(record?.accountId)));
   const managedAccounts=(result.managedAccounts||[]).filter(account=>allowed.has(account.id));
   const notificationEmail=safeEmail(result.portalPreferences?.[user.username]?.notificationEmail||user.notificationEmail);
-  return {...result,portalUsers:undefined,portalPreferences:undefined,portalUser:{username:user.username,displayName:user.displayName,role:'member',notificationEmail},accounts,items,manualCosts,managedAccounts,
+  const matchCorrections=Object.fromEntries(Object.entries(result.matchCorrections||{}).filter(([,record])=>allowed.has(record.accountId)));
+  return {...result,matchCorrections,portalUsers:undefined,portalPreferences:undefined,portalUser:{username:user.username,displayName:user.displayName,role:'member',notificationEmail},accounts,items,manualCosts,managedAccounts,
     ownedTitleHistory:items.map(item=>item.title).filter(Boolean)};
 }
 
@@ -82,6 +83,8 @@ export function dashboardSummary(result,changeSummary){
     manual:items.filter(item=>item.confidence!=='高').length,
     needsManualPurchase:items.filter(item=>item.needsManualPurchase).length,scanTotals,
     cloudCost:cloudCostStatus(result),
+    staleListings:items.filter(item=>item.listingAge?.eligible).length,
+    matchingCorrections:Object.values(result.matchCorrections||{}).filter(record=>!record.deleted).length,
     xianyuLoginRequired:Boolean(result.login?.xianyuRequired),xianyuAuthExpired:Boolean(result.login?.xianyuAuthExpired),xianyuMode:result.login?.xianyuMode||'unknown',
     changes:{total:changeSummary.total,firstRun:changeSummary.firstRun},durationSeconds:result.scanMeta?.durationSeconds??null
   };

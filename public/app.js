@@ -1,3 +1,4 @@
+import { candidateId, correctionKey, mergeMatchCorrections, rejectedByMemory, invalidateCorrectedMatches } from './match-memory.js';
 const $=selector=>document.querySelector(selector);
 const money=value=>Number.isFinite(value)?`¥${Math.round(value).toLocaleString()}`:'—';
 const cny=value=>Number.isFinite(value)?`¥${Number(value).toFixed(1)}`:'—';
@@ -9,6 +10,7 @@ const costKey='priceGuard.manualCosts.v2',legacyCostKey='priceGuard.manualCosts.
 const deletedAccountKey='priceGuard.deletedAccounts.v1';
 const dismissedDiscoveryKey='priceGuard.dismissedDiscoveries.v1';
 const discoveryReviewKey='priceGuard.discoveryReviews.v1';
+const matchCorrectionKey='priceGuard.matchCorrections.v1';
 const notificationEmailKey=username=>`priceGuard.notificationEmail.v1.${username}`;
 
 let data,discoveryData,password,currentUsername='admin',dataPrefix='data',installPrompt,currentAccountId,cloudStatus,discoveryCloudStatus,refreshingData=false,pricingPage=1,imageSearchState=null;
@@ -19,11 +21,13 @@ const getLocal=()=>getJson(scopedKey(accountKey),currentUsername==='admin'?getJs
 const saveLocal=value=>localStorage.setItem(scopedKey(accountKey),JSON.stringify(value));
 const getDeleted=()=>getJson(scopedKey(deletedAccountKey),[]);
 const saveDeleted=value=>localStorage.setItem(scopedKey(deletedAccountKey),JSON.stringify([...new Set(value)]));
-let manualCosts={},dismissedDiscoveries={},discoveryReviews={};
+let manualCosts={},dismissedDiscoveries={},discoveryReviews={},matchCorrections={};
+const saveMatchCorrections=()=>localStorage.setItem(scopedKey(matchCorrectionKey),JSON.stringify(matchCorrections));
 const saveManualCosts=()=>localStorage.setItem(scopedKey(costKey),JSON.stringify(manualCosts));
 const saveDismissedDiscoveries=()=>localStorage.setItem(scopedKey(dismissedDiscoveryKey),JSON.stringify(dismissedDiscoveries));
 const saveDiscoveryReviews=()=>localStorage.setItem(scopedKey(discoveryReviewKey),JSON.stringify(discoveryReviews));
 function loadLocalState(){
+  matchCorrections=getJson(scopedKey(matchCorrectionKey),{});
   manualCosts=currentUsername==='admin'?{...getJson(legacyCostKey,{}),...getJson(costKey,{})}:getJson(scopedKey(costKey),{});
   dismissedDiscoveries=getJson(scopedKey(dismissedDiscoveryKey),{});discoveryReviews=getJson(scopedKey(discoveryReviewKey),{});
 }
@@ -91,6 +95,7 @@ function migrateLocalData(){
 async function loadDashboard(){
   const plain=await decryptFile(`${dataPrefix}/latest.json.enc`,password);
   data=JSON.parse(new TextDecoder().decode(plain));
+  matchCorrections=mergeMatchCorrections(matchCorrections,data.matchCorrections||{});saveMatchCorrections();
   await loadDiscovery();
   if(!data.accounts)data.accounts=[{id:'default',name:data.seller||'默认账号',profileUrl:data.profile||'',profileStatus:'cached',items:data.items||[]}];
   manualCosts=mergeCosts(manualCosts,data.manualCosts||{});dismissedDiscoveries=mergeCosts(dismissedDiscoveries,data.dismissedDiscoveries||{});saveDismissedDiscoveries();
@@ -137,6 +142,7 @@ function clientAdvice({ownPrice,recommendedPrice,costJPY}){
   if(after<0)return '调价后亏损';if(after<warning)return '不建议按推荐价出售';if(current<warning)return '建议提价或控制成本';return '利润正常';
 }
 function effective(item,temporary){
+  item=invalidateCorrectedMatches(item,matchCorrections);
   const saved=temporary||manualFor(item),manualPurchaseCNY=numberOrNull(saved.purchaseCNY),purchaseCNY=numberOrNull(item.averageCNY)??manualPurchaseCNY;
   const manualFeeCNY=numberOrNull(saved.manualFeeCNY),shippingJPY=numberOrNull(saved.shippingJPY);
   const complete=[purchaseCNY,manualFeeCNY,shippingJPY].every(Number.isFinite);
@@ -150,11 +156,11 @@ function effective(item,temporary){
     effectiveCostSource:complete?(Number.isFinite(item.averageCNY)?`${item.costSource==='live'?'闲鱼验证均价':'历史验证价'} + 手工费用`:'人工采购价兜底 + 手工费用'):'待补齐成本值'};
 }
 function items(){return rawItems().map(item=>effective(item))}
-function stats(){const list=items();return [['商品',list.length],['建议调价',list.filter(item=>item.recommendedPrice!==item.ownPrice).length],['缺采购参考',list.filter(item=>item.needsPurchaseReference).length],['待填人工费用',list.filter(item=>item.needsManualFees).length],['成本已完整',list.filter(item=>!item.needsCostInput).length]]}
-function pill(item){const tone=/亏损|不建议|控制成本/.test(item.advice)?'bad':item.needsCostInput||item.confidence!=='高'?'warn':'';return `<span class="pill ${tone}">${escapeHtml(item.advice)}</span>`}
+function stats(){const list=items();return [['商品',list.length],['建议调价',list.filter(item=>item.recommendedPrice!==item.ownPrice).length],['30天未售待整理',list.filter(item=>item.listingAge?.eligible).length],['缺采购参考',list.filter(item=>item.needsPurchaseReference).length],['成本已完整',list.filter(item=>!item.needsCostInput).length]]}
+function pill(item){const tone=/亏损|不建议|控制成本/.test(item.advice)?'bad':item.needsCostInput||item.confidence!=='高'?'warn':'';return `<span class="pill ${tone}">${escapeHtml(item.advice)}</span>${item.listingAge?.eligible?'<br><span class="pill warn">30天未售，建议评估删除</span>':''}`}
 function selected(){
   const query=$('#search').value.toLowerCase(),filter=$('#filter').value;
-  return items().filter(item=>(item.title+(item.xianyuQuery||'')).toLowerCase().includes(query)&&(filter==='all'||filter==='reprice'&&item.recommendedPrice!==item.ownPrice||filter==='low'&&item.afterUnder1500||filter==='input'&&item.needsCostInput||filter==='manual'&&item.confidence!=='高'));
+  return items().filter(item=>(item.title+(item.xianyuQuery||'')).toLowerCase().includes(query)&&(filter==='all'||filter==='stale'&&item.listingAge?.eligible||filter==='reprice'&&item.recommendedPrice!==item.ownPrice||filter==='low'&&item.afterUnder1500||filter==='input'&&item.needsCostInput||filter==='manual'&&item.confidence!=='高'));
 }
 function statusCard(label,value,tone=''){return `<div class="status ${tone}"><small>${escapeHtml(label)}</small><b>${escapeHtml(value)}</b></div>`}
 
@@ -322,6 +328,7 @@ function detail(id){
   const marketMedian=marketIncomplete?'核验未完成，暂不建议改价':marketSamples?`${money(item.yahoo?.marketMedianPrice)} <small>${marketSamples} 个核验样本</small>`:marketChecked?'未找到可比样本':'等待本轮核验';
   const marketRange=marketIncomplete?`仍有 ${Number(item.yahoo?.uncheckedLowerCandidateCount)||0} 个低价候选待核验`:marketSamples?`${money(item.yahoo?.marketMinPrice)} ～ ${money(item.yahoo?.marketMaxPrice)}`:marketChecked?'—':'尚未核验';
   $('#detailBody').innerHTML=`
+    <p class="muted">${escapeHtml(item.listingAge?.message||'上架时长待云端确认')} · ${item.listingAge?.source==='platform_open_date'?'平台上架时间':item.listingAge?.source==='first_observed'?'系统首次确认在售时间':'尚无时间依据'}</p>
     <div class="detailhead"><img src="${escapeHtml(item.image)}" alt=""><div><h2>${escapeHtml(item.title)}</h2><p>${pill(item)}　同款匹配：${escapeHtml(item.yahoo?.matchLabel||item.yahoo?.matchConfidence||item.confidence||'需复核')}</p></div></div>
     <div class="detailgrid"><div><small>我的售价</small><br><b>${money(item.ownPrice)}</b></div><div><small>Yahoo最低</small><br><b>${money(item.lowestPrice)}</b></div><div><small>建议价</small><br><b>${money(item.recommendedPrice)}</b></div><div><small>同款市场中位价</small><br><b>${marketMedian}</b></div><div><small>同款价格范围</small><br><b>${marketRange}</b></div><div><small>闲鱼验证均价</small><br><b>${cny(item.averageCNY)}</b></div><div><small>当前成本</small><br><b id="previewCost">${money(item.costJPY)}</b></div><div><small>不改价利润</small><br><b id="previewCurrentProfit" class="${item.currentUnder1500?'bad':''}">${money(item.currentProfitJPY)}</b></div><div><small>改价后利润</small><br><b id="previewAfterProfit" class="${item.afterUnder1500?'bad':''}">${money(item.afterProfitJPY)}</b></div></div>
     <section class="manualbox"><h3>补充人工费用</h3><p class="muted">采购价由系统自动核验闲鱼详情和多个卖家后填入；你只需填写人肉费和日本物流费。仅在自动核验失败时显示人工采购价兜底。</p>
@@ -332,6 +339,16 @@ function detail(id){
     <p><small>Yahoo来源：${escapeHtml(item.yahooSource||'—')} · 搜索候选 ${escapeHtml(item.yahoo?.searchCardCount??'—')} 件 · 推荐候选 ${escapeHtml(item.yahoo?.recommendationCardCount??'—')} 件 · 详情核验 ${escapeHtml(item.yahoo?.detailCheckedCount??0)} 件 · 闲鱼自动参考：${cny(item.automaticReferenceCNY)} · 利润成本来源：${escapeHtml(item.effectiveCostSource)}</small></p>
     <h3>采用的闲鱼样本（${samples.length}）</h3><ul class="samples">${samples.map(sample=>`<li><a target="_blank" href="${escapeHtml(sample.url||'#')}">${escapeHtml(sample.detailTitle||sample.title||'同款样本')}</a><span>图片 ${(Number(sample.imageScore||0)*100).toFixed(0)}%　<b>${cny(sample.price)}</b></span></li>`).join('')||'<li>没有达到“至少 2 个详情、图片与价格区间均一致”的标准，请人工填写采购价。</li>'}</ul>${rejected.length?`<p class="muted">已排除 ${rejected.length} 个多规格、低价钩子、正文或图片不一致候选。</p>`:''}`;
 
+  const evidence=[...(raw.yahoo?.candidates||[]).map(row=>({row,platform:'yahoo'})),...samples.map(row=>({row,platform:'xianyu'}))];
+  const memories=Object.entries(matchCorrections).filter(([,r])=>r.accountId===raw.accountId&&r.itemId===raw.id&&!r.deleted);
+  $('#detailBody').insertAdjacentHTML('beforeend',`<section class="manualbox"><h3>同款纠错记录</h3><p>点“不是同款”会立即停用本机旧建议。同步云端后，后续扫描会记住这条排除；不会据此跳过其他核验。</p><ul class="samples">${evidence.map(({row,platform},index)=>`<li><span>${platform==='yahoo'?'Yahoo':'闲鱼'}：${escapeHtml(row.detailTitle||row.title||candidateId(platform,row))}</span><button class="soft" data-correct="${index}" ${rejectedByMemory(matchCorrections,raw,platform,row)?'disabled':''}>不是同款</button></li>`).join('')||'<li>当前没有可纠正的匹配样本</li>'}</ul>${memories.map(([key,r])=>`<p>${escapeHtml(r.platform)} · ${escapeHtml(r.candidateId)}：已排除 <button class="soft" data-undo-correction="${escapeHtml(key)}">撤销</button></p>`).join('')}<button id="syncCorrections" class="soft">同步纠错到云端</button></section>`);
+  document.querySelectorAll('[data-correct]').forEach(button=>button.onclick=()=>{
+    const {row,platform}=evidence[Number(button.dataset.correct)];
+    const record={accountId:raw.accountId,itemId:raw.id,ownTitle:raw.title,ownImage:raw.image,platform,candidateId:candidateId(platform,row),reason:'not_same_product',updatedAt:new Date().toISOString(),deleted:false};
+    matchCorrections[correctionKey(record)]=record;saveMatchCorrections();render();detail(id);
+  });
+  document.querySelectorAll('[data-undo-correction]').forEach(button=>button.onclick=()=>{const key=button.dataset.undoCorrection;matchCorrections[key]={...matchCorrections[key],deleted:true,updatedAt:new Date().toISOString()};saveMatchCorrections();render();detail(id)});
+  $('#syncCorrections').onclick=()=>startCloudSync();
   const temporary=()=>({purchaseCNY:$('#purchaseCNY').value,manualFeeCNY:$('#manualFeeCNY').value,shippingJPY:$('#shippingJPY').value});
   const preview=()=>{const next=effective(raw,temporary());$('#previewCost').textContent=money(next.costJPY);$('#previewCurrentProfit').textContent=money(next.currentProfitJPY);$('#previewAfterProfit').textContent=money(next.afterProfitJPY);$('#previewCurrentProfit').className=next.currentUnder1500?'bad':'';$('#previewAfterProfit').className=next.afterUnder1500?'bad':''};
   ['#purchaseCNY','#manualFeeCNY','#shippingJPY'].forEach(selector=>$(selector).addEventListener('input',preview));
@@ -419,7 +436,7 @@ async function startCloudSync(statusElement=$('#cloudSyncStatus')){
     const deleted=new Set(getDeleted()),byProfile=new Map();
     for(const item of [...(data.managedAccounts||[]),...getLocal()])if(item?.profileUrl&&!deleted.has(item.id))byProfile.set(item.profileUrl,{...item,enabled:true});
     const notificationEmail=String(localStorage.getItem(notificationEmailKey(currentUsername))||data?.portalUser?.notificationEmail||data?.portalPreferences?.[currentUsername]?.notificationEmail||'').trim().toLowerCase();
-    const payload={version:1,issuedAt:new Date().toISOString(),notificationEmail,manualCosts:syncCosts(),dismissedDiscoveries,discoveryReviews,managedAccounts:[...byProfile.values()],deletedAccountIds:[...deleted],
+    const payload={version:1,issuedAt:new Date().toISOString(),notificationEmail,manualCosts:syncCosts(),matchCorrections,dismissedDiscoveries,discoveryReviews,managedAccounts:[...byProfile.values()],deletedAccountIds:[...deleted],
       ...(currentUsername==='admin'?{portalUsers:data.portalUsers||[]}:{})};
     const ciphertext=await encryptPayload(payload),body=`<!-- PRICE_GUARD_SYNC_V1\n${ciphertext}\n-->\n\n这是一份由价格守卫生成的端到端加密同步数据。请勿修改上方密文。`;
     const title=`[Price Guard Sync:${currentUsername}] ${new Date().toLocaleString('zh-CN')}`;

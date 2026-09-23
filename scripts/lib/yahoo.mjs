@@ -1,4 +1,6 @@
 import { imageFingerprints,imageSetSimilarity,primaryProductSimilarity } from './image.mjs';
+import { offerIdentityGuard } from './offer-identity.mjs';
+import { rejectedByMemory } from '../../public/match-memory.js';
 import { descriptionColorMismatch } from './rules.mjs';
 import { coherentPrices,collectibleIdentityRequiresVisualProof,conditionCompatible,distinctiveCoverage,exactIdentityTitleEquivalent,hasExplicitDefect,hasExplicitVariantMismatch,isRejected,listingSpecificationEquivalent,listingTextEquivalent,lotterySeriesEquivalent,lotterySeriesNeedsVisualConfirmation,MATCHING_RULES_VERSION,packagedAssortmentEquivalent,productFamily,saleUnitEquivalent,semanticSameItem,titleScore,visualListingEquivalent } from './rules.mjs';
 
@@ -261,6 +263,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
     const accepted=[];
     for(const card of cards.sort((a,b)=>a.price-b.price)){
     if(card.id===item.id||!Number.isFinite(card.price))continue;
+    if(rejectedByMemory(settings.matchCorrections,item,'yahoo',card)){rejected.push({id:card.id,price:card.price,reason:'saved_user_correction'});continue}
     if(ownSellerId&&card.sellerId===ownSellerId){rejected.push({id:card.id,price:card.price,reason:'own_seller'});continue}
     if(isRejected(card.title)){rejected.push({id:card.id,price:card.price,reason:'title_rejected'});continue}
     const tScore=titleScore(exactQuery,card.title);
@@ -310,7 +313,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   const visualRecallLimit=Math.max(0,Math.min(30,Number(settings.yahooRecommendationFallbackMaxCards)||20));
   const visualRecallThreshold=Math.max(.80,Number(settings.yahooRecommendationVisualRecallThreshold)||.84);
   const visualRecallCards=cards.filter(card=>
-    !acceptedIds.has(card.id)&&card.id!==item.id&&card.sources?.includes('recommendation')&&card.image&&
+    !acceptedIds.has(card.id)&&card.id!==item.id&&!rejectedByMemory(settings.matchCorrections,item,'yahoo',card)&&card.sources?.includes('recommendation')&&card.image&&
     Number.isFinite(card.price)&&card.price<=Number(item.ownPrice)&&(!ownSellerId||card.sellerId!==ownSellerId)&&!isRejected(card.title)
   ).sort((a,b)=>a.price-b.price).slice(0,visualRecallLimit);
   const visualFingerprints=await Promise.all(visualRecallCards.map(card=>fingerprint(card.image)));
@@ -385,6 +388,8 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
       const detailFingerprints=detailImageEvidence.filter(Boolean);
       const imageScore=imageSetSimilarity(ownFingerprints,detailFingerprints);
       const primaryImageScore=primaryProductSimilarity(ownImageEvidence[0],detailImageEvidence[0]);
+      const sharedIdentity=offerIdentityGuard({ownTitle:ownDetail.title||item.title,ownDescription:ownDetail.description,candidateTitle:detail.title||'',candidateDescription:detail.description,ownCategory,candidateCategory:detailCategory,primaryImageScore});
+      if(!sharedIdentity.accepted){rejected.push({id:card.id,price:Number(detail.price),reason:sharedIdentity.reason,imageScore,primaryImageScore});continue}
       // Generic character/type titles identify neither the artwork nor colour.
       // Hash similarity over ANY photo (including identical logos/backs) is not
       // enough. Without near-identical primary evidence, leave these for review.
@@ -452,6 +457,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
     matchLabel,matchConfidence:competitors.length?'高':sourceCovered?'覆盖检查':'需复核',checkedAt:new Date().toISOString(),ownImages:[...new Set(ownImages)].slice(0,8),
     audit:{ownItemId:item.id,accountId:item.accountId||null,ownDetailLoaded:Boolean(ownDetail?.description?.trim()),rulesVersion:MATCHING_RULES_VERSION},
     ownDescription:ownDetail?.description||item.yahoo?.ownDescription||'',ownCategory,
+    ownListedAt:ownDetail?.openDate||null,ownListingId:item.id,
     searchCheckedAt:search?new Date().toISOString():(item.yahoo?.searchCheckedAt||item.yahoo?.checkedAt||null),
     sourceStatus:{search:search?'ok':broadSearchDue?'error':'rotating_cache',itemPage:ownBundle?'ok':'error'},searchError,itemPageError
   };

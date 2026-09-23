@@ -42,6 +42,7 @@ function safeEmail(value=''){
 }
 function html(value=''){return String(value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]))}
 function changeText(change){
+  if(change.after?.staleListingSuggested===true)return `30天未售，建议评估删除｜${change.title||change.id}`;
   const signal=change.signal||change.after?.priceSignal;
   const action=change.type==='added'?'新增':change.type==='removed'?'下架':signal==='raise'?'建议提价':signal==='lower'?'建议降价':'价格/利润变化';
   return `${action}｜${change.title||change.id}`;

@@ -3,6 +3,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { openContext } from './lib/browser.mjs';
 import { xianyuCost } from './lib/xianyu.mjs';
+import { fetchYahooItemBundle } from './lib/yahoo.mjs';
 
 const root=path.resolve(new URL('..',import.meta.url).pathname);
 const settings=JSON.parse(await fs.readFile(path.join(root,'config/settings.json'),'utf8'));
@@ -22,7 +23,8 @@ try{
   for(const item of selected){
     tested++;
     console.log('\n[PROOF ITEM]',item.id,item.xianyuQuery);
-    const result=await xianyuCost(page,item,{...settings,maxXianyuDetailChecks:8,maxXianyuSamples:5,scanDelayMs:800});
+    const own=await fetchYahooItemBundle(item.id,settings);
+    const result=await xianyuCost(page,{...item,description:own.detail?.description||'',yahoo:{ownDescription:own.detail?.description||'',ownImages:(own.detail?.images||[]).map(image=>typeof image==='string'?image:image.url).filter(Boolean)}},{...settings,maxXianyuDetailChecks:8,maxXianyuSamples:5,scanDelayMs:800});
     console.log('[PROOF RESULT]',JSON.stringify({id:item.id,status:result.status,cardCount:result.cardCount,preliminaryCount:result.preliminaryCount,verifiedCount:result.verifiedCount,sellerCount:result.sellerCount,averageCNY:result.averageCNY,rejected:result.rejected}));
     if(result.status==='ok'&&Number.isFinite(result.averageCNY))accepted++;
     if(['blocked','login_required'].includes(result.status)){console.error('[PROOF BLOCKED]',result.diagnostic||result.status);break}

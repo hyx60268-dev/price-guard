@@ -1,0 +1,10 @@
+[
+  {"case":"Fan Ho 三本和简介限定两本","ownTitle":"FAN HO 香港三部作 写真集","ownDescription":"新品 3冊セット","candidateTitle":"FAN HO 香港三部作 写真集","candidateDescription":"新品 黒とベージュセット売り、別売り不可","primaryImageScore":1,"expected":"sale_unit_mismatch"},
+  {"case":"星巴克蓝色和棕色","ownTitle":"スターバックス ボトル ブルー 370ml","ownDescription":"新品 未使用","candidateTitle":"スターバックス ボトル ブラウン 370ml","candidateDescription":"新品 未使用","primaryImageScore":1,"expected":"description_color_mismatch"},
+  {"case":"整端与单盒","ownTitle":"POP MART グローグー 1BOX 12個入り","ownDescription":"新品 未開封","candidateTitle":"POP MART グローグー 単品","candidateDescription":"新品 1個","primaryImageScore":1,"expected":"sale_unit_mismatch"},
+  {"case":"一台高达与双机组合","ownTitle":"MG ガンダム アストレイ 落英白","ownDescription":"新品 1個","candidateTitle":"MG ガンダム アストレイ","candidateDescription":"新品 2点セット","primaryImageScore":1,"expected":"sale_unit_mismatch"},
+  {"case":"Kitty 颈枕不同颜色但标题相同","ownTitle":"Hello Kitty TBH ネックピロー","ownDescription":"新品 未使用","candidateTitle":"Hello Kitty TBH ネックピロー","candidateDescription":"新品 未使用","primaryImageScore":0.87,"expected":"primary_variant_unconfirmed"},
+  {"case":"义勇立牌不同画面","ownTitle":"鬼滅の刃 冨岡義勇 アクリルスタンド","ownDescription":"新品 未使用","candidateTitle":"鬼滅の刃 冨岡義勇 アクリルスタンド","candidateDescription":"新品 未使用","primaryImageScore":0.90,"expected":"primary_variant_unconfirmed"},
+  {"case":"鸣人同角色不同卡图","ownTitle":"NARUTO うずまき ナルト KAYOU カード","ownDescription":"新品 未使用","candidateTitle":"NARUTO うずまき ナルト KAYOU カード","candidateDescription":"新品 未使用","primaryImageScore":0.91,"expected":"primary_variant_unconfirmed"},
+  {"case":"同款正例不能全部拒绝","ownTitle":"スターバックス ボトル ブルー 370ml","ownDescription":"新品 未使用","candidateTitle":"スターバックス ボトル ブルー 370ml","candidateDescription":"新品 未使用","primaryImageScore":1,"expected":null}
+]

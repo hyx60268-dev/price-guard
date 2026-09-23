@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { offerIdentityGuard } from './offer-identity.mjs';
 import { distinctiveTokens,hasExplicitDefect,hasVariantMismatch,isLikelyVariantOffer,isRejected,productFamily,semanticQuantity,titleScore } from './rules.mjs';
 import { positivePrice,verifiedCostEvidence,XIANYU_VERIFICATION } from './xianyu-evidence.mjs';
 
@@ -67,6 +68,8 @@ export function sameSaleProduct(left={},right={}){
 
 export function sameDiscoveryProduct(left={},right={}){
   const a=canonicalSaleTitle(left.title),b=canonicalSaleTitle(right.title);
+  // The discovery family check below includes its narrow plush/keychain alias.
+  if(!offerIdentityGuard({ownTitle:a,ownDescription:left.description||'',candidateTitle:b,candidateDescription:right.description||'',checkImages:false,checkFamily:false,requireDescriptions:false}).accepted)return false;
   if(!a||!b||hasVariantMismatch(a,b)||hasVariantMismatch(b,a))return false;
   const af=productFamily(a),bf=productFamily(b);
   const evidence=distinctiveTokenEvidence(a,b);
@@ -90,7 +93,7 @@ export function groupDiscoveryCandidates(candidates=[]){
   for(const candidate of candidates){
     if(!candidate?.sourceTitle)continue;
     let group=groups.find(current=>current.members.some(member=>sameDiscoveryProduct(
-      {title:member.sourceTitle},{title:candidate.sourceTitle}
+      {title:member.sourceTitle,description:member.sourceDescription},{title:candidate.sourceTitle,description:candidate.sourceDescription}
     )));
     if(!group){group={members:[]};groups.push(group)}
     group.members.push(candidate);

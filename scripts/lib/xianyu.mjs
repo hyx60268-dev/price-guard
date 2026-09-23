@@ -1,5 +1,7 @@
 import { cardsFromPage,settle } from './browser.mjs';
-import { coherentIndependentImages,imageFingerprints,imageSetSimilarity } from './image.mjs';
+import { coherentIndependentImages,imageFingerprints,imageSetSimilarity,primaryProductSimilarity } from './image.mjs';
+import { offerIdentityGuard } from './offer-identity.mjs';
+import { rejectedByMemory } from '../../public/match-memory.js';
 import { coherentPrices,collectibleIdentityRequiresVisualProof,conditionCompatible,hasExplicitDefect,hasExplicitVariantMismatch,hasVariantMismatch,isLikelyVariantOffer,productFamily,saleUnitEquivalent,semanticQuantity,semanticSameItem,titleScore,yen } from './rules.mjs';
 import { xianyuQueryFor } from './discovery.mjs';
 import { detailStateFailure,readXianyuDetailDOM,verifiedCostEvidence,XIANYU_VERIFICATION } from './xianyu-evidence.mjs';
@@ -34,7 +36,7 @@ function cardPrice(card={}){
   return plain?Number(plain[1]):yen(card.text);
 }
 
-async function verifyDetail(context,candidate,item,settings,ownFingerprints){
+async function verifyDetail(context,candidate,item,settings,ownFingerprints,ownPrimary){
   const query=item.xianyuQuery||xianyuQueryFor(item.title||'');
   const detail=await context.newPage();
   try{
@@ -55,6 +57,10 @@ async function verifyDetail(context,candidate,item,settings,ownFingerprints){
     const identityTitle=String(detailTitle)
       .split(/【(?:商品信息|商品状态|成色|包装|配送|温馨提示|提醒)】|(?:商品信息|商品状态|成色|包装|配送方式)[:：]/)[0]
       .replace(/\s+/g,' ').trim().slice(0,220)||String(candidate.title||'').slice(0,220);
+    const ownDescription=item.yahoo?.ownDescription||item.description||'';
+    const identityArgs={ownTitle:item.title||query,ownDescription,candidateTitle:identityTitle,candidateDescription:state.text,ownCategory:item.yahoo?.ownCategory||''};
+    const sharedText=offerIdentityGuard({...identityArgs,checkImages:false});
+    if(!sharedText.accepted)return {accepted:false,reason:sharedText.reason,detailTitle:identityTitle};
     const titleMatch=titleScore(query,identityTitle);
     const queryQuantity=semanticQuantity(query),candidateQuantity=semanticQuantity(identityTitle);
     const quantityMismatch=Number.isFinite(queryQuantity)&&Number.isFinite(candidateQuantity)&&queryQuantity!==candidateQuantity||
@@ -73,7 +79,11 @@ async function verifyDetail(context,candidate,item,settings,ownFingerprints){
     if(queryFamily&&candidateFamily!==queryFamily)return {accepted:false,reason:'physical_product_type_unconfirmed',detailTitle:identityTitle,titleMatch,queryFamily,candidateFamily};
     const semantic=semanticSameItem({query,candidate:`${identityTitle}\n${state.text}`});
     const bodyMatch=titleScore(query,state.text);
-    const detailFingerprints=(await mapLimit(state.images.slice(0,8),3,imageFingerprints)).filter(Boolean);
+    const detailImageEvidence=await mapLimit(state.images.slice(0,8),3,imageFingerprints);
+    const detailFingerprints=detailImageEvidence.filter(Boolean);
+    const primaryImageScore=primaryProductSimilarity(ownPrimary,detailImageEvidence[0]);
+    const sharedIdentity=offerIdentityGuard({...identityArgs,primaryImageScore});
+    if(!sharedIdentity.accepted)return {accepted:false,reason:sharedIdentity.reason,detailTitle:identityTitle,primaryImageScore};
     const imageScore=imageSetSimilarity(ownFingerprints,detailFingerprints);
     const independentImages=coherentIndependentImages(detailFingerprints,ownFingerprints,3);
     const textStrong=semantic.accepted&&(titleMatch>=.74||(titleMatch>=.52&&bodyMatch>=.82));
@@ -84,7 +94,7 @@ async function verifyDetail(context,candidate,item,settings,ownFingerprints){
     if(collectibleIdentityRequiresVisualProof(query,identityTitle)&&!(imageScore>=.86))return {accepted:false,reason:'detail_variant_image_unconfirmed',detailTitle:identityTitle,titleMatch,bodyMatch,imageScore};
     if(!textStrong||!(visualStrong||textualIdentityStrong))return {accepted:false,reason:!textStrong?'detail_title_mismatch':'detail_identity_unconfirmed',detailTitle:identityTitle,titleMatch,bodyMatch,imageScore,semanticReason:semantic.reason};
     const sellerKey=state.sellerKey;
-    return {accepted:true,reason:'detail_type_quantity_text_images_verified',price:state.price,priceSource:'target_detail',detailTitle:identityTitle,titleMatch,bodyMatch,imageScore,optionCount:state.optionCount,semantic,queryFamily,candidateFamily,sellerKey,
+    return {accepted:true,reason:'detail_type_quantity_text_images_verified',price:state.price,priceSource:'target_detail',detailTitle:identityTitle,titleMatch,bodyMatch,imageScore,primaryImageScore,optionCount:state.optionCount,semantic,queryFamily,candidateFamily,sellerKey,
       detailImages:state.images.slice(0,6),independentImages,imageSource:'xianyu'};
   }catch(error){return {accepted:false,reason:'detail_error',error:String(error)}}
   finally{await detail.close().catch(()=>{})}
@@ -122,12 +132,13 @@ export async function xianyuCost(page,item,settings){
   if(!cardCount&&(pageState.loginVisible||/login|signin/i.test(page.url())))return {query,searchUrl:url,status:'login_required',samples:[],averageCNY:null,cardCount,diagnostic:pageState.snippet};
 
   const ownUrls=[...(item.yahoo?.ownImages||[]),...(item.images||[]),item.image].filter(Boolean).slice(0,5);
-  const ownFingerprints=(await mapLimit([...new Set(ownUrls)],3,imageFingerprints)).filter(Boolean);
+  const ownImageEvidence=await mapLimit([...new Set(ownUrls)],3,imageFingerprints);
+  const ownFingerprints=ownImageEvidence.filter(Boolean);
   // 搜索卡片文字经常包含平台推荐词、系列名和不完整规格。旧逻辑在打开详情
   // 之前就用这些噪声判定规格，导致 20～30 张卡片全部被清空。首轮只解析
   // 价格；多规格、瑕疵、数量、正文和图片全部在详情页严格核验。
   const priced=cards.slice(0,30).map(card=>({...card,price:cardPrice(card)}));
-  const eligible=priced.filter(card=>Number.isFinite(card.price)&&card.price>1);
+  const eligible=priced.filter(card=>Number.isFinite(card.price)&&card.price>1&&!rejectedByMemory(settings.matchCorrections,item,'xianyu',card));
   const scored=await mapLimit(eligible,4,async card=>{
     const titleMatch=titleScore(query,card.title),fingerprint=card.image?await imageFingerprints(card.image):null;
     const imageScore=imageSetSimilarity(ownFingerprints,[fingerprint]);
@@ -144,7 +155,7 @@ export async function xianyuCost(page,item,settings){
   const preliminary=(signalled.length?signalled:ranked).slice(0,limit);
   const checks=[];
   for(const candidate of preliminary){
-    const check=await verifyDetail(page.context(),candidate,item,settings,ownFingerprints);checks.push(check);
+    const check=await verifyDetail(page.context(),candidate,item,settings,ownFingerprints,ownImageEvidence[0]);checks.push(check);
     if(['detail_blocked','detail_login_required'].includes(check.reason))break;
   }
   const verified=[],rejected=[];

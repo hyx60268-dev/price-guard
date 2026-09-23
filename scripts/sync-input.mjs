@@ -5,6 +5,8 @@ import { decrypt } from './lib/crypto.mjs';
 import { mergePortalUserRecords,portalUserRecordsForResult,portalUsersForResult,writeOutputs } from './lib/publish.mjs';
 import { accountIdFromProfile,calculateManualFields,manualCostFor,mergeDiscoveryReviews,mergeDismissedDiscoveries,mergeManualCosts } from './lib/state.mjs';
 import { decodeSyncBody } from './lib/sync-payload.mjs';
+import { acceptMatchCorrections } from './lib/match-corrections.mjs';
+import { invalidateCorrectedMatches } from '../public/match-memory.js';
 
 const here=path.dirname(fileURLToPath(import.meta.url)),root=path.resolve(here,'..');
 const password=process.env.DASHBOARD_PASSWORD;
@@ -42,13 +44,15 @@ const rawIncomingCosts=payload.manualCosts&&typeof payload.manualCosts==='object
 const incomingCosts=allowedAccountIds?Object.fromEntries(Object.entries(rawIncomingCosts).filter(([,record])=>allowedAccountIds.has(record?.accountId))):rawIncomingCosts;
 if(Object.keys(incomingCosts).length>1500)throw new Error('成本记录数量异常');
 const manualCosts=mergeManualCosts(previous.manualCosts||{},incomingCosts);
+const matchCorrections=acceptMatchCorrections(previous.matchCorrections||{},payload.matchCorrections||{},previous.items||[],allowedAccountIds);
 const incomingDismissed=username==='admin'&&payload.dismissedDiscoveries&&typeof payload.dismissedDiscoveries==='object'&&!Array.isArray(payload.dismissedDiscoveries)?payload.dismissedDiscoveries:{};
 if(Object.keys(incomingDismissed).length>3000)throw new Error('已上传记录数量异常');
 const dismissedDiscoveries=mergeDismissedDiscoveries(previous.dismissedDiscoveries||{},incomingDismissed);
 const incomingReviews=username==='admin'&&payload.discoveryReviews&&typeof payload.discoveryReviews==='object'&&!Array.isArray(payload.discoveryReviews)?payload.discoveryReviews:{};
 if(Object.keys(incomingReviews).length>3000)throw new Error('人工核验记录数量异常');
 const discoveryReviews=mergeDiscoveryReviews(previous.discoveryReviews||{},incomingReviews);
-const portalPreferences={...(previous.portalPreferences||{}),[username]:{notificationEmail:email,updatedAt:payload.issuedAt||new Date().toISOString()}};
+const portalPreferences={...(previous.portalPreferences||{})};
+if(Object.hasOwn(payload,'notificationEmail'))portalPreferences[username]={notificationEmail:email,updatedAt:payload.issuedAt||new Date().toISOString()};
 
 const settings=previous.settings||JSON.parse(await fs.readFile(path.join(root,'config','settings.json'),'utf8'));
 const configured=JSON.parse(await fs.readFile(path.join(root,'config','accounts.json'),'utf8')).accounts||[];
@@ -88,6 +92,7 @@ const defaultAccountId=configured.find(account=>account.enabled!==false)?.id;
 
 const relistAliases=previous.relistAliases||{};
 const items=(previous.items||[]).map(item=>({...item,accountId:item.accountId||defaultAccountId})).filter(item=>activeIds.has(item.accountId)).map(item=>{
+  item=invalidateCorrectedMatches(item,matchCorrections);
   const manual=manualCostFor(manualCosts,item,relistAliases);
   return {...item,...calculateManualFields(item,manual,settings)};
 });
@@ -105,7 +110,7 @@ for(const account of managedAccounts.filter(account=>account.enabled!==false))if
 }
 
 const cloudSyncedAt=new Date().toISOString();
-const result={...previous,version:6,cloudSyncedAt,dataRevision:cloudSyncedAt,settings,manualCosts,portalPreferences,dismissedDiscoveries,discoveryReviews,portalUsers:portalUserRecords,managedAccounts,accounts,items};
+const result={...previous,version:6,cloudSyncedAt,dataRevision:cloudSyncedAt,settings,manualCosts,matchCorrections,portalPreferences,dismissedDiscoveries,discoveryReviews,portalUsers:portalUserRecords,managedAccounts,accounts,items};
 const {summary}=await writeOutputs({root,result,previous,password});
 // A cost/account/upload sync also deploys the static site. Preserve the latest
 // encrypted discovery payload so that this lightweight deployment cannot blank

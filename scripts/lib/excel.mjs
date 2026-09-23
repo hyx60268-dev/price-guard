@@ -8,12 +8,14 @@ export async function makeWorkbook(result,path){
     ['建议价','recommendedPrice',12],['闲鱼参考均价(元)','averageCNY',16],['人工确认采购价(元)','manualPurchaseCNY',18],
     ['人肉费(元)','manualFeeCNY',13],['日本物流费(日元)','shippingJPY',16],['成本(日元)','costJPY',13],
     ['当前利润','currentProfitJPY',13],['调价后利润','afterProfitJPY',14],['预警','advice',22],['置信度','confidence',10],
-    ['Yahoo来源','yahooSource',12],['成本来源','costSource',12],['Yahoo商品','ownUrl',36],['最低价链接','lowestUrl',36],['闲鱼搜索','xianyuSearchUrl',36]
+    ['Yahoo来源','yahooSource',12],['成本来源','costSource',12],['Yahoo商品','ownUrl',36],['最低价链接','lowestUrl',36],['闲鱼搜索','xianyuSearchUrl',36],
+    ['在售至少天数','listingDays',16],['时间依据','listingAgeSource',22],['30天未售建议','listingAgeAdvice',48]
   ].map(([header,key,width])=>({header,key,width}));
   ws.getRow(1).font={bold:true,color:{argb:'FFFFFFFF'}};
   ws.getRow(1).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF17365D'}};
   for(const source of result.items){
     const row=ws.addRow({...source,
+      listingDays:source.listingAge?.days??null,listingAgeSource:source.listingAge?.source==='platform_open_date'?'平台上架日期':source.listingAge?.source==='first_observed'?'系统首次确认在售':'待确认',listingAgeAdvice:source.listingAge?.message||'',
       manualPurchaseCNY:source.manualPurchaseCNY??source.manualCost?.purchaseCNY??null,
       manualFeeCNY:source.manualFeeCNY??source.manualCost?.manualFeeCNY??null,
       shippingJPY:source.shippingJPY??source.manualCost?.shippingJPY??null

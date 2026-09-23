@@ -1,4 +1,5 @@
 import { advice,calculateCost } from './rules.mjs';
+import { mergeMatchCorrections } from '../../public/match-memory.js';
 
 const generic=/中国限定|海外限定|日本未発売|日本非売品|正規品|新品|未使用|未開封|公式|送料無料|匿名配送/gi;
 
@@ -115,6 +116,7 @@ export function reconcileDurableState(cache={},published={}){
     manualCosts:mergeManualCosts(cache.manualCosts||{},published.manualCosts||{}),
     dismissedDiscoveries:mergeDismissedDiscoveries(cache.dismissedDiscoveries||{},published.dismissedDiscoveries||{}),
     discoveryReviews:mergeDiscoveryReviews(cache.discoveryReviews||{},published.discoveryReviews||{}),
+    matchCorrections:mergeMatchCorrections(cache.matchCorrections||{},published.matchCorrections||{}),
     managedAccounts:mergeManagedAccounts(cache.managedAccounts||[],published.managedAccounts||[]),
     portalUsers:mergePortalUserRecords(cache.portalUsers||[],published.portalUsers||[]),
     ownedTitleHistory:[...new Set([...(cache.ownedTitleHistory||[]),...(published.ownedTitleHistory||[])])].slice(-5000),

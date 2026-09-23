@@ -1,6 +1,6 @@
 // A search card (or a recommendation below a blocked detail) is not a verified
 // offer. Keep this contract shared by the scanner, cache and discovery pipeline.
-export const XIANYU_VERIFICATION = 'target_detail_price_seller_v6';
+export const XIANYU_VERIFICATION = 'shared_offer_identity_detail_v7';
 
 export function positivePrice(value) {
   if(value===null||value===undefined||String(value).trim()==='')return null;

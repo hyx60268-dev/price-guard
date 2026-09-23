@@ -11,6 +11,8 @@ import { decrypt } from './lib/crypto.mjs';
 import { writeOutputs } from './lib/publish.mjs';
 import { calculateManualFields,manualCostFor,mergeAccountConfigs } from './lib/state.mjs';
 import { MATCHING_RULES_VERSION } from './lib/rules.mjs';
+import { invalidateCorrectedMatches } from '../public/match-memory.js';
+import { listingAge } from './lib/listing-age.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url)),root=path.resolve(here,'..');
 const readJson=file=>fs.readFile(file,'utf8').then(JSON.parse);
@@ -64,6 +66,8 @@ function cachedYahoo(prior,item,reason='fresh_cache'){
 }
 
 const previous=await previousSnapshot();
+const matchCorrections=previous?.matchCorrections||{};
+if(previous?.items)previous.items=previous.items.map(item=>invalidateCorrectedMatches(item,matchCorrections));
 const manualCosts=previous?.manualCosts||{};
 const portalPreferences=previous?.portalPreferences||{};
 const dismissedDiscoveries=previous?.dismissedDiscoveries||{};
@@ -131,7 +135,7 @@ await mapLimit(yahooTasks,yahooConcurrency,async(task,taskIndex)=>{
   }
   try{
     const profileSellerId=String(context.account.profileUrl||'').match(/\/user\/([^/?#]+)/i)?.[1]||'';
-    const result=await yahooCompare(null,item,{...settings,ownSellerId:item.sellerId||profileSellerId,forceYahooBroadSearch:forceYahoo||task.priority<=1});context.yahooById.set(item.id,result);
+    const result=await yahooCompare(null,item,{...settings,matchCorrections,ownSellerId:item.sellerId||profileSellerId,forceYahooBroadSearch:forceYahoo||task.priority<=1});context.yahooById.set(item.id,result);
     console.log(`[Yahoo ${taskIndex+1}/${yahooTasks.length}] ${context.account.name} ${item.id} cards=${result.cardCount} matches=${result.competitorCount} lowest=${result.lowestPrice} source=${result.sourceStatus?.search||'unknown'}`);
   }catch(error){
     console.error(`[Yahoo ERROR][${context.account.id}:${item.id}]`,String(error));
@@ -185,7 +189,7 @@ try{
     let result;
     try{
       const yc=context.yahooById.get(item.id)||{};
-      result=await xianyuCost(await ensureXianyuPage(),{...item,yahoo:{...(item.yahoo||{}),...yc}},settings);
+      result=await xianyuCost(await ensureXianyuPage(),{...item,yahoo:{...(item.yahoo||{}),...yc}},{...settings,matchCorrections});
       if(result.status==='login_required'&&xianyuMode==='saved'){
         xianyuAuthExpired=true;console.warn('[闲鱼授权] 目标详情需要登录，停止本轮闲鱼检查，不切换身份绕过');
       }
@@ -225,6 +229,8 @@ for(const context of contexts){
       averageCNY,confidence,yahooSource,costSource,needsXianyu,needsManualPurchase:needsXianyu&&!Number.isFinite(averageCNY)&&!Number.isFinite(manual?.purchaseCNY),
       yahoo:{...yc,lowestPrice,lowestUrl},xianyu:{...(prior.xianyu||{}),...xc,averageCNY,samples},
       xianyuSearchUrl:xc.searchUrl||prior.xianyuSearchUrl||`https://www.goofish.com/search?q=${encodeURIComponent(item.xianyuQuery||item.title||'')}`};
+    base.listingAge=listingAge(base,context.previousById.get(item.id)||{},context.profileStatus);
+    base.staleListingSuggested=base.listingAge.eligible;
     const calculated=calculateManualFields(base,manual,settings);
     if(yc.underpriced)calculated.advice='售价明显低于同款市场，建议提价';
     return {...base,...calculated};
@@ -264,7 +270,7 @@ const ownedTitleHistory=[...new Set([
 ].map(value=>String(value||'').trim()).filter(Boolean))].slice(-5000);
 const result={
   version:6,checkedAt,dataRevision:checkedAt,settings,accounts:accountResults,managedAccounts,portalUsers,
-  manualCosts,portalPreferences,dismissedDiscoveries,discoveryReviews,ownedTitleHistory,relistAliases,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode},items:allItems,
+  manualCosts,matchCorrections,portalPreferences,dismissedDiscoveries,discoveryReviews,ownedTitleHistory,relistAliases,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode},items:allItems,
   scanMeta:{codeSha:process.env.GITHUB_SHA||null,trigger:process.env.SCAN_TRIGGER||'local',startedAt:new Date(startedAt).toISOString(),durationSeconds:Math.round((Date.now()-startedAt)/1000),
     budgetMinutes:Number(settings.scanBudgetMinutes)||12,profileConcurrency,yahooConcurrency,xianyuLimit}
 };
