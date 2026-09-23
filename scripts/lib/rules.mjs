@@ -3,7 +3,7 @@ const badPattern = /(求购|收购|只收|蹲收|换物|交换|置换|补款|定
 const baitPattern = /(请点进去选项|点击立即购买查看|拍下改价|私聊改价|价格见图|图上价|多个角色|多款可选|任选|标价非实价|自带价|占位价|起步价|最低款价格|标价为最低|标价只是|页面价格不准)/i;
 const selectionPattern = /(请选择|选择规格|选择款式|选款|选图|拍哪款|下单备注|联系客服改价|私聊改价|各款价格|价格不一|每款价格|单独询价|需补差价|补差后发货|以详情价为准|详情价格为准)/i;
 const multiOfferPattern = /(多款|多角色|全系列|合集|系列任选|整套可拆|可拆卖)/i;
-export const MATCHING_RULES_VERSION = 12;
+export const MATCHING_RULES_VERSION = 13;
 
 // 同じIP/シリーズが中国語・日本語・英語や作者名で出品されるケースを、
 // 再利用できる別名辞書で同じ識別語へ寄せる。追加時は商品固有語だけを登録し、
@@ -340,8 +340,13 @@ function namedIdentityOmission(query='',candidate=''){
 // require a strong product-image match before accepting it as the same item.
 export function collectibleIdentityRequiresVisualProof(query='',candidate='',queryCategory='',candidateCategory=''){
   const leftFamily=productFamily(query,queryCategory),rightFamily=productFamily(candidate,candidateCategory);
-  const collectible=new Set(['figure','plush','keychain','model_kit','acrylic_stand','acrylic_block','acrylic_shaker']);
+  const collectible=new Set(['figure','plush','keychain','model_kit','acrylic_stand','acrylic_block','acrylic_shaker','card']);
   if(!leftFamily||leftFamily!==rightFamily||!collectible.has(leftFamily))return false;
+  // A character/series name does not identify one trading card.  The same Naruto
+  // character has many different KAYOU artworks, card numbers and rarities, and
+  // sellers often omit the number from the title.  Unless the physical card image
+  // itself agrees at the strong threshold, never use it as price evidence.
+  if(leftFamily==='card')return true;
   const text=normalizedJapanese(`${query}\n${candidate}`);
   const genericSeries=/(?:シリーズ|series|シークレット|secret|ランダム|random|ブラインド|ラインナップ\s*(?:数)?\s*[:：]?\s*\d+\s*種)/i.test(text);
   return genericSeries||namedIdentityOmission(query,candidate)||namedIdentityOmission(candidate,query);
@@ -369,7 +374,14 @@ export function identityVariantFacets(value=''){
     /(?:^|[\s　・:：【】()（）])((?:SSP|SSR|SEC|SS|SR|UR|LR|MR|SP|RRR|RR|R|N))(?=$|[\s　・:：【】()（）])/g,
     match=>match[1]
   ]]):new Set();
-  return {prizes,tarot,tarotNames,waves,anniversaries,cardGrades};
+  // Colours printed in the listing heading identify a concrete SKU.  Read only
+  // the heading so packaging/disclaimer prose cannot manufacture a conflict.
+  const heading=normalizedJapanese(listingHeading(value)).toUpperCase();
+  const colors=setFromMatches(heading,[[
+    /(?:^|[\s　・:：【】()（）/／_-])(ブルー|青|BLUE|ブラウン|茶|BROWN|ブラック|黒|BLACK|ホワイト|白|WHITE|レッド|赤|RED|ピンク|桃|PINK|グリーン|緑|GREEN|パープル|紫|PURPLE|イエロー|黄|YELLOW|オレンジ|橙|ORANGE|シルバー|銀|SILVER|ゴールド|金|GOLD|グレー|灰|GRAY|GREY|ベージュ|BEIGE|ネイビー|紺|NAVY|クリア|透明|CLEAR)(?=$|[\s　・:：【】()（）/／_-])/g,
+    match=>({青:'BLUE',ブルー:'BLUE',BLUE:'BLUE',茶:'BROWN',ブラウン:'BROWN',BROWN:'BROWN',黒:'BLACK',ブラック:'BLACK',BLACK:'BLACK',白:'WHITE',ホワイト:'WHITE',WHITE:'WHITE',赤:'RED',レッド:'RED',RED:'RED',桃:'PINK',ピンク:'PINK',PINK:'PINK',緑:'GREEN',グリーン:'GREEN',GREEN:'GREEN',紫:'PURPLE',パープル:'PURPLE',PURPLE:'PURPLE',黄:'YELLOW',イエロー:'YELLOW',YELLOW:'YELLOW',橙:'ORANGE',オレンジ:'ORANGE',ORANGE:'ORANGE',銀:'SILVER',シルバー:'SILVER',SILVER:'SILVER',金:'GOLD',ゴールド:'GOLD',GOLD:'GOLD',灰:'GRAY',グレー:'GRAY',GRAY:'GRAY',GREY:'GRAY',ベージュ:'BEIGE',BEIGE:'BEIGE',紺:'NAVY',ネイビー:'NAVY',NAVY:'NAVY',クリア:'CLEAR',透明:'CLEAR',CLEAR:'CLEAR'})[match[1]]||match[1]
+  ]]);
+  return {prizes,tarot,tarotNames,waves,anniversaries,cardGrades,colors};
 }
 
 function disjointNonEmpty(left,right){return left.size>0&&right.size>0&&![...left].some(value=>right.has(value))}
@@ -428,6 +440,7 @@ export function hasIdentityVariantMismatch(query='',candidate=''){
   return disjointNonEmpty(left.prizes,right.prizes)||disjointNonEmpty(left.tarot,right.tarot)||
     disjointNonEmpty(left.tarotNames,right.tarotNames)||disjointNonEmpty(left.waves,right.waves)||
     disjointNonEmpty(left.anniversaries,right.anniversaries)||disjointNonEmpty(left.cardGrades,right.cardGrades)||
+    disjointNonEmpty(left.colors,right.colors)||
     hasLotterySeriesMismatch(query,candidate)||namedIdentityConflict(query,candidate);
 }
 

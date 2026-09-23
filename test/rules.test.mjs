@@ -214,6 +214,23 @@ test('reported generic collectible titles require physical variant image proof',
     assert.equal(collectibleIdentityRequiresVisualProof(own,candidate,category,category),true,`${own} / ${candidate}`);
   }
 });
+test('reported Starbucks colours are different SKUs',()=>{
+  const blue='中国限定 スターバックス ステンレスボトル ヒョウ柄 レオパード グリッター ブルー 370ml';
+  const brown='中国限定 スターバックス ステンレスボトル ヒョウ柄 レオパード グリッター ブラウン 370ml';
+  assert.equal(productFamily(blue),'drinkware');
+  assert.equal(hasIdentityVariantMismatch(blue,brown),true);
+  assert.equal(hasVariantMismatch(blue,brown),true);
+  assert.equal(semanticSameItem({query:blue,candidate:brown}).accepted,false);
+  assert.equal(visualListingEquivalent({query:blue,candidate:brown,imageScore:.99}),false);
+});
+test('different trading-card artwork requires strong physical image proof',()=>{
+  const xr='NARUTO うずまき ナルト KAYOU XR カード';
+  const other='NARUTO -ナルト- うずまき ナルト KAYOU 海外公式品';
+  assert.equal(productFamily(xr),'card');
+  assert.equal(productFamily(other,'ポケモンカードゲーム'),'card');
+  assert.equal(collectibleIdentityRequiresVisualProof(xr,other,'カード','ポケモンカードゲーム'),true);
+  assert.equal(visualListingEquivalent({query:xr,candidate:other,queryCategory:'カード',candidateCategory:'ポケモンカードゲーム',imageScore:.63}),false);
+});
 test('sale units in descriptions block whole-box and two-kit false matches',()=>{
   const singleGrogu='POP MART スターウォーズ マンダロリアン グローグー フィギュア\n開封済み単品';
   const groguCase='新品 スターウォーズ popmart マンダロリアン グローグー\n未開封 1BOX販売、12個入り';
