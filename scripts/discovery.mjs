@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import zlib from 'node:zlib';
+import { loadXianyuSession } from './lib/xianyu-session.mjs';
 import { fileURLToPath } from 'node:url';
 import { openContext,settle } from './lib/browser.mjs';
 import { decrypt,encrypt } from './lib/crypto.mjs';
@@ -17,6 +17,7 @@ const DISCOVERY_VERSION=11;
 const readJson=file=>fs.readFile(file,'utf8').then(JSON.parse);
 const exists=file=>fs.access(file).then(()=>true).catch(()=>false);
 const wait=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
+let sessionManager;
 const settings=await readJson(path.join(root,'config','settings.json'));
 const accountsCfg=await readJson(path.join(root,'config','accounts.json'));
 const cfg={keyword:'中国限定',minPriceJPY:5001,windowDays:30,minSalesPerSeller:2,freshHours:6,seedLimitPerPlatform:200,sellerLimitPerPlatform:200,sellerCardLimit:160,sellerPages:2,mercariSearchScrolls:24,mercariSellerScrolls:8,maxProducts:30,maxProductsPerSeller:4,...(settings.discovery||{})};
@@ -169,6 +170,7 @@ async function refreshCachedDiscoveryCosts(prior){
     for(const item of pending){
       try{
         const xianyu=await xianyuCost(page,{id:item.id,title:item.sourceTitle,description:item.sourceDescription||'',xianyuQuery:item.xianyuQuery,image:item.sourceImages?.[0],images:item.sourceImages||[],yahoo:{ownImages:item.sourceImages||[]}},settings);
+        await sessionManager.persist(context,xianyu).catch(()=>console.warn('[闲鱼会话] 更新保存失败，保留原会话'));
         const validated=validDiscoveryXianyu(xianyu);
         Object.assign(item,{xianyu,purchaseCNY:validated.ready?xianyu.averageCNY:null,referenceCNY:xianyu.averageCNY,
           images:validated.images.length?validated.images:(item.images||[]),imageSource:validated.imageSource||item.imageSource,
@@ -196,15 +198,8 @@ if(prior&&!force&&isFresh(prior)){
   await publishExisting(refreshed);console.log(`选品发现使用 ${prior.checkedAt} 的缓存，共 ${refreshed.products?.length||0} 个候选，并续查待核验成本`);process.exit(0);
 }
 
-function xianyuStateFromEnv(){
-  const file=path.join(root,'.auth','xianyu.json');
-  const parts=['XIANYU_AUTH_PART_1','XIANYU_AUTH_PART_2','XIANYU_AUTH_PART_3'].map(key=>process.env[key]||'').join('');
-  if(parts){try{return fs.writeFile(file,zlib.gunzipSync(Buffer.from(parts,'base64'))).then(()=>file)}catch{}}
-  const gz=process.env.XIANYU_STORAGE_STATE_GZIP_B64;
-  if(gz){try{return fs.writeFile(file,zlib.gunzipSync(Buffer.from(gz,'base64'))).then(()=>file)}catch{}}
-  const raw=process.env.XIANYU_STORAGE_STATE_B64;
-  if(raw){try{return fs.writeFile(file,Buffer.from(raw,'base64')).then(()=>file)}catch{}}
-  return Promise.resolve(undefined);
+async function xianyuStateFromEnv(){
+  sessionManager=await loadXianyuSession(root);return sessionManager.file;
 }
 
 function cleanItemHref(href='',origin){
@@ -545,6 +540,7 @@ try{
     if(xianyuAuthRequired){Object.assign(item,{status:'needs_xianyu_review',purchaseCNY:null,images:[],confidence:'待核验：本轮闲鱼详情验证受阻',xianyu:{status:'deferred_auth'}});applyDiscoveryProfit(item);continue}
     try{
       const xianyu=await xianyuCost(xPage,{id:item.id,title:item.sourceTitle,description:item.sourceDescription||'',xianyuQuery:item.xianyuQuery,image:item.sourceImages[0],images:item.sourceImages,yahoo:{ownImages:item.sourceImages}},settings);
+      await sessionManager.persist(context,xianyu).catch(()=>console.warn('[闲鱼会话] 更新保存失败，保留原会话'));
       const validated=validDiscoveryXianyu(xianyu);Object.assign(item,{xianyu,purchaseCNY:validated.ready?xianyu.averageCNY:null,referenceCNY:xianyu.averageCNY,images:validated.images,
         imageSource:validated.imageSource,status:validated.ready?'ready':'needs_xianyu_review',xianyuSearchUrl:xianyu.searchUrl,confidence:validated.ready?'自动核验参考价':xianyuReviewLabel(xianyu.status),costVerification:validated});applyDiscoveryProfit(item);
       if(['login_required','blocked'].includes(xianyu.status))xianyuAuthRequired=true;

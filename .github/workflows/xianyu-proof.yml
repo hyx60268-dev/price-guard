@@ -8,6 +8,7 @@ on:
       - 'scripts/xianyu-proof.mjs'
       - 'scripts/lib/xianyu.mjs'
       - 'scripts/lib/rules.mjs'
+      - 'scripts/lib/xianyu-session.mjs'
 permissions:
   contents: read
 concurrency:
@@ -24,6 +25,17 @@ jobs:
           node-version: '20'
           cache: npm
       - run: npm ci
+      - name: 验证成本回归测试
+        run: npm test
+      - name: 恢复已验证的加密会话
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            state
+            public/data/share-images
+          key: price-guard-state-proof-${{ github.run_id }}
+          restore-keys: |
+            price-guard-state-
       - run: npx playwright install --with-deps chromium
       - name: 核验真实闲鱼成本
         run: node scripts/xianyu-proof.mjs
@@ -31,3 +43,5 @@ jobs:
           XIANYU_AUTH_PART_1: ${{ secrets.XIANYU_AUTH_PART_1 }}
           XIANYU_AUTH_PART_2: ${{ secrets.XIANYU_AUTH_PART_2 }}
           XIANYU_AUTH_PART_3: ${{ secrets.XIANYU_AUTH_PART_3 }}
+          XIANYU_STORAGE_STATE_GZIP_B64: ${{ secrets.XIANYU_STORAGE_STATE_GZIP_B64 }}
+          XIANYU_STORAGE_STATE_B64: ${{ secrets.XIANYU_STORAGE_STATE_B64 }}

@@ -36,7 +36,7 @@ function cardPrice(card={}){
   return plain?Number(plain[1]):yen(card.text);
 }
 
-async function verifyDetail(context,candidate,item,settings,ownFingerprints,ownPrimary){
+async function verifyDetail(context,candidate,item,settings,ownFingerprints,ownPrimary,onAccessible=()=>{}){
   const query=item.xianyuQuery||xianyuQueryFor(item.title||'');
   const detail=await context.newPage();
   try{
@@ -50,6 +50,7 @@ async function verifyDetail(context,candidate,item,settings,ownFingerprints,ownP
     }
     const failure=detailStateFailure(state);
     if(failure)return {accepted:false,reason:failure};
+    onAccessible();
     const ranked=(state.titles||[]).map(title=>({title,score:titleScore(query,title)})).sort((a,b)=>b.score-a.score);
     const detailTitle=ranked[0]?.title||'';
     // 闲鱼会把商品说明、推荐标签和同系列角色拼进 og:title/card 文本。
@@ -153,9 +154,9 @@ export async function xianyuCost(page,item,settings){
   const ranked=scored.sort((a,b)=>Math.max(b.imageScore??0,b.titleScore)-Math.max(a.imageScore??0,a.titleScore)||a.price-b.price);
   const signalled=ranked.filter(card=>card.titleScore>=.18||card.imageScore>=.52);
   const preliminary=(signalled.length?signalled:ranked).slice(0,limit);
-  const checks=[];
+  const checks=[];let accessibleDetailCount=0;
   for(const candidate of preliminary){
-    const check=await verifyDetail(page.context(),candidate,item,settings,ownFingerprints,ownImageEvidence[0]);checks.push(check);
+    const check=await verifyDetail(page.context(),candidate,item,settings,ownFingerprints,ownImageEvidence[0],()=>accessibleDetailCount++);checks.push(check);
     if(['detail_blocked','detail_login_required'].includes(check.reason))break;
   }
   const verified=[],rejected=[];
@@ -172,6 +173,6 @@ export async function xianyuCost(page,item,settings){
     loginVisible:pageState.loginVisible,preliminaryCount:preliminary.length,verifiedCount:verified.length,rejected:rejected.slice(0,12),
     pricedCardCount:eligible.length,unpricedCardCount:priced.length-eligible.length,
     topCandidates:ranked.slice(0,5).map(card=>({title:card.title.slice(0,120),titleScore:Number(card.titleScore.toFixed(3)),imageScore:Number.isFinite(card.imageScore)?Number(card.imageScore.toFixed(3)):null,price:card.price})),
-    sellerCount,priceSpread,
+    sellerCount,priceSpread,accessibleDetailCount,
     verification:XIANYU_VERIFICATION,checkedAt:new Date().toISOString(),method:'verified_detail_median_multi_image'};
 }

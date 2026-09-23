@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import zlib from 'node:zlib';
+import { loadXianyuSession } from './lib/xianyu-session.mjs';
 import { fileURLToPath } from 'node:url';
 import { openContext } from './lib/browser.mjs';
 import { discoverYahooProfile,yahooCompare } from './lib/yahoo.mjs';
@@ -19,6 +19,7 @@ const readJson=file=>fs.readFile(file,'utf8').then(JSON.parse);
 const exists=file=>fs.access(file).then(()=>true).catch(()=>false);
 const wait=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
 const startedAt=Date.now();
+let sessionManager;
 const settings=await readJson(path.join(root,'config','settings.json'));
 const accountsCfg=await readJson(path.join(root,'config','accounts.json'));
 const password=process.env.DASHBOARD_PASSWORD;
@@ -32,14 +33,7 @@ async function mapLimit(values,limit,worker){
 }
 
 async function xianyuStateFromEnv(){
-  const file=path.join(root,'.auth','xianyu.json');
-  const parts=['XIANYU_AUTH_PART_1','XIANYU_AUTH_PART_2','XIANYU_AUTH_PART_3'].map(key=>process.env[key]||'').join('');
-  if(parts){try{await fs.writeFile(file,zlib.gunzipSync(Buffer.from(parts,'base64')));return file}catch(error){console.warn('[闲鱼授权] 三段 Secret 无法解压：',String(error))}}
-  const gz=process.env.XIANYU_STORAGE_STATE_GZIP_B64;
-  if(gz){try{await fs.writeFile(file,zlib.gunzipSync(Buffer.from(gz,'base64')));return file}catch(error){console.warn('[闲鱼授权] GZIP Secret 无法解压：',String(error))}}
-  const raw=process.env.XIANYU_STORAGE_STATE_B64;
-  if(raw){try{await fs.writeFile(file,Buffer.from(raw,'base64'));return file}catch(error){console.warn('[闲鱼授权] 旧 Secret 无法解析：',String(error))}}
-  return undefined;
+  sessionManager=await loadXianyuSession(root);return sessionManager.file;
 }
 
 async function previousSnapshot(){
@@ -190,6 +184,7 @@ try{
     try{
       const yc=context.yahooById.get(item.id)||{};
       result=await xianyuCost(await ensureXianyuPage(),{...item,yahoo:{...(item.yahoo||{}),...yc}},{...settings,matchCorrections});
+      await sessionManager.persist(xContext,result).catch(()=>console.warn('[闲鱼会话] 更新保存失败，保留原会话'));
       if(result.status==='login_required'&&xianyuMode==='saved'){
         xianyuAuthExpired=true;console.warn('[闲鱼授权] 目标详情需要登录，停止本轮闲鱼检查，不切换身份绕过');
       }
