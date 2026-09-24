@@ -4,7 +4,7 @@ import { offerIdentityGuard } from './offer-identity.mjs';
 import { rejectedByMemory } from '../../public/match-memory.js';
 import { coherentPrices,collectibleIdentityRequiresVisualProof,conditionCompatible,hasExplicitDefect,hasExplicitVariantMismatch,hasVariantMismatch,isLikelyVariantOffer,productFamily,saleUnitEquivalent,semanticQuantity,semanticSameItem,titleScore,yen } from './rules.mjs';
 import { xianyuQueryFor } from './discovery.mjs';
-import { detailStateFailure,readXianyuDetailDOM,verifiedCostEvidence,XIANYU_VERIFICATION } from './xianyu-evidence.mjs';
+import { detailStateFailure,readXianyuDetailDOM,xianyuResultStatus,verifiedCostEvidence,XIANYU_VERIFICATION } from './xianyu-evidence.mjs';
 
 async function mapLimit(values,limit,worker){
   const output=new Array(values.length);let cursor=0;
@@ -45,11 +45,11 @@ async function verifyDetail(context,candidate,item,settings,ownFingerprints,ownP
     let state={};
     for(let attempt=0;attempt<5;attempt++){
       state=await detail.evaluate(readXianyuDetailDOM);
-      if(state.blocked||state.loginVisible||!detailStateFailure(state))break;
+      if(state.blocked||state.loginVisible||state.unavailable||state.networkError||!detailStateFailure(state))break;
       if(attempt<4)await detail.waitForTimeout(2000);
     }
     const failure=detailStateFailure(state);
-    if(failure)return {accepted:false,reason:failure};
+    if(failure)return {accepted:false,reason:failure,diagnostic:state.diagnostic};
     onAccessible();
     const ranked=(state.titles||[]).map(title=>({title,score:titleScore(query,title)})).sort((a,b)=>b.score-a.score);
     const detailTitle=ranked[0]?.title||'';
@@ -163,11 +163,11 @@ export async function xianyuCost(page,item,settings){
   checks.forEach((check,index)=>{
     const candidate=preliminary[index];
     if(check.accepted)verified.push({...candidate,...check,fingerprint:undefined});
-    else rejected.push({url:candidate.url,title:candidate.title,price:candidate.price,reason:check.reason,detailTitle:check.detailTitle,titleMatch:check.titleMatch,bodyMatch:check.bodyMatch,imageScore:check.imageScore,semanticReason:check.semanticReason,error:check.error});
+    else rejected.push({url:candidate.url,title:candidate.title,price:candidate.price,reason:check.reason,detailTitle:check.detailTitle,titleMatch:check.titleMatch,bodyMatch:check.bodyMatch,imageScore:check.imageScore,semanticReason:check.semanticReason,error:check.error,diagnostic:check.diagnostic});
   });
   const evidence=verifiedCostEvidence(coherentPrices(verified).slice(0,settings.maxXianyuSamples||5));
   const {samples:coherent,sellerCount,priceSpread,median:referenceCNY}=evidence;
-  const status=checks.some(check=>check.reason==='detail_blocked')?'blocked':checks.some(check=>check.reason==='detail_login_required')?'login_required':evidence.ready?'ok':cardCount?'manual_review':'page_empty';
+  const status=xianyuResultStatus(checks,{ready:evidence.ready,cardCount});
   return {query,usedQuery,searchAttempts,searchUrl:url,status,samples:coherent,averageCNY:status==='ok'?referenceCNY:null,cardCount,
     detailCheckedCount:checks.length,diagnostic:status==='blocked'?'目标详情触发安全验证；已停止本轮闲鱼检查':status==='login_required'?'目标详情要求登录；已停止本轮闲鱼检查':null,
     loginVisible:pageState.loginVisible,preliminaryCount:preliminary.length,verifiedCount:verified.length,rejected:rejected.slice(0,12),

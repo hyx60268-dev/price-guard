@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { openContext } from './lib/browser.mjs';
 import { discoverYahooProfile,yahooCompare } from './lib/yahoo.mjs';
 import { xianyuCost } from './lib/xianyu.mjs';
-import { XIANYU_VERIFICATION } from './lib/xianyu-evidence.mjs';
+import { XIANYU_VERIFICATION,completedXianyuReview } from './lib/xianyu-evidence.mjs';
 import { fairRoundRobin,inventoryDelta,isFresh,isFreshMinutes,reconcileLiveItems,verifiedXianyuCache } from './lib/planner.mjs';
 import { decrypt } from './lib/crypto.mjs';
 import { writeOutputs } from './lib/publish.mjs';
@@ -190,11 +190,12 @@ try{
       }
     }catch(error){console.error(`[闲鱼 ERROR][${item.id}]`,String(error));result={status:'error',error:String(error),samples:[],averageCNY:null}}
     result.checkedAt=result.checkedAt||new Date().toISOString();
+    if(completedXianyuReview(result)){result.reviewedAt=result.checkedAt;result.reviewVersion=XIANYU_VERIFICATION;}
     console.log(`[闲鱼结果] ${item.id} 状态=${result.status} 卡片=${result.cardCount??0} 初筛=${result.preliminaryCount??0} 核验=${result.verifiedCount??0} 卖家=${result.sellerCount??0} 参考=${result.averageCNY??'—'}`);
     if(result.rejected?.length){
       const reasons=Object.entries(result.rejected.reduce((map,row)=>{map[row.reason||'unknown']=(map[row.reason||'unknown']||0)+1;return map},{})).map(([reason,count])=>`${reason}:${count}`).join(', ');
       console.log(`[闲鱼拒绝原因] ${item.id} ${reasons}`);
-      for(const row of result.rejected.slice(0,2))console.log(`[闲鱼拒绝样本] ${item.id} 原因=${row.reason} 标题=${String(row.detailTitle||row.title||'').slice(0,100)} 标题分=${row.titleMatch??'—'} 图片分=${row.imageScore??'—'} 错误=${String(row.error||'').slice(0,180)}`);
+      for(const row of result.rejected.slice(0,2))console.log(`[闲鱼拒绝样本] ${item.id} 原因=${row.reason} 标题=${String(row.detailTitle||row.title||'').slice(0,100)} 标题分=${row.titleMatch??'—'} 图片分=${row.imageScore??'—'} 错误=${String(row.error||'').slice(0,180)} 详情字段=${JSON.stringify(row.diagnostic||{})}`);
     }
     if(result.status==='login_required'||result.status==='blocked')anyXianyuLoginRequired=true;
     context.xianyuById.set(item.id,result);
@@ -241,7 +242,7 @@ for(const context of contexts){
     yahooCached:yahooValues.filter(value=>value.status==='cached').length,
     yahooDeferred:yahooValues.filter(value=>value.status==='deferred_budget'||value.cacheReason==='scan_budget').length,
     xianyuRequested:xianyuValues.filter(value=>!['not_requested'].includes(String(value.status))).length,
-    xianyuScanned:xianyuValues.filter(value=>['ok','manual_review','page_empty','login_required','blocked','error'].includes(value.status)).length,
+    xianyuScanned:xianyuValues.filter(value=>['ok','manual_review','page_empty','login_required','blocked','detail_inaccessible','error'].includes(value.status)).length,
     xianyuVerifiedNew,
     xianyuCached:xianyuValues.filter(value=>value.status==='cached_verified').length,
     xianyuSkipped:xianyuValues.filter(value=>String(value.status).startsWith('skipped')||String(value.status).startsWith('deferred')).length,

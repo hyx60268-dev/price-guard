@@ -37,7 +37,7 @@ export async function loadXianyuSession(root,{env=process.env,now=Date.now(),log
   return {file,source,async persist(context,result){
     // Search cards alone are not access evidence. A failed login or challenge
     // cannot replace last-known usable state, even if an earlier detail worked.
-    if(!context||!result?.accessibleDetailCount||['blocked','login_required','error'].includes(result.status))return false;
+    if(!context||!result?.accessibleDetailCount||['blocked','login_required','detail_inaccessible','error'].includes(result.status))return false;
     const updated=await context.storageState({indexedDB:true});
     if(!validState(updated)||!updated.cookies.some(relevant))return false;
     const time=Date.now();if(time<lastSaved)return false;

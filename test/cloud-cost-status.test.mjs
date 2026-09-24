@@ -4,7 +4,7 @@ import { cloudCostStatus } from '../scripts/lib/cloud-cost-status.mjs';
 import { XIANYU_VERIFICATION } from '../scripts/lib/xianyu-evidence.mjs';
 
 const now = Date.parse('2026-09-23T12:00:00Z');
-const item = () => ({ averageCNY: 95, xianyu: { verification: XIANYU_VERIFICATION, checkedAt: new Date(now).toISOString(),
+const item = () => ({ averageCNY: 95, xianyu: { verification: XIANYU_VERIFICATION, checkedAt: new Date(now).toISOString(), reviewedAt: new Date(now).toISOString(), reviewVersion: XIANYU_VERIFICATION,
   samples: [{ id: '1', sellerKey: 'a', priceSource: 'target_detail', price: 90 }, { id: '2', sellerKey: 'b', priceSource: 'target_detail', price: 100 }] } });
 
 test('cloud cost does not accept search success, manual costs or zero references', () => {
@@ -32,4 +32,14 @@ test('a source failure remains failed even with historical valid references', ()
     assert.equal(result.accepted, false);
     assert.equal(result.verifiedReferences, 1);
   }
+});
+
+test('a verified cost cannot declare full coverage while other listings remain unreviewed',()=>{
+  const result=cloudCostStatus({items:[item(),{id:'pending',xianyu:{status:'deferred_limit'}}]},now);
+  assert.equal(result.status,'partial');assert.equal(result.accepted,false);
+  assert.deepEqual(result.coverage,{total:2,reviewed:1,remaining:1,complete:false});
+});
+test('source errors cannot declare successful acceptance, and missing inventory profiles block full coverage',()=>{
+  assert.equal(cloudCostStatus({items:[item()],accounts:[{profileStatus:'live',scanStats:{xianyuStatuses:{detail_inaccessible:1}}}]},now).status,'detail_inaccessible');
+  assert.equal(cloudCostStatus({items:[item()],accounts:[{profileStatus:'error'}]},now).accepted,false);
 });

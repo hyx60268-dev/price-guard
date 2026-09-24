@@ -7,6 +7,7 @@ on:
       - '.github/workflows/xianyu-proof.yml'
       - 'scripts/xianyu-proof.mjs'
       - 'scripts/lib/xianyu.mjs'
+      - 'scripts/lib/xianyu-evidence.mjs'
       - 'scripts/lib/rules.mjs'
       - 'scripts/lib/xianyu-session.mjs'
 permissions:
