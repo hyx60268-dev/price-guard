@@ -52,3 +52,23 @@ test('live inventory without hand-written Chinese query receives product-specifi
   assert.equal(xianyuQueryFor('中国限定 スターバックス ステンレスボトル ブルー 370ml'),'星巴克 不锈钢水杯 蓝色 370ml');
   assert.match(xianyuQueryFor('鬼滅の刃 新繹 時透無一郎 アクリルスタンド'),/鬼灭之刃 新绎 时透无一郎 亚克力立牌/);
 });
+
+
+import { offerIdentityGuard } from '../scripts/lib/offer-identity.mjs';
+import { hasExplicitVariantMismatch } from '../scripts/lib/rules.mjs';
+test('bilingual product entity names are not conflicting variants in all shop contexts',()=>{
+  for(const shop of ['メロン','桃香雅虎','老板雅虎']){
+    const source='原神 中国限定 星稚夢旅シリーズ フリンズ PETフォトカード';
+    const candidate='【全新未拆】原神 星稚梦旅系列 菲林斯款合影卡';
+    assert.equal(hasExplicitVariantMismatch(source,candidate),false,shop);
+    assert.equal(offerIdentityGuard({ownTitle:source,ownDescription:'新品・未使用。1枚。',candidateTitle:candidate,candidateDescription:'全新未拆，单张出售，PET材质。',checkImages:false}).accepted,true,shop);
+    assert.equal(offerIdentityGuard({ownTitle:source,ownDescription:'新品・未使用。1枚。',candidateTitle:candidate,candidateDescription:'全新未拆，单张出售，PET材质。'}).accepted,false,'images remain required');
+    assert.equal(hasExplicitVariantMismatch(source,candidate.replace('菲林斯','芙宁娜')),true,shop);
+    assert.equal(hasExplicitVariantMismatch('鬼滅の刃 新繹シリーズ 時透無一郎 アクリルスタンド','鬼灭之刃 新绎系列 不死川实弥 亚克力立牌'),true,shop);
+  }
+});
+
+test('search translation keeps specific card type and character before generic suffixes',()=>{
+  assert.equal(xianyuQueryFor('原神 中国限定 星稚夢旅シリーズ フリンズ PETフォトカード'),'原神 星稚梦旅系列 菲林斯 PET合影卡');
+  assert.equal(xianyuQueryFor('NARUTO コレクションカード'),'火影忍者 收藏卡');
+});

@@ -1,15 +1,8 @@
 name: 闲鱼成本快速验收
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/xianyu-proof.yml'
-      - 'scripts/xianyu-proof.mjs'
-      - 'scripts/lib/xianyu.mjs'
-      - 'scripts/lib/xianyu-evidence.mjs'
-      - 'scripts/lib/rules.mjs'
-      - 'scripts/lib/xianyu-session.mjs'
+  # Diagnostic runs are explicit; code pushes already start the main scanner.
+  # Do not launch a second authenticated Xianyu reader for the same push.
 permissions:
   contents: read
 concurrency:

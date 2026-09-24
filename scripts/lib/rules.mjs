@@ -3,7 +3,7 @@ const badPattern = /(求购|收购|只收|蹲收|换物|交换|置换|补款|定
 const baitPattern = /(请点进去选项|点击立即购买查看|拍下改价|私聊改价|价格见图|图上价|多个角色|多款可选|任选|标价非实价|自带价|占位价|起步价|最低款价格|标价为最低|标价只是|页面价格不准)/i;
 const selectionPattern = /(请选择|选择规格|选择款式|选款|选图|拍哪款|下单备注|联系客服改价|私聊改价|各款价格|价格不一|每款价格|单独询价|需补差价|补差后发货|以详情价为准|详情价格为准)/i;
 const multiOfferPattern = /(多款|多角色|全系列|合集|系列任选|整套可拆|可拆卖)/i;
-export const MATCHING_RULES_VERSION = 15;
+export const MATCHING_RULES_VERSION = 16;
 
 // 同じIP/シリーズが中国語・日本語・英語や作者名で出品されるケースを、
 // 再利用できる別名辞書で同じ識別語へ寄せる。追加時は商品固有語だけを登録し、
@@ -14,6 +14,15 @@ function canonicalProductText(value='') {
     // for this same Pokemon collection name.  Keep this product-specific alias
     // here rather than weakening the generic token matcher.
     .replace(/(?:絵夢点睛|絵夢点晴|绘梦点睛|繪夢點睛|梦点睛|夢点睛)/gi,' emutenkai ')
+    // Exact bilingual entity aliases. These normalize names, never erase an
+    // unknown character, card grade, colour or sale unit to force a match.
+    .replace(/(?:星稚夢旅|星稚梦旅)(?:シリーズ|系列)?/g,' 星稚梦旅 ')
+    .replace(/(?:フリンズ|菲林斯)(?:款)?/g,' 菲林斯 ')
+    .replace(/(?:鬼滅の刃|鬼灭之刃)/g,' 鬼灭之刃 ')
+    .replace(/(?:新繹|新绎)(?:シリーズ|系列)?/g,' 新绎 ')
+    .replace(/(?:時透無一郎|时透无一郎)/g,' 时透无一郎 ')
+    .replace(/(?:不死川実弥|不死川实弥)/g,' 不死川实弥 ')
+    .replace(/(?:冨岡義勇|富岡義勇|富冈义勇)/g,' 富冈义勇 ')
     .replace(/(?:greedy\s*bear|greedybear|貪吃熊|贪吃熊|食いしん坊(?:クマ|熊|ベア)|くいしんぼう(?:クマ|熊|ベア))/gi,' greedybear ')
     .replace(/(?:sure\s*fun|surefun|may\s*mei|maymei|メイメイ)/gi,' maymei ')
     .replace(/(?:metheus|薪火)/gi,' metheus ')

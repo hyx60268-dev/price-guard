@@ -238,6 +238,7 @@ export function discoveryId(platform,sellerId,title=''){
 }
 
 const chineseNames=new Map([
+  ['星稚夢旅シリーズ','星稚梦旅系列'],['星稚夢旅','星稚梦旅'],['フリンズ','菲林斯'],
   ['スターバックス','星巴克'],['ステンレス','不锈钢'],['ブルー','蓝色'],['ブラウン','棕色'],['ブラック','黑色'],['ホワイト','白色'],
   ['時透無一郎','时透无一郎'],['不死川実弥','不死川实弥'],['冨岡義勇','富冈义勇'],['富岡義勇','富冈义勇'],['新繹','新绎'],
   ['ジョジョの奇妙な冒険','JOJO的奇妙冒险'],['ジョニィ','乔尼'],['エイリアンステージ','异星舞台'],['ルカ','LUKA'],
@@ -248,13 +249,14 @@ const chineseNames=new Map([
   ['ポケットモンスター','宝可梦'],['ポケモン','宝可梦'],['ちいかわ','吉伊卡哇'],['ハチワレ','小八'],['うさぎ','乌萨奇'],
   ['原神','原神'],['鳴潮','鸣潮'],['第五人格','第五人格'],['ドラゴンボール','龙珠'],['ナルト','火影忍者'],['NARUTO','火影忍者'],
   ['アクリルスタンド','亚克力立牌'],['アクスタ','亚克力立牌'],['ぬいぐるみ','毛绒玩偶'],['マスコット','挂件'],
-  ['キーホルダー','钥匙扣'],['フィギュア','手办'],['缶バッジ','徽章'],['トレカ','小卡'],['フォトカード','小卡'],
+  ['キーホルダー','钥匙扣'],['フィギュア','手办'],['缶バッジ','徽章'],['トレカ','小卡'],['フォトカード','合影卡'],
   ['ポストカード','明信片'],['タンブラー','随行杯'],['ボトル','水杯'],['マグカップ','马克杯']
 ]);
 
 export function xianyuQueryFor(title=''){
   let query=canonicalSaleTitle(title);
-  for(const [japanese,chinese] of chineseNames)query=query.replaceAll(japanese,chinese);
+  // Longest names first: カード must not consume フォトカード or コレクションカード.
+  for(const [japanese,chinese] of [...chineseNames].sort((a,b)=>b[0].length-a[0].length))query=query.replaceAll(japanese,chinese);
   return query.replace(/(?:セット|全\d+種|\d+点|限定品)/gi,match=>match.replace('セット','套装').replace('点','件').replace('限定品','限定'))
     .replace(/\s+/g,' ').trim().slice(0,80);
 }
