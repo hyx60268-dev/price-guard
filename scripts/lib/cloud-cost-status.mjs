@@ -29,14 +29,18 @@ export function cloudCostStatus(result = {}, now = Date.now()) {
   const profilesComplete=(result.accounts||[]).every(account=>account.profileStatus==='live');
   const coverage={total:inventory.length,reviewed,remaining:inventory.length-reviewed,complete:inventory.length>0&&reviewed===inventory.length&&profilesComplete};
   const inaccessible=Boolean(statuses.detail_inaccessible||statuses.error);
+  const access=result.login?.xianyuAccess;
+  const cooling=access?.allowed===false;
   const blocked = Boolean(statuses.blocked);
   const loginRequired = Boolean(statuses.login_required || result.login?.xianyuAuthExpired || result.login?.xianyuRequired && !blocked);
-  const status = blocked ? 'blocked' : loginRequired ? 'login_required' :
+  const status = blocked ? 'blocked' : cooling ? 'access_cooldown' : loginRequired ? 'login_required' :
     inaccessible ? 'detail_inaccessible' : verified.length ? (coverage.complete?'verified':'partial') : attempted ? 'no_verified_cost' : 'not_verified';
   return { execution: 'cloud', status, accepted: status === 'verified',
     attempted, newlyVerified, verifiedReferences: verified.length, coverage, statuses, reasons,
+    access:access?{reason:access.reason,retryAt:access.retryAt,allowed:access.allowed}:undefined,
     message: {
       blocked: '闲鱼详情安全验证受阻，云端自动成本未通过验收',
+      access_cooldown: '闲鱼访问受阻后正在冷却，自动成本尚未恢复；不会重复请求验证页面',
       login_required: '云端登录状态不能访问闲鱼详情，自动成本未通过验收',
       detail_inaccessible: '闲鱼目标详情读取失败，本轮未完成成本核验',
       partial: '已有自动参考，但全量商品尚未完成核验',

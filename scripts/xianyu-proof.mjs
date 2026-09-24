@@ -10,6 +10,7 @@ const settings=JSON.parse(await fs.readFile(path.join(root,'config/settings.json
 const catalog=JSON.parse(await fs.readFile(path.join(root,'config/catalogs/melon.json'),'utf8')).items||[];
 const sessionManager=await loadXianyuSession(root);
 const stateFile=sessionManager.file;
+if(!sessionManager.access().allowed){console.error('[PROOF COOLDOWN]',JSON.stringify(sessionManager.access()));process.exit(1)}
 const selected=catalog.filter(item=>item.xianyuQuery&&item.image).slice(0,3);
 const {browser,context}=await openContext(stateFile);
 const page=await context.newPage();

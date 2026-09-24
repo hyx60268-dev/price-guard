@@ -292,9 +292,9 @@ function render(){
   }
   const list=items(),scan=current.scanStats||{},date=new Date(data.checkedAt);
   $('#stamp').textContent=`最近检查：${Number.isNaN(date.valueOf())?'等待首次扫描':date.toLocaleString('zh-CN')} · 页面会自动接收新结果`;
-  const login=data.login||{};$('#loginNotice').hidden=!(login.xianyuRequired||login.xianyuAuthExpired);
-  $('#loginTitle').textContent=login.xianyuAuthExpired?'闲鱼目标详情需要重新登录':'闲鱼目标详情验证受阻';
-  $('#loginText').textContent='已停止本轮闲鱼检查，不使用下方推荐商品代替目标详情。人工采购成本保留；不符合新版详情、实价及独立卖家证据的历史自动参考需重新核验。';
+  const login=data.login||{},accessCooling=login.xianyuAccess?.allowed===false;$('#loginNotice').hidden=!(accessCooling||login.xianyuRequired||login.xianyuAuthExpired);
+  $('#loginTitle').textContent=accessCooling?'闲鱼访问受阻，已暂停重复请求':login.xianyuAuthExpired?'闲鱼目标详情需要重新登录':'闲鱼目标详情验证受阻';
+  $('#loginText').textContent=accessCooling?`自动成本尚未恢复。将在 ${new Date(login.xianyuAccess.retryAt).toLocaleString('zh-CN')} 之后的扫描重新检查；Yahoo比价继续运行。已填写的采购成本保留。`:'已停止本轮闲鱼检查，不使用下方推荐商品代替目标详情。人工采购成本保留；不符合新版详情、实价及独立卖家证据的历史自动参考需重新核验。';
   const changes=data.changes;$('#changeNotice').hidden=!changes?.hasChanges;
   $('#changeText').textContent=changes?.hasChanges?`本次共 ${changes.total} 项变化：新增 ${changes.added}、下架 ${changes.removed}、价格/利润变化 ${changes.updated}。`:'';
   $('#profileLink').href=current.profileUrl;
@@ -304,10 +304,10 @@ function render(){
   if(allAccountsSelected()){
     const accounts=cloudAccounts(),totals=accounts.reduce((sum,value)=>({yahooLive:sum.yahooLive+(value.scanStats?.yahooLive||0),yahooCached:sum.yahooCached+(value.scanStats?.yahooCached||0),yahooDeferred:sum.yahooDeferred+(value.scanStats?.yahooDeferred||0),xianyuScanned:sum.xianyuScanned+(value.scanStats?.xianyuScanned||0),xianyuVerifiedNew:sum.xianyuVerifiedNew+(value.scanStats?.xianyuVerifiedNew||0),xianyuCached:sum.xianyuCached+(value.scanStats?.xianyuCached||0)}),{yahooLive:0,yahooCached:0,yahooDeferred:0,xianyuScanned:0,xianyuVerifiedNew:0,xianyuCached:0});
     $('#profileLink').removeAttribute('href');$('#accountSync').textContent=`总览 ${accounts.length} 个账号 · 每个账号的数据、成本和利润单独保存`;
-    $('#statusGrid').innerHTML=statusCard('账号',`${accounts.length} 个账号 / ${list.length} 件在售`,accounts.every(value=>value.profileStatus==='live')?'good':'warn')+statusCard('Yahoo比价',`实时 ${totals.yahooLive} / 缓存 ${totals.yahooCached} / 延后 ${totals.yahooDeferred}`,totals.yahooDeferred?'warn':'good')+statusCard('闲鱼采购参考',`尝试 ${totals.xianyuScanned} / 本轮新增 ${totals.xianyuVerifiedNew} / 历史 ${totals.xianyuCached}`,data.login?.xianyuRequired||data.login?.xianyuAuthExpired?'bad':totals.xianyuVerifiedNew+totals.xianyuCached>0?'good':'warn')+statusCard('低价异常',`${list.filter(item=>item.yahoo?.underpriced).length} 件`,'warn');
+    $('#statusGrid').innerHTML=statusCard('账号',`${accounts.length} 个账号 / ${list.length} 件在售`,accounts.every(value=>value.profileStatus==='live')?'good':'warn')+statusCard('Yahoo比价',`实时 ${totals.yahooLive} / 缓存 ${totals.yahooCached} / 延后 ${totals.yahooDeferred}`,totals.yahooDeferred?'warn':'good')+statusCard('闲鱼采购参考',`尝试 ${totals.xianyuScanned} / 本轮新增 ${totals.xianyuVerifiedNew} / 历史 ${totals.xianyuCached}`,accessCooling||data.login?.xianyuRequired||data.login?.xianyuAuthExpired?'bad':totals.xianyuVerifiedNew+totals.xianyuCached>0?'good':'warn')+statusCard('低价异常',`${list.filter(item=>item.yahoo?.underpriced).length} 件`,'warn');
   }else $('#statusGrid').innerHTML=statusCard('Yahoo主页',current.profileStatus==='live'?`${list.length} 件在售`:'使用保存清单',current.profileStatus==='live'?'good':'warn')+
     statusCard('Yahoo比价',`实时 ${scan.yahooLive??0} / 缓存 ${scan.yahooCached??0} / 延后 ${scan.yahooDeferred??0}`,(scan.yahooDeferred||0)?'warn':'good')+
-    statusCard('闲鱼采购参考',`尝试 ${scan.xianyuScanned??0} / 本轮新增 ${scan.xianyuVerifiedNew??0} / 历史 ${scan.xianyuCached??0}`,data.login?.xianyuRequired||data.login?.xianyuAuthExpired?'bad':(scan.xianyuVerifiedNew||0)+(scan.xianyuCached||0)>0?'good':'warn')+
+    statusCard('闲鱼采购参考',`尝试 ${scan.xianyuScanned??0} / 本轮新增 ${scan.xianyuVerifiedNew??0} / 历史 ${scan.xianyuCached??0}`,accessCooling||data.login?.xianyuRequired||data.login?.xianyuAuthExpired?'bad':(scan.xianyuVerifiedNew||0)+(scan.xianyuCached||0)>0?'good':'warn')+
     statusCard('成本数据',`已完整 ${savedCosts}/${list.length}`,savedCosts===list.length?'good':'warn');
   $('#kpis').innerHTML=stats().map(([label,value])=>`<div class="kpi"><strong>${value}</strong><span>${label}</span></div>`).join('');
   const filtered=selected(),pageCount=Math.max(1,Math.ceil(filtered.length/PAGE_SIZE));pricingPage=Math.min(Math.max(1,pricingPage),pageCount);

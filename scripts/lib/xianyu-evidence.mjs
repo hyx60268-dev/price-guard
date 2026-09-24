@@ -12,7 +12,7 @@ export function detailStateFailure(state={}) {
   if(state.loginVisible)return 'detail_login_required';
   if(state.unavailable)return 'detail_unavailable';
   if(state.networkError)return 'detail_network_error';
-  if(!state.titles?.length||!state.text||state.text.length<20)return 'detail_unreadable';
+  if(!state.titles?.length||!state.text?.trim())return 'detail_unreadable';
   if(!positivePrice(state.price))return 'detail_price_unconfirmed';
   if(!state.sellerKey)return 'detail_seller_unconfirmed';
   if(!state.images?.length)return 'detail_images_unconfirmed';
@@ -79,4 +79,23 @@ export function xianyuResultStatus(checks=[],{ready=false,cardCount=0}={}) {
 
 export function completedXianyuReview(cost={}) {
   return cost.verification===XIANYU_VERIFICATION&&['ok','manual_review','page_empty'].includes(cost.status);
+}
+
+// Every check is still the full physical-offer verifier. Stop as soon as the
+// existing independent-seller contract is met; extra reads can only add load.
+export async function collectXianyuDetails(candidates, verify, coherent = rows => rows) {
+  const checks=[], accepted=[];
+  for(const candidate of candidates){
+    const check=await verify(candidate);checks.push(check);
+    if(['detail_blocked','detail_login_required'].includes(check.reason))break;
+    if(check.accepted)accepted.push({...candidate,...check});
+    if(verifiedCostEvidence(coherent(accepted)).ready)break;
+  }
+  return checks;
+}
+
+// Japan-import middlemen already fail the detail offer guard. Exclude their
+// explicitly labelled search cards before spending scarce detail requests.
+export function xianyuSearchExclusion(card={}) {
+  return /日本代购|煤炉代购/i.test(String(card.title||''))?'japan_import_not_procurement':null;
 }

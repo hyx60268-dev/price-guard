@@ -165,6 +165,12 @@ async function refreshCachedDiscoveryCosts(prior){
   }).sort((a,b)=>(Date.parse(a.xianyu?.checkedAt||'')||0)-(Date.parse(b.xianyu?.checkedAt||'')||0)).slice(0,Number(cfg.costRefreshLimit||10));
   if(!pending.length)return {...prior,products};
   const authState=await xianyuStateFromEnv();let browser,context,page;
+  const access=sessionManager.access(),latest=await latestPriceSnapshot();
+  const recentBlocked=latest?.login?.xianyuRequired&&Date.now()-Date.parse(latest.checkedAt)<60*60_000;
+  if(!access.allowed||recentBlocked){
+    console.log(`[选品成本续查暂停] ${access.reason||'本轮扫描验证受阻'}；下次允许检查=${access.retryAt||'下一轮重新评估'}`);
+    return {...prior,products,login:{...prior.login,xianyuRequired:true,xianyuAccess:access}};
+  }
   try{
     const opened=await openContext(authState);browser=opened.browser;context=opened.context;page=await context.newPage();
     for(const item of pending){
@@ -505,7 +511,7 @@ function aggregateAcrossPlatforms(candidates=[]){
 }
 
 const errors=[],authState=await xianyuStateFromEnv();
-let browser,context,xPage,xianyuAuthRequired=false;
+let browser,context,xPage,xianyuAuthRequired=!sessionManager.access().allowed;
 const sourceCandidates=[];
 const sellerAttempts={mercari:{...(prior?.sellerAttempts?.mercari||{})},yahoo:{...(prior?.sellerAttempts?.yahoo||{})}};
 const sourceScanStats={mercariRawCards:0,mercariMarkedSeeds:0,mercariSeeds:0,mercariSellers:0,mercariSellerCards:0,mercariRepeatedGroups:0,mercariSearchPages:0,mercariSellerPages:0,mercariSearchPageCaps:0,mercariSellerPageCaps:0,mercariMissingDate:0,yahooSeeds:0,yahooSellers:0,yahooSearchPages:0,yahooSellerPages:0,yahooSellerCards:0,yahooMissingSaleDate:0};

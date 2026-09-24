@@ -3,6 +3,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import crypto from 'node:crypto';
 import { encrypt, decrypt } from './crypto.mjs';
+import { loadXianyuAccess } from './xianyu-access.mjs';
 
 const hash=value=>crypto.createHash('sha256').update(value).digest('hex');
 const validState=state=>state&&Array.isArray(state.cookies)&&Array.isArray(state.origins)&&state.cookies.every(cookie=>cookie&&typeof cookie.name==='string'&&typeof cookie.value==='string'&&typeof cookie.domain==='string');
@@ -23,8 +24,13 @@ export async function loadXianyuSession(root,{env=process.env,now=Date.now(),log
       state=candidate;seed=value;source=label;break;
     }catch{log(`[闲鱼会话] ${label} 格式无效，未输出授权内容`)}
   }
-  if(!state){log('[闲鱼会话] 没有可加载的授权文件');return {file:undefined,source:'anonymous',persist:async()=>false}}
+  if(!state){
+    log('[闲鱼会话] 没有可加载的授权文件');
+    const gate=await loadXianyuAccess(root,hash('price-guard/anonymous-access/v1'));
+    return {file:undefined,source:'anonymous',access:gate.access,persist:async(_context,result)=>{await gate.record(result);return false}}
+  }
   const key=hash(`price-guard/xianyu-session/v1\n${seed}`),seedId=hash(seed);
+  const gate=await loadXianyuAccess(root,key);
   const cache=path.join(root,'state','xianyu-session.json.enc');let lastSaved=0;
   try{
     const saved=JSON.parse(decrypt(await fs.readFile(cache),key).toString()),time=Date.parse(saved.verifiedAt||'');
@@ -34,7 +40,8 @@ export async function loadXianyuSession(root,{env=process.env,now=Date.now(),log
   log(`[闲鱼会话] 来源=${source} 相关Cookie=${cookies.length} 已过期=${expired}；加载不代表详情访问成功`);
   const file=path.join(root,'.auth','xianyu.json');
   await fs.mkdir(path.dirname(file),{recursive:true});await fs.writeFile(file,JSON.stringify(state),{mode:0o600});
-  return {file,source,async persist(context,result){
+  return {file,source,access:gate.access,async persist(context,result){
+    await gate.record(result);
     // Search cards alone are not access evidence. A failed login or challenge
     // cannot replace last-known usable state, even if an earlier detail worked.
     if(!context||!result?.accessibleDetailCount||['blocked','login_required','error'].includes(result.status))return false;

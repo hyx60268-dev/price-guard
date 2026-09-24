@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { loadXianyuSession } from './lib/xianyu-session.mjs';
+import { deferredXianyuAccess } from './lib/xianyu-access.mjs';
 import { fileURLToPath } from 'node:url';
 import { openContext } from './lib/browser.mjs';
 import { discoverYahooProfile,yahooCompare } from './lib/yahoo.mjs';
@@ -138,6 +139,8 @@ await mapLimit(yahooTasks,yahooConcurrency,async(task,taskIndex)=>{
 });
 
 const xianyuState=await xianyuStateFromEnv();
+const initialAccess=sessionManager.access();
+if(!initialAccess.allowed)console.log(`[闲鱼访问冷却] 原因=${initialAccess.reason} 下次允许检查=${initialAccess.retryAt}；本轮继续Yahoo与网页发布`);
 let xBrowser,xContext,xPage,xianyuMode=xianyuState?'saved':'anonymous',xianyuAuthExpired=false,anyXianyuLoginRequired=false;
 async function ensureXianyuPage(){
   if(xPage)return xPage;
@@ -178,6 +181,7 @@ try{
     // still run afterwards; otherwise a large inventory permanently starves cost
     // refreshes before they start.
     if(index>=xianyuLimit){context.xianyuById.set(item.id,{status:'deferred_limit',samples:[],averageCNY:null});continue}
+    if(!sessionManager.access().allowed){context.xianyuById.set(item.id,deferredXianyuAccess(sessionManager.access()));continue}
     if(anyXianyuLoginRequired){context.xianyuById.set(item.id,{status:'deferred_auth',samples:[],averageCNY:null});continue}
     console.log(`[闲鱼 ${index+1}/${Math.min(xianyuTasks.length,xianyuLimit)}] ${context.account.name} ${item.title}`);
     let result;
@@ -266,7 +270,7 @@ const ownedTitleHistory=[...new Set([
 ].map(value=>String(value||'').trim()).filter(Boolean))].slice(-5000);
 const result={
   version:6,checkedAt,dataRevision:checkedAt,settings,accounts:accountResults,managedAccounts,portalUsers,
-  manualCosts,matchCorrections,portalPreferences,dismissedDiscoveries,discoveryReviews,ownedTitleHistory,relistAliases,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode},items:allItems,
+  manualCosts,matchCorrections,portalPreferences,dismissedDiscoveries,discoveryReviews,ownedTitleHistory,relistAliases,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode,xianyuAccess:sessionManager.access()},items:allItems,
   scanMeta:{codeSha:process.env.GITHUB_SHA||null,trigger:process.env.SCAN_TRIGGER||'local',startedAt:new Date(startedAt).toISOString(),durationSeconds:Math.round((Date.now()-startedAt)/1000),
     budgetMinutes:Number(settings.scanBudgetMinutes)||12,profileConcurrency,yahooConcurrency,xianyuLimit}
 };

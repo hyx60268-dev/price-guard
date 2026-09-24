@@ -4,7 +4,7 @@ import { offerIdentityGuard } from './offer-identity.mjs';
 import { rejectedByMemory } from '../../public/match-memory.js';
 import { coherentPrices,collectibleIdentityRequiresVisualProof,conditionCompatible,hasExplicitDefect,hasExplicitVariantMismatch,hasVariantMismatch,isLikelyVariantOffer,productFamily,saleUnitEquivalent,semanticQuantity,semanticSameItem,titleScore,yen } from './rules.mjs';
 import { xianyuQueryFor } from './discovery.mjs';
-import { detailStateFailure,readXianyuDetailDOM,xianyuResultStatus,verifiedCostEvidence,XIANYU_VERIFICATION } from './xianyu-evidence.mjs';
+import { xianyuSearchExclusion,collectXianyuDetails,detailStateFailure,readXianyuDetailDOM,xianyuResultStatus,verifiedCostEvidence,XIANYU_VERIFICATION } from './xianyu-evidence.mjs';
 
 async function mapLimit(values,limit,worker){
   const output=new Array(values.length);let cursor=0;
@@ -139,7 +139,8 @@ export async function xianyuCost(page,item,settings){
   // 之前就用这些噪声判定规格，导致 20～30 张卡片全部被清空。首轮只解析
   // 价格；多规格、瑕疵、数量、正文和图片全部在详情页严格核验。
   const priced=cards.slice(0,30).map(card=>({...card,price:cardPrice(card)}));
-  const eligible=priced.filter(card=>Number.isFinite(card.price)&&card.price>1&&!rejectedByMemory(settings.matchCorrections,item,'xianyu',card));
+  const prefilterRejected=priced.filter(card=>xianyuSearchExclusion(card)).map(card=>({url:card.url,title:card.title,reason:xianyuSearchExclusion(card),stage:'search_exclusion'}));
+  const eligible=priced.filter(card=>Number.isFinite(card.price)&&card.price>1&&!xianyuSearchExclusion(card)&&!rejectedByMemory(settings.matchCorrections,item,'xianyu',card));
   const scored=await mapLimit(eligible,4,async card=>{
     const titleMatch=titleScore(query,card.title),fingerprint=card.image?await imageFingerprints(card.image):null;
     const imageScore=imageSetSimilarity(ownFingerprints,[fingerprint]);
@@ -154,11 +155,8 @@ export async function xianyuCost(page,item,settings){
   const ranked=scored.sort((a,b)=>Math.max(b.imageScore??0,b.titleScore)-Math.max(a.imageScore??0,a.titleScore)||a.price-b.price);
   const signalled=ranked.filter(card=>card.titleScore>=.18||card.imageScore>=.52);
   const preliminary=(signalled.length?signalled:ranked).slice(0,limit);
-  const checks=[];let accessibleDetailCount=0;
-  for(const candidate of preliminary){
-    const check=await verifyDetail(page.context(),candidate,item,settings,ownFingerprints,ownImageEvidence[0],()=>accessibleDetailCount++);checks.push(check);
-    if(['detail_blocked','detail_login_required'].includes(check.reason))break;
-  }
+  let accessibleDetailCount=0;
+  const checks=await collectXianyuDetails(preliminary,candidate=>verifyDetail(page.context(),candidate,item,settings,ownFingerprints,ownImageEvidence[0],()=>accessibleDetailCount++),coherentPrices);
   const verified=[],rejected=[];
   checks.forEach((check,index)=>{
     const candidate=preliminary[index];
@@ -170,8 +168,8 @@ export async function xianyuCost(page,item,settings){
   const status=xianyuResultStatus(checks,{ready:evidence.ready,cardCount});
   return {query,usedQuery,searchAttempts,searchUrl:url,status,samples:coherent,averageCNY:status==='ok'?referenceCNY:null,cardCount,
     detailCheckedCount:checks.length,diagnostic:status==='blocked'?'目标详情触发安全验证；已停止本轮闲鱼检查':status==='login_required'?'目标详情要求登录；已停止本轮闲鱼检查':null,
-    loginVisible:pageState.loginVisible,preliminaryCount:preliminary.length,verifiedCount:verified.length,rejected:rejected.slice(0,12),
-    pricedCardCount:eligible.length,unpricedCardCount:priced.length-eligible.length,
+    loginVisible:pageState.loginVisible,preliminaryCount:preliminary.length,verifiedCount:verified.length,rejected:[...rejected,...prefilterRejected].slice(0,30),
+    pricedCardCount:priced.filter(card=>Number.isFinite(card.price)&&card.price>1).length,unpricedCardCount:priced.filter(card=>!Number.isFinite(card.price)||card.price<=1).length,prefilterRejectedCount:prefilterRejected.length,
     topCandidates:ranked.slice(0,5).map(card=>({title:card.title.slice(0,120),titleScore:Number(card.titleScore.toFixed(3)),imageScore:Number.isFinite(card.imageScore)?Number(card.imageScore.toFixed(3)):null,price:card.price})),
     sellerCount,priceSpread,accessibleDetailCount,
     verification:XIANYU_VERIFICATION,checkedAt:new Date().toISOString(),method:'verified_detail_median_multi_image'};

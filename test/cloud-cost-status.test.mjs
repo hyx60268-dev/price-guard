@@ -43,3 +43,11 @@ test('source errors cannot declare successful acceptance, and missing inventory 
   assert.equal(cloudCostStatus({items:[item()],accounts:[{profileStatus:'live',scanStats:{xianyuStatuses:{detail_inaccessible:1}}}]},now).status,'detail_inaccessible');
   assert.equal(cloudCostStatus({items:[item()],accounts:[{profileStatus:'error'}]},now).accepted,false);
 });
+
+test('access cooldown is reported truthfully, keeps prior references and never counts as completion',()=>{
+  const access={allowed:false,reason:'blocked',retryAt:'2026-09-23T13:00:00Z'};
+  const result=cloudCostStatus({items:[item(),{id:'pending'}],login:{xianyuAccess:access},accounts:[{scanStats:{xianyuStatuses:{deferred_access:1}}}]},now);
+  assert.equal(result.status,'access_cooldown');assert.equal(result.accepted,false);
+  assert.equal(result.verifiedReferences,1);assert.equal(result.attempted,0);
+  assert.deepEqual(result.access,access);assert.equal(result.coverage.remaining,1);
+});
