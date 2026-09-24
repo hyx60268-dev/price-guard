@@ -1,0 +1,46 @@
+name: 单件闲鱼成本实测
+on:
+  push:
+    branches: [xianyu-cost-proof-20260924]
+permissions:
+  contents: read
+concurrency:
+  # Do not run authenticated detail checks alongside production scans.
+  group: pages
+  cancel-in-progress: false
+jobs:
+  real-cost:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            state
+            public/data/share-images
+          key: price-guard-state-cost-recovery-${{ github.run_id }}
+          restore-keys: |
+            price-guard-state-
+      - run: npx playwright install --with-deps chromium
+      - name: 原神菲林斯实价与同款完整核验
+        run: node scripts/xianyu-proof.mjs
+        env:
+          XIANYU_AUTH_PART_1: ${{ secrets.XIANYU_AUTH_PART_1 }}
+          XIANYU_AUTH_PART_2: ${{ secrets.XIANYU_AUTH_PART_2 }}
+          XIANYU_AUTH_PART_3: ${{ secrets.XIANYU_AUTH_PART_3 }}
+          XIANYU_STORAGE_STATE_GZIP_B64: ${{ secrets.XIANYU_STORAGE_STATE_GZIP_B64 }}
+          XIANYU_STORAGE_STATE_B64: ${{ secrets.XIANYU_STORAGE_STATE_B64 }}
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            state
+            public/data/share-images
+          key: price-guard-state-cost-recovery-${{ github.run_id }}

@@ -51,6 +51,7 @@ async function verifyDetail(context,candidate,item,settings,ownFingerprints,ownP
     const failure=detailStateFailure(state);
     if(failure)return {accepted:false,reason:failure,diagnostic:state.diagnostic};
     onAccessible();
+    settings.onDetailRead?.({url:candidate.url,title:state.titles?.[0],price:state.price,sellerConfirmed:Boolean(state.sellerKey),imageCount:state.images.length,descriptionLength:state.text.length});
     const ranked=(state.titles||[]).map(title=>({title,score:titleScore(query,title)})).sort((a,b)=>b.score-a.score);
     const detailTitle=ranked[0]?.title||'';
     // 闲鱼会把商品说明、推荐标签和同系列角色拼进 og:title/card 文本。
@@ -161,7 +162,7 @@ export async function xianyuCost(page,item,settings){
   checks.forEach((check,index)=>{
     const candidate=preliminary[index];
     if(check.accepted)verified.push({...candidate,...check,fingerprint:undefined});
-    else rejected.push({url:candidate.url,title:candidate.title,price:candidate.price,reason:check.reason,detailTitle:check.detailTitle,titleMatch:check.titleMatch,bodyMatch:check.bodyMatch,imageScore:check.imageScore,semanticReason:check.semanticReason,error:check.error,diagnostic:check.diagnostic});
+    else rejected.push({url:candidate.url,title:candidate.title,price:candidate.price,reason:check.reason,detailTitle:check.detailTitle,titleMatch:check.titleMatch,bodyMatch:check.bodyMatch,imageScore:check.imageScore,primaryImageScore:check.primaryImageScore,semanticReason:check.semanticReason,error:check.error,diagnostic:check.diagnostic});
   });
   const evidence=verifiedCostEvidence(coherentPrices(verified).slice(0,settings.maxXianyuSamples||5));
   const {samples:coherent,sellerCount,priceSpread,median:referenceCNY}=evidence;

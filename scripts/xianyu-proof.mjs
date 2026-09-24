@@ -11,7 +11,8 @@ const catalog=JSON.parse(await fs.readFile(path.join(root,'config/catalogs/melon
 const sessionManager=await loadXianyuSession(root);
 const stateFile=sessionManager.file;
 if(!sessionManager.access().allowed){console.error('[PROOF COOLDOWN]',JSON.stringify(sessionManager.access()));process.exit(1)}
-const selected=catalog.filter(item=>item.xianyuQuery&&item.image).slice(0,3);
+const selected=catalog.filter(item=>item.id==='z667987740');
+if(selected.length!==1)throw new Error('指定真实商品不在清单中');
 const {browser,context}=await openContext(stateFile);
 const page=await context.newPage();
 let accepted=0,tested=0;
@@ -20,9 +21,9 @@ try{
     tested++;
     console.log('\n[PROOF ITEM]',item.id,item.xianyuQuery);
     const own=await fetchYahooItemBundle(item.id,settings);
-    const result=await xianyuCost(page,{...item,description:own.detail?.description||'',yahoo:{ownDescription:own.detail?.description||'',ownImages:(own.detail?.images||[]).map(image=>typeof image==='string'?image:image.url).filter(Boolean)}},{...settings,maxXianyuDetailChecks:8,maxXianyuSamples:5,scanDelayMs:800});
+    const result=await xianyuCost(page,{...item,description:own.detail?.description||'',yahoo:{ownDescription:own.detail?.description||'',ownImages:(own.detail?.images||[]).map(image=>typeof image==='string'?image:image.url).filter(Boolean)}},{...settings,maxXianyuDetailChecks:6,maxXianyuSamples:5,onDetailRead:detail=>console.log('[TARGET DETAIL READ]',JSON.stringify(detail))});
     await sessionManager.persist(context,result).catch(()=>console.warn('[闲鱼会话] 更新保存失败，保留原会话'));
-    console.log('[PROOF RESULT]',JSON.stringify({id:item.id,status:result.status,accessibleDetailCount:result.accessibleDetailCount,cardCount:result.cardCount,preliminaryCount:result.preliminaryCount,verifiedCount:result.verifiedCount,sellerCount:result.sellerCount,averageCNY:result.averageCNY,rejected:result.rejected}));
+    console.log('[PROOF RESULT]',JSON.stringify({id:item.id,status:result.status,accessibleDetailCount:result.accessibleDetailCount,cardCount:result.cardCount,preliminaryCount:result.preliminaryCount,verifiedCount:result.verifiedCount,sellerCount:result.sellerCount,averageCNY:result.averageCNY,samples:result.samples?.map(row=>({url:row.url,price:row.price,priceSource:row.priceSource,detailTitle:row.detailTitle,primaryImageScore:row.primaryImageScore})),rejected:result.rejected}));
     if(result.status==='ok'&&Number.isFinite(result.averageCNY))accepted++;
     if(['blocked','login_required'].includes(result.status)){console.error('[PROOF BLOCKED]',result.diagnostic||result.status);break}
   }
