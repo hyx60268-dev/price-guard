@@ -169,5 +169,317 @@
     "candidateDescription": "新品\n発送予定\nこちらはブラウンです",
     "primaryImageScore": 1,
     "expected": "description_color_mismatch"
+  },
+  {
+    "ownDescription": "新品 未使用 1個",
+    "candidateDescription": "全新 1个",
+    "primaryImageScore": 1,
+    "case": "melon：Starbucks 中日品牌和黑色不应制造款式冲突",
+    "ownTitle": "Starbucks スターバックス 430ml ブラック",
+    "candidateTitle": "星巴克 430ml 黑色"
+  },
+  {
+    "ownDescription": "新品 未使用 1個",
+    "candidateDescription": "全新 1个",
+    "primaryImageScore": 1,
+    "case": "melon：Hirono 中日暗场白色名称进入后续核验",
+    "ownTitle": "POPMART HIRONO 暗場シリーズ マグカップ ホワイト",
+    "candidateTitle": "泡泡玛特 HIRONO 暗场系列 马克杯 白色"
+  },
+  {
+    "ownDescription": "新品 未使用 1個",
+    "candidateDescription": "全新 1个",
+    "primaryImageScore": 1,
+    "case": "melon：跨语言归一仍拒绝黑白不同",
+    "ownTitle": "Starbucks スターバックス 430ml ブラック",
+    "candidateTitle": "星巴克 430ml 白色",
+    "expected": "description_color_mismatch"
+  },
+  {
+    "ownDescription": "新品 未使用 1個",
+    "candidateDescription": "全新 1个",
+    "primaryImageScore": 1,
+    "case": "melon：跨语言归一不删除未知型号",
+    "ownTitle": "Starbucks Aurora 430ml ブラック",
+    "candidateTitle": "星巴克 Luna 430ml 黑色",
+    "expected": "explicit_variant_mismatch"
+  },
+  {
+    "ownDescription": "新品 未使用 1個",
+    "candidateDescription": "全新 2个",
+    "primaryImageScore": 1,
+    "case": "melon：跨语言归一仍拒绝单个和两件",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "expected": "sale_unit_mismatch"
+  },
+  {
+    "ownDescription": "新品 未使用 1個",
+    "candidateDescription": "全新 1个",
+    "primaryImageScore": 1,
+    "case": "local-1789214704376：Starbucks 中日品牌和黑色不应制造款式冲突",
+    "ownTitle": "Starbucks スターバックス 430ml ブラック",
+    "candidateTitle": "星巴克 430ml 黑色"
+  },
+  {
+    "ownDescription": "新品 未使用 1個",
+    "candidateDescription": "全新 1个",
+    "primaryImageScore": 1,
+    "case": "local-1789214704376：Hirono 中日暗场白色名称进入后续核验",
+    "ownTitle": "POPMART HIRONO 暗場シリーズ マグカップ ホワイト",
+    "candidateTitle": "泡泡玛特 HIRONO 暗场系列 马克杯 白色"
+  },
+  {
+    "ownDescription": "新品 未使用 1個",
+    "candidateDescription": "全新 1个",
+    "primaryImageScore": 1,
+    "case": "local-1789214704376：跨语言归一仍拒绝黑白不同",
+    "ownTitle": "Starbucks スターバックス 430ml ブラック",
+    "candidateTitle": "星巴克 430ml 白色",
+    "expected": "description_color_mismatch"
+  },
+  {
+    "ownDescription": "新品 未使用 1個",
+    "candidateDescription": "全新 1个",
+    "primaryImageScore": 1,
+    "case": "local-1789214704376：跨语言归一不删除未知型号",
+    "ownTitle": "Starbucks Aurora 430ml ブラック",
+    "candidateTitle": "星巴克 Luna 430ml 黑色",
+    "expected": "explicit_variant_mismatch"
+  },
+  {
+    "ownDescription": "新品 未使用 1個",
+    "candidateDescription": "全新 2个",
+    "primaryImageScore": 1,
+    "case": "local-1789214704376：跨语言归一仍拒绝单个和两件",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "expected": "sale_unit_mismatch"
+  },
+  {
+    "ownDescription": "新品 未使用 1個",
+    "candidateDescription": "全新 1个",
+    "primaryImageScore": 1,
+    "case": "account-p6579087：Starbucks 中日品牌和黑色不应制造款式冲突",
+    "ownTitle": "Starbucks スターバックス 430ml ブラック",
+    "candidateTitle": "星巴克 430ml 黑色"
+  },
+  {
+    "ownDescription": "新品 未使用 1個",
+    "candidateDescription": "全新 1个",
+    "primaryImageScore": 1,
+    "case": "account-p6579087：Hirono 中日暗场白色名称进入后续核验",
+    "ownTitle": "POPMART HIRONO 暗場シリーズ マグカップ ホワイト",
+    "candidateTitle": "泡泡玛特 HIRONO 暗场系列 马克杯 白色"
+  },
+  {
+    "ownDescription": "新品 未使用 1個",
+    "candidateDescription": "全新 1个",
+    "primaryImageScore": 1,
+    "case": "account-p6579087：跨语言归一仍拒绝黑白不同",
+    "ownTitle": "Starbucks スターバックス 430ml ブラック",
+    "candidateTitle": "星巴克 430ml 白色",
+    "expected": "description_color_mismatch"
+  },
+  {
+    "ownDescription": "新品 未使用 1個",
+    "candidateDescription": "全新 1个",
+    "primaryImageScore": 1,
+    "case": "account-p6579087：跨语言归一不删除未知型号",
+    "ownTitle": "Starbucks Aurora 430ml ブラック",
+    "candidateTitle": "星巴克 Luna 430ml 黑色",
+    "expected": "explicit_variant_mismatch"
+  },
+  {
+    "ownDescription": "新品 未使用 1個",
+    "candidateDescription": "全新 2个",
+    "primaryImageScore": 1,
+    "case": "account-p6579087：跨语言归一仍拒绝单个和两件",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "expected": "sale_unit_mismatch"
+  },
+  {
+    "case": "melon：新品不接受 非全新",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "candidateDescription": "非全新 1个",
+    "primaryImageScore": 1,
+    "expected": "condition_or_packaging_mismatch"
+  },
+  {
+    "case": "melon：新品不接受 接近全新",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "candidateDescription": "接近全新 1个",
+    "primaryImageScore": 1,
+    "expected": "condition_or_packaging_mismatch"
+  },
+  {
+    "case": "melon：新品不接受 99新",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "candidateDescription": "99新 1个",
+    "primaryImageScore": 1,
+    "expected": "condition_or_packaging_mismatch"
+  },
+  {
+    "case": "melon：新品不接受 全新，无盒",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "candidateDescription": "全新，无盒 1个",
+    "primaryImageScore": 1,
+    "expected": "condition_or_packaging_mismatch"
+  },
+  {
+    "case": "melon：新品不接受 全新，二手展示过",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "candidateDescription": "全新，二手展示过 1个",
+    "primaryImageScore": 1,
+    "expected": "condition_or_packaging_mismatch"
+  },
+  {
+    "case": "local-1789214704376：新品不接受 非全新",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "candidateDescription": "非全新 1个",
+    "primaryImageScore": 1,
+    "expected": "condition_or_packaging_mismatch"
+  },
+  {
+    "case": "local-1789214704376：新品不接受 接近全新",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "candidateDescription": "接近全新 1个",
+    "primaryImageScore": 1,
+    "expected": "condition_or_packaging_mismatch"
+  },
+  {
+    "case": "local-1789214704376：新品不接受 99新",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "candidateDescription": "99新 1个",
+    "primaryImageScore": 1,
+    "expected": "condition_or_packaging_mismatch"
+  },
+  {
+    "case": "local-1789214704376：新品不接受 全新，无盒",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "candidateDescription": "全新，无盒 1个",
+    "primaryImageScore": 1,
+    "expected": "condition_or_packaging_mismatch"
+  },
+  {
+    "case": "local-1789214704376：新品不接受 全新，二手展示过",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "candidateDescription": "全新，二手展示过 1个",
+    "primaryImageScore": 1,
+    "expected": "condition_or_packaging_mismatch"
+  },
+  {
+    "case": "account-p6579087：新品不接受 非全新",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "candidateDescription": "非全新 1个",
+    "primaryImageScore": 1,
+    "expected": "condition_or_packaging_mismatch"
+  },
+  {
+    "case": "account-p6579087：新品不接受 接近全新",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "candidateDescription": "接近全新 1个",
+    "primaryImageScore": 1,
+    "expected": "condition_or_packaging_mismatch"
+  },
+  {
+    "case": "account-p6579087：新品不接受 99新",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "candidateDescription": "99新 1个",
+    "primaryImageScore": 1,
+    "expected": "condition_or_packaging_mismatch"
+  },
+  {
+    "case": "account-p6579087：新品不接受 全新，无盒",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "candidateDescription": "全新，无盒 1个",
+    "primaryImageScore": 1,
+    "expected": "condition_or_packaging_mismatch"
+  },
+  {
+    "case": "account-p6579087：新品不接受 全新，二手展示过",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "candidateDescription": "全新，二手展示过 1个",
+    "primaryImageScore": 1,
+    "expected": "condition_or_packaging_mismatch"
+  },
+  {
+    "case": "melon：实际云端钛杯标题的成色渠道包装不制造型号冲突",
+    "ownTitle": "海外限定 Starbucks スターバックス 醇チタンシリーズ チタンボトル 430ml ブラック 正規品",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克醇钛系列钛杯430ml，全新未拆封，门店渠道，带原包装",
+    "candidateDescription": "全新未拆封 1个",
+    "primaryImageScore": 1
+  },
+  {
+    "case": "local-1789214704376：实际云端钛杯标题的成色渠道包装不制造型号冲突",
+    "ownTitle": "海外限定 Starbucks スターバックス 醇チタンシリーズ チタンボトル 430ml ブラック 正規品",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克醇钛系列钛杯430ml，全新未拆封，门店渠道，带原包装",
+    "candidateDescription": "全新未拆封 1个",
+    "primaryImageScore": 1
+  },
+  {
+    "case": "account-p6579087：实际云端钛杯标题的成色渠道包装不制造型号冲突",
+    "ownTitle": "海外限定 Starbucks スターバックス 醇チタンシリーズ チタンボトル 430ml ブラック 正規品",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克醇钛系列钛杯430ml，全新未拆封，门店渠道，带原包装",
+    "candidateDescription": "全新未拆封 1个",
+    "primaryImageScore": 1
+  },
+  {
+    "case": "melon：中文全新后标点经NFKC归一仍识别",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "candidateDescription": "全新，原包装 1个",
+    "primaryImageScore": 1
+  },
+  {
+    "case": "local-1789214704376：中文全新后标点经NFKC归一仍识别",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "candidateDescription": "全新，原包装 1个",
+    "primaryImageScore": 1
+  },
+  {
+    "case": "account-p6579087：中文全新后标点经NFKC归一仍识别",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "candidateDescription": "全新，原包装 1个",
+    "primaryImageScore": 1
   }
 ]

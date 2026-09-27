@@ -1,6 +1,6 @@
 // A search card (or a recommendation below a blocked detail) is not a verified
 // offer. Keep this contract shared by the scanner, cache and discovery pipeline.
-export const XIANYU_VERIFICATION = 'shared_offer_identity_detail_v9';
+export const XIANYU_VERIFICATION = 'shared_offer_identity_detail_v10';
 
 export function positivePrice(value) {
   if(value===null||value===undefined||String(value).trim()==='')return null;
@@ -13,6 +13,7 @@ export function detailStateFailure(state={}) {
   if(state.unavailable)return 'detail_unavailable';
   if(state.networkError)return 'detail_network_error';
   if(!state.titles?.length||!state.text?.trim())return 'detail_unreadable';
+  if(state.priceRange)return 'detail_multi_price';
   if(!positivePrice(state.price))return 'detail_price_unconfirmed';
   if(!state.sellerKey)return 'detail_seller_unconfirmed';
   if(!state.images?.length)return 'detail_images_unconfirmed';
@@ -45,7 +46,8 @@ export function readXianyuDetailDOM() {
   const gallery=first('[class*="item-main-window--"]');
   const sellerRoot=first('[class*="item-user-container--"]');
   const description=main&&[...main.querySelectorAll('[class^="desc--"], [class*=" desc--"]')].find(visible);
-  const text=(description?.innerText||'').replace(/\s+/g,' ').trim().slice(0,6500);
+  const rawDescription=(description?.innerText||'').trim();
+  const text=rawDescription.replace(/\s+/g,' ').trim().slice(0,6500);
   const pageText=(document.body?.innerText||'').split(/为你推荐|猜你喜欢|相关推荐/)[0];
   const challengeFrame=[...document.querySelectorAll('iframe')].some(frame=>visible(frame)&&/baxia|captcha|_____tmd_____|\/punish/i.test(`${frame.id} ${frame.getAttribute('src')||''}`));
   const challengeText=(pageText.match(/访问频繁|安全验证|滑块|验证码|请稍后重试|被挤爆|drag the slider|verify you are human/i)||[])[0]||null;
@@ -56,8 +58,12 @@ export function readXianyuDetailDOM() {
   // The app sets document.title from itemDO.title. Only use it when the actual
   // description is present, never as a substitute for an inaccessible detail.
   const pageTitle=/_闲鱼$/.test(document.title)?document.title.replace(/_闲鱼$/,'').trim():'';
-  const titles=text?[pageTitle||text.slice(0,220)]:[];
+  // Browser title often stops at the first newline, before the character/model.
+  // Use only the target description's opening paragraph; never search-card text.
+  const descriptionTitle=rawDescription.split(/\n\s*\n|(?:^|\n)\s*(?:tag|标签|关联词|搜索词)[:：\s]/i)[0].replace(/\s+/g,' ').trim().slice(0,220);
+  const titles=text?[...new Set([pageTitle,descriptionTitle].filter(Boolean))]:[];
   const images=gallery?[...gallery.querySelectorAll('img')].filter(visible).filter(image=>{const r=image.getBoundingClientRect();return r.width>=120&&r.height>=120}).map(image=>image.currentSrc||image.src).filter(Boolean):[];
+  const priceRange=Boolean(main&&[...main.querySelectorAll('[class^="price--"],[class*=" price--"]')].filter(visible).some(node=>/^\d+(?:\.\d{1,2})?[-–~至]\d+(?:\.\d{1,2})?$/.test((node.innerText||'').replace(/[¥￥,\s]/g,''))));
   const prices=main?[...new Set([...main.querySelectorAll('[class^="price--"],[class*=" price--"]')].filter(visible)
     .map(node=>(node.innerText||'').replace(/[¥￥,\s]/g,''))
     .filter(value=>/^\d+(?:\.\d{1,2})?$/.test(value)).map(Number).filter(value=>value>0))]:[];
@@ -65,8 +71,8 @@ export function readXianyuDetailDOM() {
   let sellerKey='';
   if(seller){const url=new URL(seller.href,location.href);const id=url.searchParams.get('userId');if(id&&/^\d+$/.test(id))sellerKey=`goofish:${id}`}
   const optionCount=main?[...main.querySelectorAll('[role="radio"],[class*="sku" i] button,[class*="spec" i] button')].filter(visible).length:0;
-  return {text,titles,images:[...new Set(images)].slice(0,16),price:prices.length===1?prices[0]:null,sellerKey,optionCount,blocked,loginVisible,unavailable,networkError,
-    diagnostic:{challengeFrame,challengeText,loginVisible,networkError,mainFound:Boolean(main),descriptionLength:text.length,galleryFound:Boolean(gallery),imageCount:images.length,priceCount:prices.length,sellerFound:Boolean(sellerKey)}};
+  return {text,titles,priceRange,images:[...new Set(images)].slice(0,16),price:prices.length===1?prices[0]:null,sellerKey,optionCount,blocked,loginVisible,unavailable,networkError,
+    diagnostic:{challengeFrame,challengeText,loginVisible,networkError,mainFound:Boolean(main),descriptionLength:text.length,galleryFound:Boolean(gallery),imageCount:images.length,priceCount:prices.length,priceRange,sellerFound:Boolean(sellerKey)}};
 }
 
 // A technical failure is retryable, not a completed negative identity review.
