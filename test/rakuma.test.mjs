@@ -59,3 +59,9 @@ test('encrypted sync accepts a correction for a displayed Rakuma candidate',()=>
   const accepted=acceptMatchCorrections({},incoming,[item],null,Date.now());
   assert.equal(Object.values(accepted)[0].platform,'rakuma');
 });
+
+test('Rakuma missing availability stays unknown and missing shipping is not silently free',()=>{
+ const html=detailHtml({title:'Myethos フィギュア',description:'新品'});
+ assert.equal(extractRakumaDetail(html.replace('https://schema.org/InStock',''),url).status,'UNKNOWN');
+ assert.equal(extractRakumaDetail(html.replace('送料込','着払い'),url).shippingKnown,false);
+});

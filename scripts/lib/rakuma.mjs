@@ -152,7 +152,7 @@ export function extractRakumaDetail(html='',url=''){
     itemPrice:Number(product.offers.price),shippingJPY:shippingKnown?0:null,shippingKnown,shippingText,
     id:String(url).match(/item\.fril\.jp\/([a-f0-9]+)/i)?.[1]||'',url,
     title:decodeHtml(product.name),description:decodeHtml(product.description||''),
-    price:Number(product.offers.price),status:/InStock$/i.test(availability)?'OPEN':'SOLD',sellerId,category,condition,
+    price:Number(product.offers.price),status:/InStock$/i.test(availability)?'OPEN':/OutOfStock$|SoldOut$/i.test(availability)?'SOLD':'UNKNOWN',sellerId,category,condition,
     images:[...new Set(images)].slice(0,10)
   };
 }
@@ -203,7 +203,7 @@ export async function rakumaCompare(item,settings={},dependencies={}){
     try{
       const detail=extractRakumaDetail(await getHtml(card.url,settings),card.url);
       if(ownSellerId&&detail.sellerId===ownSellerId){rejected.push({...card,reason:'own_seller'});continue}
-      if(detail.status!=='OPEN'){rejected.push({...card,reason:'not_open'});continue}
+      if(detail.status!=='OPEN'){rejected.push({...card,reason:detail.status==='SOLD'?'not_open':'availability_unconfirmed'});continue}
       if(!detail.shippingKnown){rejected.push({...card,reason:'shipping_unconfirmed'});continue}
       if(!ownDescription.trim()||!detail.description.trim()){rejected.push({...card,reason:'sale_description_unavailable'});continue}
       if(hasExplicitDefect(detail.title,detail.description)){rejected.push({...card,reason:'defect'});continue}
@@ -230,7 +230,7 @@ export async function rakumaCompare(item,settings={},dependencies={}){
     }catch(error){rejected.push({...card,reason:'detail_error',error:String(error)})}
   }
   competitors.sort((a,b)=>a.price-b.price);
-  const unresolved=[...screened.slice(preliminary.length),...rejected.filter(row=>['shipping_unconfirmed','detail_error','sale_description_unavailable','collectible_variant_image_unconfirmed','primary_variant_unconfirmed'].includes(row.reason))];
+  const unresolved=[...screened.slice(preliminary.length),...rejected.filter(row=>['availability_unconfirmed','shipping_unconfirmed','detail_error','sale_description_unavailable','collectible_variant_image_unconfirmed','primary_variant_unconfirmed'].includes(row.reason))];
   const lowerUnconfirmed=unresolved.filter(row=>Number(row.price)<Number(item.ownPrice));
   return {
     audit:{ownItemId:item.id,accountId:item.accountId||null,ownDetailLoaded:Boolean(ownDescription.trim())},

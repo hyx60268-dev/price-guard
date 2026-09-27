@@ -82,3 +82,8 @@ test('Mercari responsive DOM may place price before the product h1',()=>{
  const dom=new JSDOM('<main><article><div data-testid="price"><span>¥</span><span>27,000</span></div><h1>Myethos フィギュア</h1><button>購入手続きへ</button><h2>商品の説明</h2><p>未開封新品</p><h3>配送料の負担</h3><div>送料込み(出品者負担)</div></article></main>');
  try{assert.equal(readMercariDetail(dom.window.document).price,27000)}finally{dom.window.close()}
 });
+
+test('overseas Mercari price must use original JPY and exclude USD and exchange-rate timestamps',()=>{
+ const dom=new JSDOM('<main><article><h1>Myethos フィギュア</h1><div>US$180.09</div><div data-testid="converted-currency-section"><p>(</p><p>¥</p><p>27,000</p><p> 為替レート更新日時 9月27日 02:10 UTC</p><p>)</p></div><button>購入手続きへ</button><h2>商品の説明</h2><div>新品 未開封</div></article></main>');
+ try{assert.equal(readMercariDetail(dom.window.document).price,27000);dom.window.document.querySelector('[data-testid="converted-currency-section"]').remove();assert.equal(readMercariDetail(dom.window.document).price,null)}finally{dom.window.close()}
+});
