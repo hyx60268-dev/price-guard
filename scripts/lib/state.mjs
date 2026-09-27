@@ -1,5 +1,6 @@
 import { advice,calculateCost } from './rules.mjs';
 import { mergeMatchCorrections } from '../../public/match-memory.js';
+import { parseShopProfile } from '../../public/shop-profile.js';
 
 const generic=/中国限定|海外限定|日本未発売|日本非売品|正規品|新品|未使用|未開封|公式|送料無料|匿名配送/gi;
 
@@ -9,8 +10,7 @@ export function normalizeProductIdentity(value=''){
 }
 
 export function accountIdFromProfile(profileUrl=''){
-  const id=String(profileUrl).match(/\/user\/([^/?#]+)/i)?.[1];
-  return id?`account-${id.toLowerCase()}`:`account-${Date.now()}`;
+  return parseShopProfile(profileUrl)?.id||`account-${Date.now()}`;
 }
 
 export function itemIdentityKeys(item={},accountIdOverride){
@@ -180,12 +180,13 @@ export function mergeAccountConfigs(configured=[],managed=[]){
   const output=[],seenProfiles=new Set(),seenIds=new Set();
   for(const source of [...configured,...managed]){
     if(!source?.profileUrl||source.enabled===false||(!configuredIds.has(source.id)&&deleted.has(source.id)))continue;
-    const profile=String(source.profileUrl).replace(/\/+$/,'');
+    const parsed=parseShopProfile(source.profileUrl);if(!parsed)continue;
+    const profile=parsed.profileUrl;
     if(seenProfiles.has(profile)||seenIds.has(source.id))continue;
     seenProfiles.add(profile);seenIds.add(source.id);
     output.push({
       id:source.id||accountIdFromProfile(profile),name:source.name||source.id||'Yahoo账号',
-      platform:'yahoo_fleamarket',profileUrl:profile,catalogFile:source.catalogFile||'',enabled:true,
+      platform:parsed.platform,profileUrl:profile,catalogFile:source.catalogFile||'',enabled:true,
       managed:!source.catalogFile
     });
   }

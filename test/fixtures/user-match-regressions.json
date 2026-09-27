@@ -81,6 +81,33 @@
     "expected": null
   },
   {
+    "case": "双人套装不能与雪肌精单只比价",
+    "ownTitle": "雪肌精×モンチッチ ペアぬいぐるみ セット 限定",
+    "ownDescription": "新品 未使用 男の子・女の子の2体セット",
+    "candidateTitle": "雪肌精 モンチッチ キーホルダー",
+    "candidateDescription": "新品 未使用 ブルー boy 1点",
+    "primaryImageScore": 1,
+    "expected": "sale_unit_mismatch"
+  },
+  {
+    "case": "盲盒仅开外盒确认不等于仅出售空盒",
+    "ownTitle": "SKULLPANDA My Little Pony スーパーシークレット ペンダント",
+    "ownDescription": "新品・未使用",
+    "candidateTitle": "SKULLPANDA My Little Pony スーパーシークレット Queen Chrysalis ペンダント",
+    "candidateDescription": "外箱のみ確認のため開封しております。中袋は未開封。箱とカード付き。",
+    "primaryImageScore": 1,
+    "expected": null
+  },
+  {
+    "case": "外箱痛みあり不能作为完好商品最低价",
+    "ownTitle": "一番くじ ドラゴンボール ロゴ ブロック ギガントネーム ラストワン賞",
+    "ownDescription": "新品 未使用",
+    "candidateTitle": "一番くじ ドラゴンボール ロゴ ブロック ギガントネーム ラストワン賞 外箱痛みあり",
+    "candidateDescription": "新品未開封 外箱痛みあり",
+    "primaryImageScore": 1,
+    "expected": "defect"
+  },
+  {
     "case": "闲鱼中日文不同角色不能被名称映射合并",
     "ownTitle": "原神 中国限定 星稚夢旅シリーズ フリンズ PETフォトカード",
     "ownDescription": "新品 1枚",

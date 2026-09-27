@@ -3,13 +3,18 @@ const badPattern = /(求购|收购|只收|蹲收|换物|交换|置换|补款|定
 const baitPattern = /(请点进去选项|点击立即购买查看|拍下改价|私聊改价|价格见图|图上价|多个角色|多款可选|任选|标价非实价|自带价|占位价|起步价|最低款价格|标价为最低|标价只是|页面价格不准)/i;
 const selectionPattern = /(请选择|选择规格|选择款式|选款|选图|拍哪款|下单备注|联系客服改价|私聊改价|各款价格|价格不一|每款价格|单独询价|需补差价|补差后发货|以详情价为准|详情价格为准)/i;
 const multiOfferPattern = /(多款|多角色|全系列|合集|系列任选|整套可拆|可拆卖)/i;
-export const MATCHING_RULES_VERSION = 16;
+export const MATCHING_RULES_VERSION = 17;
 
 // 同じIP/シリーズが中国語・日本語・英語や作者名で出品されるケースを、
 // 再利用できる別名辞書で同じ識別語へ寄せる。追加時は商品固有語だけを登録し、
 // 「熊」「フィギュア」のような一般語は絶対に別名扱いしない。
 function canonicalProductText(value='') {
   return String(value).normalize('NFKC')
+    .replace(/(?:THE\s+)?GIGANT\s+NAME|ギガントネーム/gi,' gigantname ')
+    .replace(/POP\s*MART|ポップマート/gi,' POPMART ')
+    .replace(/(?:スカルパンダ|SKULL\s*PANDA)/gi,' SKULLPANDA ')
+    .replace(/(?:マイリトルポニー|My\s*Little\s*Pony)/gi,' MyLittlePony ')
+    .replace(/(?:モンチッチ|monchhichi|monchicchi)/gi,' モンチッチ ')
     // Yahoo sellers use several Japanese/Chinese spellings (and one common typo)
     // for this same Pokemon collection name.  Keep this product-specific alias
     // here rather than weakening the generic token matcher.
@@ -66,11 +71,13 @@ export function listingTextEquivalent(ownTitle='',ownDescription='',candidateTit
 // 同一套装常见「10ピース入り / 10体セット」等表记差异。标题不必逐字接近，
 // 但品牌/系列锚点、商品类型和明确数量都一致时，可作为图片不同情况下的规格证据。
 export function listingSpecificationEquivalent(ownTitle='',candidateTitle='',ownCategory='',candidateCategory=''){
-  if(hasVariantMismatch(ownTitle,candidateTitle)||hasVariantMismatch(candidateTitle,ownTitle))return false;
+  const ownHeading=listingHeading(ownTitle),candidateHeading=listingHeading(candidateTitle);
+  if(hasExplicitVariantMismatch(ownHeading,candidateHeading)||hasExplicitVariantMismatch(candidateHeading,ownHeading))return false;
   if(!saleUnitEquivalent(ownTitle,candidateTitle))return false;
-  const forward=semanticSameItem({query:ownTitle,candidate:candidateTitle,queryCategory:ownCategory,candidateCategory});
-  const backward=semanticSameItem({query:candidateTitle,candidate:ownTitle,queryCategory:candidateCategory,candidateCategory:ownCategory});
-  if(!forward.accepted||!backward.accepted)return false;
+  // Headings supply identity, sale descriptions supply quantity. Seller prose,
+  // shipping terms and packaging warnings are not extra product-name tokens.
+  const forward=distinctiveCoverage(ownHeading,candidateHeading),backward=distinctiveCoverage(candidateHeading,ownHeading);
+  if(Math.min(forward.score,backward.score)<.78)return false;
   const ownFamily=productFamily(ownTitle,ownCategory),candidateFamily=productFamily(candidateTitle,candidateCategory);
   if(!ownFamily||ownFamily!==candidateFamily)return false;
   const ownQuantity=semanticQuantity(ownTitle),candidateQuantity=semanticQuantity(candidateTitle);
@@ -185,12 +192,14 @@ export function productFamily(value='',category='') {
   // keychain category). Explicit product type in the heading wins; descriptions
   // may also mention bonus cards that are not the product being sold.
   const heading=listingHeading(value);
-  if(String(value)!==heading){const family=productFamily(heading,category);if(family)return family}
+  if(String(value)!==heading){const family=productFamily(heading,category);
+    if(['keychain','accessory'].includes(family)&&/ペンダント|キーホルダー|キーチェーン/i.test(heading)&&/ぬいぐるみ|毛绒|plush/i.test(value))return 'plush';
+    if(family)return family}
   if(category){
     const family=productFamily(value);
     // A plush keychain is still plush; "keychain" alone specifies the attachment,
     // not the material. This narrow refinement must not reclassify books/cards.
-    if(family==='keychain'&&productFamily('',category)==='plush')return 'plush';
+    if((family==='keychain'||family==='accessory'&&/ペンダント/i.test(value))&&productFamily('',category)==='plush')return 'plush';
     if(family)return family;
   }
   const text=normalizedJapanese(`${value} ${category}`);
@@ -214,7 +223,8 @@ export function productFamily(value='',category='') {
 }
 
 export function conditionProfile(value=''){
-  const text=normalizedJapanese(value);
+  // “Only the outer box was opened to identify the blind box” is not “box only”.
+  const text=normalizedJapanese(value).replace(/外箱(?:のみ|だけ)(?:確認のため|確認の為|を)?開封/g,'外箱開封');
   return {
     boxOnly:/(?:外箱のみ|箱のみ|空箱|パッケージのみ|ボックスのみ|箱だけ|仅外盒|只有盒|空盒)/i.test(text),
     noBox:/(?:箱なし|箱無し|外箱なし|箱はありません|本体のみ|无盒|没有盒)/i.test(text),
@@ -236,7 +246,7 @@ export function conditionCompatible(query='',candidate=''){
   return true;
 }
 
-const descriptorPattern=/(?:日本非売品|日本未発売|非売品|中国限定|海外限定|国内限定|正規品|新品|未使用|未開封|公式|限定|希少|レア|即発送|即日発送|送料無料|匿名配送|コラボレーション|コラボ|シリーズ|series|セット|まとめ売り|ペア|pair|単品|ランダム|random|\d+\s*周年(?:記念)?|第\s*\d+\s*弾|(?:全\s*)?\d+\s*種|\d+\s*(?:小箱|点|個|体|枚|本|箱|ピース|個入|入り|件)|入り|被りなし|重複なし|ブラインドボックス|アソート\s*(?:box|ボックス)|box|コレクション|ぬいぐるみ|マスコット|キーホルダー|キーチェーン|ストラップ|アクリルスタンド|アクスタ|アクリルブロック|シーンブロック|フィギュア|プラモデル|写真集|書籍|フォトカード|ポストカード|カード|缶バッジ|タンブラー|ボトル|マグ|カップ|特典(?:カード)?付き|おまけ付き)/gi;
+const descriptorPattern=/(?:特価|早い者勝ち|ロゴ|ブロック|ペンダント|日本非売品|日本未発売|非売品|中国限定|海外限定|国内限定|正規品|新品|未使用|未開封|公式|限定|希少|レア|即発送|即日発送|送料無料|匿名配送|コラボレーション|コラボ|シリーズ|series|セット|まとめ売り|ペア|pair|単品|ランダム|random|\d+\s*周年(?:記念)?|第\s*\d+\s*弾|(?:全\s*)?\d+\s*種|\d+\s*(?:小箱|点|個|体|枚|本|箱|ピース|個入|入り|件)|入り|被りなし|重複なし|ブラインドボックス|アソート\s*(?:box|ボックス)|box|コレクション|ぬいぐるみ|マスコット|キーホルダー|キーチェーン|ストラップ|アクリルスタンド|アクスタ|アクリルブロック|シーンブロック|フィギュア|プラモデル|写真集|書籍|フォトカード|ポストカード|カード|缶バッジ|タンブラー|ボトル|マグ|カップ|特典(?:カード)?付き|おまけ付き)/gi;
 
 export function distinctiveTokens(value='') {
   return canonicalProductText(value).toLowerCase().split(/[\s×&＆/／・·,:：，。!！?？【】\[\]()（）<>《》「」『』“”"'‘’+＋\-_]+/)
@@ -291,9 +301,11 @@ export function exactIdentityTitleEquivalent(query='',candidate='',queryCategory
 // 「海外製品のため傷がある場合がございます」のような一般的な注意書きは除外理由にせず、
 // 実物の傷・欠品を明記した行だけを除外する。
 export function hasExplicitDefect(title='',description='') {
+  if(/非公式商品|正規品では(?:なく|ない|ありません)|not\s+(?:an?\s+)?authentic|非正版|仿品/i.test(`${title}\n${description}`))return true;
+  if(/(?:痛み|傷み|傷|キズ|汚れ|凹み)(?:あり|有り|有)/i.test(title))return true;
   if(badPattern.test(title))return true;
   return `${title}\n${description}`.split(/[\n。]/).some(line=>{
-    if(!/(?:破損|破れ|欠品|きず|キズ|傷|スレ|擦れ|汚れ|凹み|割れ|剥がれ|箱潰れ|箱ダメージ)/i.test(line))return false;
+    if(!/(?:変色|色褪せ|痛み|傷み|破損|破れ|欠品|きず|キズ|傷|スレ|擦れ|汚れ|凹み|割れ|剥がれ|箱潰れ|箱ダメージ)/i.test(line))return false;
     if(/(?:場合|可能性|ことが|あり得|海外製品|海外輸送|製造上|初期.{0,8}(?:場合|可能性)|ご了承ください)/i.test(line))return false;
     return /(?:あります|あり|アリ|ございます|しています|見られます|欠けています|付属しません|不明)/i.test(line);
   });
@@ -365,7 +377,7 @@ function namedIdentityConflict(query='',candidate=''){
     return value.length>=4||(/^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+$/u.test(value)&&value.length>=2);
   };
   const uniqueStrong=(source,targetText)=>[...new Set(distinctiveTokens(source).map(normalize))]
-    .filter(token=>token&&strong(token)&&!targetText.includes(token));
+    .filter(token=>token&&token!=='popmart'&&strong(token)&&!targetText.includes(token));
   const leftOnly=uniqueStrong(leftHeading,rightText),rightOnly=uniqueStrong(rightHeading,leftText);
   return leftOnly.length>0&&rightOnly.length>0;
 }
@@ -468,8 +480,10 @@ function lotterySeriesDelta(query='',candidate=''){
   if([...left].join('')===[...right].join(''))return {applicable:true,leftOnly:new Set(),rightOnly:new Set()};
   return {
     applicable:true,
-    leftOnly:new Set([...left].filter(token=>!right.has(token))),
-    rightOnly:new Set([...right].filter(token=>!left.has(token)))
+    // The product/release name may move across the prize marker. Position is
+    // not a variant: compare against the other complete heading/description.
+    leftOnly:new Set([...left].filter(token=>!right.has(token)&&!normalize(candidate).includes(token))),
+    rightOnly:new Set([...right].filter(token=>!left.has(token)&&!normalize(query).includes(token)))
   };
 }
 

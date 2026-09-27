@@ -94,6 +94,7 @@ test('encrypted correction sync publishes a safe price and retains fees and emai
     await fs.cp(path.join(root,'scripts'),path.join(temp,'scripts'),{recursive:true});
     for(const directory of ['public','state','config'])await fs.mkdir(path.join(temp,directory),{recursive:true});
     await fs.copyFile(path.join(root,'public/match-memory.js'),path.join(temp,'public/match-memory.js'));
+    await fs.copyFile(path.join(root,'public/shop-profile.js'),path.join(temp,'public/shop-profile.js'));
     await fs.writeFile(path.join(temp,'package.json'),' {"type":"module"}');
     await fs.symlink(await fs.realpath(path.join(root,'node_modules')),path.join(temp,'node_modules'));
     await fs.writeFile(path.join(temp,'config/accounts.json'),JSON.stringify({accounts:[{id:'melon',enabled:true}]}));

@@ -7,6 +7,7 @@ import { accountIdFromProfile,calculateManualFields,manualCostFor,mergeDiscovery
 import { decodeSyncBody } from './lib/sync-payload.mjs';
 import { acceptMatchCorrections } from './lib/match-corrections.mjs';
 import { invalidateCorrectedMatches } from '../public/match-memory.js';
+import { parseShopProfile } from '../public/shop-profile.js';
 
 const here=path.dirname(fileURLToPath(import.meta.url)),root=path.resolve(here,'..');
 const password=process.env.DASHBOARD_PASSWORD;
@@ -62,8 +63,8 @@ const mutableAccountIds=new Set(portalUser?.accountIds||[]);
 const configuredByProfile=new Map(configured.map(account=>[String(account.profileUrl||'').replace(/\/+$/,''),account]));
 const existingByProfile=()=>new Map([...existing.values()].map(account=>[String(account.profileUrl||'').replace(/\/+$/,''),account]));
 for(const raw of payload.managedAccounts||[]){
-  const profileUrl=String(raw?.profileUrl||'').trim().replace(/\/+$/,'');
-  if(!/^https:\/\/paypayfleamarket\.yahoo\.co\.jp\/user\/[^/?#]+$/i.test(profileUrl))continue;
+  const parsed=parseShopProfile(raw?.profileUrl);if(!parsed)continue;
+  const {profileUrl,platform}=parsed;
   const id=String(raw.id||accountIdFromProfile(profileUrl)).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,80)||accountIdFromProfile(profileUrl);
   const configuredMatch=configuredByProfile.get(profileUrl),managedMatch=existingByProfile().get(profileUrl);
   if(username!=='admin'){
@@ -74,7 +75,7 @@ for(const raw of payload.managedAccounts||[]){
   }
   if(staticIds.has(id))continue;
   const targetId=managedMatch?.id||id;
-  existing.set(targetId,{...managedMatch,id:targetId,name:String(raw.name||targetId).trim().slice(0,80),profileUrl,enabled:raw.enabled!==false,managed:true,
+  existing.set(targetId,{...managedMatch,id:targetId,name:String(raw.name||targetId).trim().slice(0,80),profileUrl,platform,enabled:raw.enabled!==false,managed:true,
     ownerUsername:managedMatch?.ownerUsername||raw.ownerUsername||(username==='admin'?'admin':username),updatedAt:raw.updatedAt||payload.issuedAt||new Date().toISOString()});
   if(username!=='admin')mutableAccountIds.add(targetId);
 }

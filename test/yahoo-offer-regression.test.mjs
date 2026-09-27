@@ -108,3 +108,19 @@ test('explicit body colour overrides an identical generic title and photo',async
   assert.equal(result.competitorCount,0);
   assert.ok(result.rejected.some(row=>row.reason==='description_color_mismatch'));
 });
+
+for(const accountId of ['melon','local-1789214704376','account-p6579087']){
+  test(`${accountId}: quantity only in the sale description is recalled and verified`,async()=>{
+    const result=await replay({accountId,ownTitle:'雪肌精×モンチッチ ペアぬいぐるみ セット 限定',
+      title:'レア 非売品 雪肌精 モンチッチ キーホルダー 海外限定 monchicchi',
+      ownDescription:'新品 未使用 男の子・女の子の2体セット',
+      description:'雪肌精×モンチッチ SSぬいぐるみキーチェーン ペアセット 非売品\n新品未使用\nSSサイズの男の子・女の子ペアセット',sameImage:true});
+    assert.equal(result.competitorCount,1);assert.equal(result.recommendedPrice,6999);
+  });
+  test(`${accountId}: outer-box-only opening is not an empty-box offer`,async()=>{
+    const result=await replay({accountId,ownTitle:'SKULLPANDA My Little Pony スーパーシークレット ペンダント',
+      title:'SKULLPANDA My Little Pony スーパーシークレット Queen Chrysalis ペンダント',
+      description:'外箱のみ確認のため開封しております。中袋は未開封。箱とカード付き。',sameImage:true});
+    assert.equal(result.competitorCount,1);
+  });
+}

@@ -81,3 +81,10 @@ export function fairRoundRobin(buckets=[]){
   }
   return output;
 }
+
+// Finish a new rule-version sweep before revisiting already-checked shop rows.
+// Simple per-shop alternation otherwise spends most slots rechecking small shops.
+export function fairPriorityRoundRobin(buckets=[]){
+  const priorities=[...new Set(buckets.flat().map(task=>task.priority??3))].sort((a,b)=>a-b);
+  return priorities.flatMap(priority=>fairRoundRobin(buckets.map(bucket=>bucket.filter(task=>(task.priority??3)===priority))));
+}

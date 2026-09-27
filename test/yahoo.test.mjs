@@ -120,7 +120,7 @@ test('sold or definitively mismatched cards do not cap an in-stock raise decisio
     {id:'variant-image',reason:'collectible_variant_image_unconfirmed'},
     {id:'error',reason:'detail_error'}
   ]);
-  assert.deepEqual(result.map(item=>item.id),['error','unchecked']);
+  assert.deepEqual(result.map(item=>item.id),['variant-image','error','unchecked']);
 });
 
 test('unconfirmed lottery series and image misses remain raise-price guards',()=>{

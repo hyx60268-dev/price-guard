@@ -4,6 +4,7 @@ import { compareSnapshots } from './changes.mjs';
 import { encryptFile } from './crypto.mjs';
 import { makeWorkbook } from './excel.mjs';
 import { cloudCostStatus } from './cloud-cost-status.mjs';
+import { pricingCoverage } from './pricing-coverage.mjs';
 
 function safeUsername(value=''){return String(value).trim().toLowerCase().replace(/[^a-z0-9_-]/g,'').slice(0,48)}
 function safeEmail(value=''){
@@ -55,7 +56,7 @@ export function scopeResultForPortalUser(result,user){
   const managedAccounts=(result.managedAccounts||[]).filter(account=>allowed.has(account.id));
   const notificationEmail=safeEmail(result.portalPreferences?.[user.username]?.notificationEmail||user.notificationEmail);
   const matchCorrections=Object.fromEntries(Object.entries(result.matchCorrections||{}).filter(([,record])=>allowed.has(record.accountId)));
-  return {...result,matchCorrections,portalUsers:undefined,portalPreferences:undefined,portalUser:{username:user.username,displayName:user.displayName,role:'member',notificationEmail},accounts,items,manualCosts,managedAccounts,
+  return {...result,pricingCoverage:pricingCoverage(items,accounts),matchCorrections,portalUsers:undefined,portalPreferences:undefined,portalUser:{username:user.username,displayName:user.displayName,role:'member',notificationEmail},accounts,items,manualCosts,managedAccounts,
     ownedTitleHistory:items.map(item=>item.title).filter(Boolean)};
 }
 
@@ -86,7 +87,7 @@ export function dashboardSummary(result,changeSummary){
     afterLow:items.filter(item=>item.afterUnder1500).length,
     manual:items.filter(item=>item.confidence!=='高').length,
     needsManualPurchase:items.filter(item=>item.needsManualPurchase).length,scanTotals,
-    cloudCost:cloudCostStatus(result),
+    cloudCost:cloudCostStatus(result),pricingCoverage:pricingCoverage(items,result.accounts||[]),
     staleListings:items.filter(item=>item.listingAge?.eligible).length,
     matchingCorrections:Object.values(result.matchCorrections||{}).filter(record=>!record.deleted).length,
     xianyuLoginRequired:Boolean(result.login?.xianyuRequired),xianyuAuthExpired:Boolean(result.login?.xianyuAuthExpired),xianyuMode:result.login?.xianyuMode||'unknown',
