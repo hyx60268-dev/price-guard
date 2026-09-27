@@ -47,8 +47,8 @@ async function verifyRealCost(context){
       // 这里验证的是“登录会话确实能读到真实搜索与详情”，不是直接批准成本。
       // 正式扫描仍由 xianyuCost 要求至少两个独立卖家的同款价格样本。
       // 若把登录同步也绑定到两个样本，会让有效登录因冷门商品只有一个卖家而无法上传。
-      if((result.cardCount||0)>0&&!result.loginVisible&&!['login_required','blocked'].includes(result.status)){
-        console.log(`登录会话验证成功：已读取 ${result.cardCount} 个真实搜索候选；严格同款详情 ${result.verifiedCount||0} 个。`);
+      if((result.cardCount||0)>0&&(result.accessibleDetailCount||0)>0&&!result.loginVisible&&!['login_required','blocked'].includes(result.status)){
+        console.log(`登录会话验证成功：已读取 ${result.cardCount} 个真实搜索候选、${result.accessibleDetailCount} 个商品详情；严格同款详情 ${result.verifiedCount||0} 个。`);
         return {item,result};
       }
     }
