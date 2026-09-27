@@ -12,6 +12,34 @@ function safeEmail(value=''){
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)&&email.length<=254?email:'';
 }
 
+const compactCandidate=value=>value&&typeof value==='object'?{
+  id:value.id||null,url:value.url||null,title:value.title||null,image:value.image||null,
+  price:Number.isFinite(Number(value.price))?Number(value.price):null,platform:value.platform||null,
+  reason:value.reason||null,titleScore:value.titleScore??null,imageScore:value.imageScore??null,
+  primaryImageScore:value.primaryImageScore??null,matchMethod:value.matchMethod||null,
+  detailTitle:value.detailTitle||null,sellerKey:value.sellerKey||null,priceSource:value.priceSource||null,
+  titleMatch:value.titleMatch??null,bodyMatch:value.bodyMatch??null
+}:null;
+
+function compactComparison(value={}){
+  const keep=['status','checkedAt','cacheReason','rulesVersion','lowestPrice','lowestUrl','searchUrl','marketMedianPrice','marketMinPrice','marketMaxPrice','marketSampleCount','cardCount','detailCheckedCount','preliminaryCount','unresolvedCandidateCount','uncheckedLowerCandidateCount','unconfirmedLowerCandidateCount','unconfirmedLowerCount','matchLabel','matchConfidence','averageCNY','verifiedCount','sellerCount'];
+  const output={};
+  for(const key of keep)if(value[key]!==undefined)output[key]=value[key];
+  output.candidates=(value.candidates||[]).slice(0,5).map(compactCandidate).filter(Boolean);
+  output.rejected=(value.rejected||[]).slice(-12).map(compactCandidate).filter(Boolean);
+  if(value.samples)output.samples=value.samples.slice(0,5).map(compactCandidate).filter(Boolean);
+  return output;
+}
+
+export function compactDashboardResult(result={}){
+  const accounts=(result.accounts||[]).map(({items,...account})=>account);
+  const items=(result.items||[]).map(item=>({
+    ...item,sourceDetail:undefined,cachedYahoo:undefined,
+    yahoo:compactComparison(item.yahoo),rakuma:compactComparison(item.rakuma),xianyu:compactComparison(item.xianyu)
+  }));
+  return {...result,accounts,items};
+}
+
 function normalizePortalUserRecords(values=[]){
   const seen=new Map();
   for(const raw of values){
@@ -96,17 +124,20 @@ export function dashboardSummary(result,changeSummary){
 }
 
 export async function writeOutputs({root,result,previous,password}){
-  await Promise.all(['data','public/data'].map(directory=>fs.mkdir(path.join(root,directory),{recursive:true})));
+  await Promise.all(['data','public/data','state'].map(directory=>fs.mkdir(path.join(root,directory),{recursive:true})));
   result.dataRevision=result.dataRevision||result.cloudSyncedAt||result.checkedAt||new Date().toISOString();
   result.portalUsers=portalUserRecordsForResult(result);
   const portalUsers=result.portalUsers.filter(user=>user.enabled!==false);
   const changeSummary=compareSnapshots(previous,result);
   result.changes={...changeSummary,changes:changeSummary.changes.slice(0,100)};
-  const jsonPath=path.join(root,'data','latest.json'),xlsxPath=path.join(root,'data','latest.xlsx');
-  await fs.writeFile(jsonPath,JSON.stringify(result,null,2));
+  const jsonPath=path.join(root,'data','latest.json'),statePath=path.join(root,'data','state.json'),xlsxPath=path.join(root,'data','latest.xlsx');
+  const dashboardResult=compactDashboardResult(result);
+  await Promise.all([fs.writeFile(jsonPath,JSON.stringify(dashboardResult)),fs.writeFile(statePath,JSON.stringify(result))]);
   await makeWorkbook(result,xlsxPath);
   await Promise.all([
     encryptFile(jsonPath,path.join(root,'public','data','latest.json.enc'),password),
+    encryptFile(statePath,path.join(root,'public','data','state.json.enc'),password),
+    encryptFile(statePath,path.join(root,'state','latest.json.enc'),password),
     encryptFile(xlsxPath,path.join(root,'public','data','latest.xlsx.enc'),password)
   ]);
   const summary=dashboardSummary(result,changeSummary);
@@ -119,10 +150,10 @@ export async function writeOutputs({root,result,previous,password}){
   const manifest=[{username:'admin',displayName:'总管理员',role:'admin'},...portalUsers.map(user=>({username:user.username,displayName:user.displayName,role:'member'}))];
   await fs.writeFile(path.join(root,'public','data','users.json'),JSON.stringify({version:1,users:manifest},null,2));
   for(const user of portalUsers){
-    const scoped=scopeResultForPortalUser(result,user),userRoot=path.join(usersDir,user.username);
+    const scoped=scopeResultForPortalUser(result,user),dashboardScoped=compactDashboardResult(scoped),userRoot=path.join(usersDir,user.username);
     await fs.mkdir(userRoot,{recursive:true});
     const userJson=path.join(root,'data',`portal-${user.username}.json`),userXlsx=path.join(root,'data',`portal-${user.username}.xlsx`);
-    await fs.writeFile(userJson,JSON.stringify(scoped,null,2));
+    await fs.writeFile(userJson,JSON.stringify(dashboardScoped));
     await makeWorkbook(scoped,userXlsx);
     await Promise.all([
       encryptFile(userJson,path.join(userRoot,'latest.json.enc'),user.password),
@@ -131,6 +162,6 @@ export async function writeOutputs({root,result,previous,password}){
     ]);
     await Promise.allSettled([fs.unlink(userJson),fs.unlink(userXlsx)]);
   }
-  await Promise.allSettled([fs.unlink(jsonPath),fs.unlink(xlsxPath)]);
+  await Promise.allSettled([fs.unlink(jsonPath),fs.unlink(statePath),fs.unlink(xlsxPath)]);
   return {summary,changeSummary};
 }

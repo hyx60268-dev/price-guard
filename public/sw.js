@@ -1,4 +1,4 @@
-const CACHE='price-guard-v21',ASSETS=['./','index.html','styles.css?v=23','app.js?v=30','match-memory.js','shop-profile.js','favicon.svg','manifest.webmanifest?v=23'];
+const CACHE='price-guard-v22',ASSETS=['./','index.html','styles.css?v=23','app.js?v=31','match-memory.js','shop-profile.js','favicon.svg','manifest.webmanifest?v=23'];
 self.addEventListener('install',event=>event.waitUntil(Promise.all([caches.open(CACHE).then(cache=>cache.addAll(ASSETS)),self.skipWaiting()])));
 self.addEventListener('activate',event=>event.waitUntil(Promise.all([caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))),self.clients.claim()])));
 self.addEventListener('message',event=>{if(event.data==='SKIP_WAITING')self.skipWaiting()});

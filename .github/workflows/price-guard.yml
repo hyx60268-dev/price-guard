@@ -114,7 +114,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           DASHBOARD_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
       - name: 保存本次加密基准
-        run: mkdir -p state && cp public/data/latest.json.enc state/latest.json.enc
+        run: test -s state/latest.json.enc
       - uses: actions/cache/save@v4
         with:
           path: |

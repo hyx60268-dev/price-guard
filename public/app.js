@@ -60,7 +60,11 @@ function fullRecord(item,values={}){
 }
 
 async function decryptFile(url,pwd){
-  const response=await fetch(`${url}?t=${Date.now()}`,{cache:'no-store'});
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);
+  let response;
+  try{response=await fetch(`${url}?t=${Date.now()}`,{cache:'no-store',signal:controller.signal})}
+  catch(error){throw error?.name==='AbortError'?Error('云端数据下载超时，请刷新后重试'):error}
+  finally{clearTimeout(timer)}
   if(!response.ok)throw Error('尚无检查结果');
   const bytes=new Uint8Array(await response.arrayBuffer());
   if(new TextDecoder().decode(bytes.slice(0,4))!=='PG01')throw Error('数据格式错误');
@@ -116,7 +120,7 @@ $('#unlockForm').addEventListener('submit',async event=>{
     password=$('#password').value;await loadDashboard();$('#unlock').hidden=true;$('#dashboard').hidden=false;$('#cloudSync').hidden=false;
     $('#userAdminSection').hidden=currentUsername!=='admin';
     renderAccountOptions();render();await checkCloudStatus(false);
-  }catch(error){$('#unlockError').textContent='密码不正确，或云端尚未生成数据。'}
+  }catch(error){$('#unlockError').textContent=String(error?.message||'').includes('超时')?error.message:'密码不正确，或云端尚未生成数据。'}
   finally{button.disabled=false}
 });
 
@@ -124,7 +128,7 @@ function cloudAccounts(){const deleted=new Set(getDeleted());return (data?.accou
 function localOnlyAccounts(){return getLocal().filter(item=>!cloudAccounts().some(cloud=>cloud.profileUrl===item.profileUrl))}
 function account(){return cloudAccounts().find(item=>item.id===currentAccountId)||cloudAccounts()[0]}
 function allAccountsSelected(){return currentAccountId==='__all__'}
-function rawItems(){return allAccountsSelected()?(data?.items||[]):(account()?.items||[])}
+function rawItems(){return allAccountsSelected()?(data?.items||[]):(data?.items||[]).filter(item=>item.accountId===account()?.id)}
 function manualFor(item){
   const accountId=item.accountId||account()?.id||'default',aliases=data?.relistAliases||{};
   const keys=[itemKey(item),`${accountId}:${item.id}`,`${accountId}:item:${item.id}`,...identityKeys(item)];

@@ -23,7 +23,7 @@ async function remoteBytes(filename){
   }catch{return null}
 }
 
-const publishedBytes=await remoteBytes('latest.json.enc');
+const publishedBytes=await remoteBytes('state.json.enc')||await remoteBytes('latest.json.enc');
 if(publishedBytes){
   try{
     const published=JSON.parse(decrypt(publishedBytes,password).toString('utf8'));

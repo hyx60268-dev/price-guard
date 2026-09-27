@@ -107,8 +107,10 @@ test('encrypted correction sync publishes a safe price and retains fees and emai
     const eventPath=path.join(temp,'event.json');await fs.writeFile(eventPath,JSON.stringify({repository:{owner:{login:'owner'}},issue:{title:'[Price Guard Sync:admin]',user:{login:'owner'},body}}));
     await promisify(execFile)(process.execPath,['scripts/sync-input.mjs'],{cwd:temp,env:{...process.env,DASHBOARD_PASSWORD:password,GITHUB_EVENT_PATH:eventPath,PORTAL_USERS_JSON:'',GITHUB_OUTPUT:''}});
     const result=JSON.parse(decrypt(await fs.readFile(path.join(temp,'public/data/latest.json.enc')),password));
+    const baseline=JSON.parse(decrypt(await fs.readFile(path.join(temp,'state/latest.json.enc')),password));
     assert.equal(result.items[0].recommendedPrice,10000);
-    assert.equal(result.accounts[0].items[0].recommendedPrice,10000);
+    assert.equal(result.accounts[0].items,undefined);
+    assert.equal(baseline.accounts[0].items[0].recommendedPrice,10000);
     assert.equal(result.items[0].costJPY,2300);
     assert.deepEqual(result.manualCosts,manualCosts);
     assert.equal(result.portalPreferences.admin.notificationEmail,'retained@example.test');

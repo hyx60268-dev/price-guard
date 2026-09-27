@@ -68,8 +68,8 @@ try{
         cwd:root,maxBuffer:10*1024*1024,env:{...process.env,GITHUB_EVENT_PATH:eventPath,GITHUB_OUTPUT:''}
       });
       if(stdout.trim())console.log(stdout.trim());if(stderr.trim())console.warn(stderr.trim());
-      await fs.mkdir(path.join(root,'state'),{recursive:true});
-      await fs.copyFile(path.join(root,'public','data','latest.json.enc'),path.join(root,'state','latest.json.enc'));
+      // writeOutputs already saved the complete encrypted scan baseline.
+      // The public phone payload is intentionally compact and must not replace it.
     }catch(error){syncError=error}
     if(syncError){
       const detail=String(syncError?.stderr||syncError?.message||syncError).replace(/\s+/g,' ').slice(0,500);

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { calculateManualFields,discoveryDismissalKey,manualCostFor,manualCostKey,mergeAccountConfigs,mergeDiscoveryReviews,mergeDismissedDiscoveries,mergeManualCosts,reconcileDurableState } from '../scripts/lib/state.mjs';
 import { decrypt } from '../scripts/lib/crypto.mjs';
-import { mergePortalUserRecords,portalUsersForResult,portalUsersFromEnv,scopeResultForPortalUser,writeOutputs } from '../scripts/lib/publish.mjs';
+import { compactDashboardResult,mergePortalUserRecords,portalUsersForResult,portalUsersFromEnv,scopeResultForPortalUser,writeOutputs } from '../scripts/lib/publish.mjs';
 
 const item={accountId:'m',id:'new',title:'中国限定 商品 A 新品',xianyuQuery:'商品A 中国版',ownPrice:5000,recommendedPrice:4500,averageCNY:20};
 
@@ -96,6 +96,17 @@ test('admin-created user survives publication and can decrypt its own login file
     assert.deepEqual(member.accounts,[]);
     assert.deepEqual(manifest.users.map(user=>user.username),['admin','member1']);
   }finally{await fs.rm(root,{recursive:true,force:true})}
+});
+
+test('phone payload removes duplicated items and bulky diagnostics while full evidence stays separate',()=>{
+  const huge='详细说明'.repeat(5000),row={accountId:'shop',id:'one',title:'商品',ownPrice:5000,
+    sourceDetail:{description:huge},yahoo:{status:'ok',candidates:[{id:'y',title:'同款',text:huge,price:4900}],rejected:[{id:'bad',reason:'variant_mismatch',text:huge}]},
+    rakuma:{status:'ok',candidates:[]},xianyu:{status:'ok',averageCNY:20,samples:[{id:'x',title:'采购',text:huge,price:20}]}};
+  const full={accounts:[{id:'shop',items:[row]}],items:[row]},compact=compactDashboardResult(full);
+  assert.equal(compact.accounts[0].items,undefined);
+  assert.equal(compact.items[0].sourceDetail,undefined);
+  assert.equal(compact.items[0].yahoo.candidates[0].text,undefined);
+  assert.ok(JSON.stringify(compact).length<JSON.stringify(full).length/10);
 });
 
 test('encrypted portal records override legacy env users and keep deletion tombstones',()=>{
