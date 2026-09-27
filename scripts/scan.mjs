@@ -91,7 +91,7 @@ const contexts=await mapLimit(accounts,Math.min(profileConcurrency,accounts.leng
   try{
     const discovered=account.platform==='rakuma'?await discoverRakumaProfile(account.profileUrl,settings):await discoverYahooProfile(null,account.profileUrl,settings);
     if(discovered.items.length||discovered.complete===true){
-      activeItems=reconcileLiveItems(catalogItems,previousItems,discovered.items,account.id);
+      activeItems=reconcileLiveItems(catalogItems,previousItems,discovered.items,account.id,Object.values(previous?.listingHistory||{}));
       profileStatus='live';
       console.log(`${account.platform} 主页成功：${discovered.pages} 页，${activeItems.length} 件当前在售`);
     }else console.warn(`${account.platform} 主页返回 0 件；沿用保存清单 ${activeItems.length} 件`);
@@ -102,8 +102,8 @@ const contexts=await mapLimit(accounts,Math.min(profileConcurrency,accounts.leng
   return {account,accountIndex,catalogItems,previousItems,previousById,activeItems,profileStatus,profileError,profileDelta,yahooById:new Map(),rakumaById:new Map(),xianyuById:new Map()};
 });
 
-const relistAliases={};
-for(const context of contexts)for(const relisted of context.profileDelta.relisted||[])relistAliases[`${context.account.id}:${relisted.to}`]=relisted.from;
+const relistAliases={...(previous?.relistAliases||{})};
+for(const context of contexts)for(const item of context.activeItems)if(item.relistedFrom)relistAliases[`${context.account.id}:${item.id}`]=item.relistedFrom;
 
 // 只有明确设置 FORCE_FULL_SCAN 才从头强制重扫。部署/手工重跑也沿用轮转缓存，
 // 否则每次都会在时间预算耗尽前反复检查前半段，后半段商品长期得不到核验。
@@ -191,7 +191,7 @@ const xianyuLimit=Math.max(0,Number(settings.maxXianyuItemsPerRun)||3);
 const xianyuBuckets=contexts.map(()=>[]);
 for(const [contextIndex,context] of contexts.entries())for(const item of context.activeItems){
   const prior=priorFor(context,item),yc=context.yahooById.get(item.id)||{};
-  const manual=manualCostFor(manualCosts,{...item,accountId:context.account.id},relistAliases);
+  const manual=manualCostFor(manualCosts,{...item,accountId:context.account.id},relistAliases,context.activeItems);
   const verified=verifiedXianyuCache(prior);
   if(verified&&isFresh(verified.checkedAt,xianyuFreshHours)){
     context.xianyuById.set(item.id,{status:'cached_verified',...verified});continue;
@@ -267,7 +267,7 @@ for(const context of contexts){
     const recommendedPrice=comparisonIncomplete?ownPrice:
       verifiedLowest&&verifiedLowest.price<ownPrice?Math.max(1,Math.floor(verifiedLowest.price)-1):combinedMarket.recommendedPrice;
     const needsXianyu=Number.isFinite(lowestPrice)&&lowestPrice<ownPrice;
-    const manual=manualCostFor(manualCosts,{...item,accountId:context.account.id},relistAliases);
+    const manual=manualCostFor(manualCosts,{...item,accountId:context.account.id},relistAliases,context.activeItems);
     const yahooSource=['ok','incomplete'].includes(yc.status)?'live':yc.status==='cached'?'cached':Number.isFinite(prior.lowestPrice)?'cached':'own_baseline';
     const costSource=Number.isFinite(manual?.purchaseCNY)?'manual':xc.status==='ok'&&Number.isFinite(xc.averageCNY)?'live':Number.isFinite(averageCNY)?'cached':'missing';
     const samples=xc.samples?.length?xc.samples:(priorVerified?.samples||[]);
@@ -314,6 +314,13 @@ for(const context of contexts){
 }
 
 const checkedAt=new Date().toISOString(),allItems=accountResults.flatMap(account=>account.items);
+const listingHistory={...(previous?.listingHistory||{})};
+for(const item of [...(previous?.items||[]),...allItems]){
+  if(!item.accountId||!item.id)continue;
+  const {id,accountId,title,xianyuQuery,image,relistedFrom}=item;
+  listingHistory[`${accountId}:${id}`]={id,accountId,title,xianyuQuery,image,relistedFrom};
+}
+for(const [key,oldId] of Object.entries(relistAliases))delete listingHistory[`${key.slice(0,key.lastIndexOf(':'))}:${oldId}`];
 // Keep an encrypted, cross-account history of every title that has appeared in the
 // seller inventories.  A sold item disappears from the live profile, but it must
 // still be excluded from future product discovery runs.
@@ -324,8 +331,8 @@ const ownedTitleHistory=[...new Set([
   ...allItems.map(item=>item.title)
 ].map(value=>String(value||'').trim()).filter(Boolean))].slice(-5000);
 const result={
-  pricingCoverage:pricingCoverage(allItems,accountResults),
-  version:6,checkedAt,dataRevision:checkedAt,settings,accounts:accountResults,managedAccounts,portalUsers,
+  listingHistory,pricingCoverage:pricingCoverage(allItems,accountResults),
+  version:6,checkedAt,dataRevision:checkedAt,settings,accounts:accountResults,managedAccounts,portalUsers,appliedSyncIssues:previous?.appliedSyncIssues||{},
   manualCosts,matchCorrections,portalPreferences,dismissedDiscoveries,discoveryReviews,ownedTitleHistory,relistAliases,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode,xianyuAccess:sessionManager.access()},items:allItems,
   scanMeta:{codeSha:process.env.GITHUB_SHA||null,trigger:process.env.SCAN_TRIGGER||'local',startedAt:new Date(startedAt).toISOString(),durationSeconds:Math.round((Date.now()-startedAt)/1000),
     budgetMinutes:Number(settings.scanBudgetMinutes)||12,profileConcurrency,yahooConcurrency,rakumaLimit,xianyuLimit}

@@ -1,3 +1,5 @@
+import { mergeAccounts,resolveCostRecord } from './durable-state.js';
+import { FRONTEND_VERSION } from './build-version.js';
 import { candidateId, correctionKey, mergeMatchCorrections, rejectedByMemory, invalidateCorrectedMatches } from './match-memory.js';
 import { parseShopProfile } from './shop-profile.js';
 const $=selector=>document.querySelector(selector);
@@ -20,7 +22,12 @@ const scopedKey=key=>currentUsername==='admin'?key:`${key}.${currentUsername}`;
 const getLocal=()=>getJson(scopedKey(accountKey),currentUsername==='admin'?getJson(legacyAccountKey,[]):[]);
 const saveLocal=value=>localStorage.setItem(scopedKey(accountKey),JSON.stringify(value));
 const getDeleted=()=>getJson(scopedKey(deletedAccountKey),[]);
-const saveDeleted=value=>localStorage.setItem(scopedKey(deletedAccountKey),JSON.stringify([...new Set(value)]));
+const getDeletedRecords=()=>getJson(scopedKey(`${deletedAccountKey}.records`),{});
+const saveDeleted=value=>{
+  const old=getDeletedRecords(),now=new Date().toISOString();
+  localStorage.setItem(scopedKey(deletedAccountKey),JSON.stringify([...new Set(value)]));
+  localStorage.setItem(scopedKey(`${deletedAccountKey}.records`),JSON.stringify(Object.fromEntries(value.map(id=>[id,old[id]||{updatedAt:now}]))));
+};
 let manualCosts={},dismissedDiscoveries={},discoveryReviews={},matchCorrections={};
 const saveMatchCorrections=()=>localStorage.setItem(scopedKey(matchCorrectionKey),JSON.stringify(matchCorrections));
 const saveManualCosts=()=>localStorage.setItem(scopedKey(costKey),JSON.stringify(manualCosts));
@@ -43,7 +50,7 @@ function identityKeys(item){
   if(title)keys.push(`${accountId}:title:${title}`);
   return [...new Set(keys)];
 }
-function itemKey(item){return identityKeys(item)[0]||`${item.accountId||account()?.id||'default'}:item:${item.id}`}
+function itemKey(item){return `${item.accountId||account()?.id||'default'}:item:${item.id}`}
 function recordTime(record){const time=Date.parse(record?.updatedAt||'');return Number.isFinite(time)?time:0}
 function mergeCosts(base={},incoming={}){
   const output={...base};
@@ -76,23 +83,13 @@ async function decryptFile(url,pwd){
 }
 
 function migrateLocalData(){
-  const aliases=data.relistAliases||{};
   for(const item of data.items||[]){
-    const accountId=item.accountId||'default';
-    const candidateKeys=[`${accountId}:${item.id}`,`${accountId}:item:${item.id}`,...identityKeys(item)];
-    const oldId=aliases[`${accountId}:${item.id}`]||item.relistedFrom;
-    if(oldId)candidateKeys.push(`${accountId}:${oldId}`,`${accountId}:item:${oldId}`);
-    let best=item.manualCost||null;
-    for(const key of candidateKeys)if(manualCosts[key]&&(!best||recordTime(manualCosts[key])>=recordTime(best)))best=manualCosts[key];
-    if(!best){
-      const wanted=new Set(identityKeys(item));
-      for(const record of Object.values(manualCosts))if(record?.accountId===accountId&&(record.itemId===item.id||(record.identityKeys||[]).some(key=>wanted.has(key)))&&(!best||recordTime(record)>=recordTime(best)))best=record;
-    }
-    if(best){const normalized=fullRecord(item,best);manualCosts[itemKey(item)]=normalized}
+    const best=resolveCostRecord(manualCosts,item,data.relistAliases||{},data.items)||item.manualCost;
+    if(best)manualCosts[itemKey(item)]=fullRecord(item,best);
   }
   saveManualCosts();
   const deleted=new Set(getDeleted()),cloudManaged=data.managedAccounts||[],local=getLocal(),combined=new Map();
-  for(const item of [...cloudManaged,...local])if(item?.id&&!deleted.has(item.id))combined.set(item.id,{...combined.get(item.id),...item});
+  for(const item of mergeAccounts(cloudManaged,local))if(item.enabled!==false&&!deleted.has(item.id))combined.set(item.id,item);
   saveLocal([...combined.values()]);
 }
 
@@ -109,6 +106,7 @@ async function loadDashboard(){
 }
 
 async function loadDiscovery(){
+  if(currentUsername!=='admin'){discoveryData=null;return}
   try{const discoveryPlain=await decryptFile('data/discovery.json.enc',password);discoveryData=JSON.parse(new TextDecoder().decode(discoveryPlain))}catch{discoveryData=null}
 }
 
@@ -130,13 +128,7 @@ function account(){return cloudAccounts().find(item=>item.id===currentAccountId)
 function allAccountsSelected(){return currentAccountId==='__all__'}
 function rawItems(){return allAccountsSelected()?(data?.items||[]):(data?.items||[]).filter(item=>item.accountId===account()?.id)}
 function manualFor(item){
-  const accountId=item.accountId||account()?.id||'default',aliases=data?.relistAliases||{};
-  const keys=[itemKey(item),`${accountId}:${item.id}`,`${accountId}:item:${item.id}`,...identityKeys(item)];
-  const oldId=aliases[`${accountId}:${item.id}`]||item.relistedFrom;if(oldId)keys.push(`${accountId}:${oldId}`,`${accountId}:item:${oldId}`);
-  let best=item.manualCost||null;
-  for(const key of keys)if(manualCosts[key]&&(!best||recordTime(manualCosts[key])>=recordTime(best)))best=manualCosts[key];
-  const wanted=new Set(identityKeys(item));
-  for(const record of Object.values(manualCosts))if(record?.accountId===accountId&&(record.itemId===item.id||(record.identityKeys||[]).some(key=>wanted.has(key)))&&(!best||recordTime(record)>=recordTime(best)))best=record;
+  const best=resolveCostRecord(manualCosts,item,data?.relistAliases||{},data?.items||[])||item.manualCost;
   return best&&!best.deleted?best:{};
 }
 
@@ -423,7 +415,7 @@ $('#accountForm').onsubmit=event=>{
   if(!parsed){alert('请输入 Yahoo!フリマ /user/ 或 乐天ラクマ fril.jp/shop/ 卖家主页链接');return}
   const {profileUrl,platform}=parsed;
   const values=getLocal(),id=accountId(profileUrl),existing=values.find(item=>item.profileUrl===profileUrl);
-  if(existing){existing.name=name;existing.platform=platform;existing.updatedAt=new Date().toISOString()}else values.push({id,name,profileUrl,platform,enabled:true,updatedAt:new Date().toISOString()});
+  if(existing){existing.name=name;existing.platform=platform;existing.enabled=true;existing.updatedAt=new Date().toISOString()}else values.push({id,name,profileUrl,platform,enabled:true,updatedAt:new Date().toISOString()});
   saveLocal(values);saveDeleted(getDeleted().filter(value=>value!==id));event.target.reset();renderLocalAccounts();renderAccountOptions();$('#copyStatus').textContent='已保存到本机；点“同步全部数据到云端”。';
 };
 
@@ -453,8 +445,8 @@ async function startCloudSync(statusElement=$('#cloudSyncStatus')){
   try{
     report('正在本机加密成本、账号和已上传记录…');
     const deleted=new Set(getDeleted()),byProfile=new Map();
-    for(const item of [...(data.managedAccounts||[]),...getLocal()])if(item?.profileUrl&&!deleted.has(item.id))byProfile.set(item.profileUrl,{...item,enabled:true});
-    const payload={version:1,issuedAt:new Date().toISOString(),manualCosts:syncCosts(),matchCorrections,dismissedDiscoveries,discoveryReviews,managedAccounts:[...byProfile.values()],deletedAccountIds:[...deleted],
+    for(const item of mergeAccounts(data.managedAccounts||[],getLocal()))if(item?.profileUrl&&!deleted.has(item.id))byProfile.set(item.profileUrl,item);
+    const payload={version:1,issuedAt:new Date().toISOString(),manualCosts:syncCosts(),matchCorrections,dismissedDiscoveries,discoveryReviews,managedAccounts:[...byProfile.values()],deletedAccountIds:[...deleted],deletedAccounts:getDeletedRecords(),
       ...(currentUsername==='admin'?{portalUsers:data.portalUsers||[]}:{})};
     const ciphertext=await encryptPayload(payload),body=`<!-- PRICE_GUARD_SYNC_V1\n${ciphertext}\n-->\n\n这是一份由价格守卫生成的端到端加密同步数据。请勿修改上方密文。`;
     const title=`[Price Guard Sync:${currentUsername}] ${new Date().toLocaleString('zh-CN')}`;
@@ -483,6 +475,10 @@ async function checkCloudStatus(reload=true){
   if(refreshingData)return;
   try{
     const [status,nextDiscoveryStatus]=await Promise.all([fetchStatus(),fetchDiscoveryStatus().catch(()=>null)]);cloudStatus=status;
+    if(status.frontendVersion>FRONTEND_VERSION){
+      await navigator.serviceWorker?.getRegistration().then(registration=>registration?.update()).catch(()=>{});
+      location.reload();return;
+    }
     if(!data){const date=new Date(status.checkedAt);$('#stamp').textContent=`云端检查：${Number.isNaN(date.valueOf())?'等待首次检查':date.toLocaleString('zh-CN')} · 约每 20 分钟`;return}
     if(reload&&status.dataRevision&&status.dataRevision!==data.dataRevision){
       refreshingData=true;await loadDashboard();renderAccountOptions();render();if(!$('#discoveryView').hidden)renderDiscovery();$('#refreshNotice').hidden=false;$('#refreshText').textContent='云端数据已自动更新，无需重新打开页面。';setTimeout(()=>$('#refreshNotice').hidden=true,8000);
@@ -490,7 +486,9 @@ async function checkCloudStatus(reload=true){
       refreshingData=true;await loadDiscovery();if(!$('#discoveryView').hidden)renderDiscovery();$('#refreshNotice').hidden=false;$('#refreshText').textContent='云端选品数据已自动更新。';setTimeout(()=>$('#refreshNotice').hidden=true,8000);
     }
     discoveryCloudStatus=nextDiscoveryStatus;
-  }catch{}finally{refreshingData=false}
+  }catch{
+    if(data){$('#refreshNotice').hidden=false;$('#refreshText').textContent='暂时无法刷新云端数据，当前显示上次成功读取的结果；稍后会自动重试。'}
+  }finally{refreshingData=false}
 }
 setInterval(()=>checkCloudStatus(true),60_000);addEventListener('focus',()=>checkCloudStatus(true));addEventListener('pageshow',()=>checkCloudStatus(true));document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkCloudStatus(true)});
 
@@ -498,6 +496,6 @@ addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPro
 if('serviceWorker'in navigator){
   const hadController=Boolean(navigator.serviceWorker.controller);let reloading=false;
   navigator.serviceWorker.addEventListener('controllerchange',()=>{if(hadController&&!reloading){reloading=true;location.reload()}});
-  navigator.serviceWorker.register('sw.js?v=22',{updateViaCache:'none'}).then(registration=>registration.update()).catch(()=>{});
+  navigator.serviceWorker.register('sw.js?v=23',{updateViaCache:'none'}).then(registration=>registration.update()).catch(()=>{});
 }
 checkCloudStatus(false);

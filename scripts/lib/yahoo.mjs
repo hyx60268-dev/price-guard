@@ -216,17 +216,21 @@ export function unresolvedRaiseCandidates(preliminary=[],rejected=[]){
   return preliminary.filter(card=>!definitive.has(decisions.get(card.id)));
 }
 
-export async function discoverYahooProfile(_unusedPage,profileUrl,settings={}){
+export async function discoverYahooProfile(_unusedPage,profileUrl,settings={},dependencies={}){
   applyYahooSettings(settings);
-  const first=await fetchYahooResult(`${profileUrl}?page=1`,settings);
+  const getResult=dependencies.fetchYahooResult||fetchYahooResult;
+  const first=await getResult(`${profileUrl}?page=1`,settings);
   const pages=Math.max(1,Math.ceil(Number(first.totalResultsAvailable||first.items.length)/100));
   const all=[...first.items];
   for(let page=2;page<=pages;page++){
-    const result=await fetchYahooResult(`${profileUrl}?page=${page}`,settings);
+    const result=await getResult(`${profileUrl}?page=${page}`,settings);
     all.push(...result.items);
   }
   const items=[...new Map(all.filter(x=>x.itemStatus==='OPEN').map(x=>[x.id,liveItem(x)])).values()];
-  return {items,totalResults:Number(first.totalResultsAvailable||all.length),pages};
+  const total=Number(first.totalResultsAvailable??all.length);
+  const complete=new Set(all.map(item=>item.id)).size>=total;
+  if(!complete)throw new Error('Yahoo 主页分页不完整，保留已有库存');
+  return {items,totalResults:total,pages,complete};
 }
 
 export async function yahooCompare(_unusedPage,item,settings={},dependencies={}){
@@ -322,9 +326,9 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   const visualRecallLimit=Math.max(0,Math.min(30,Number(settings.yahooRecommendationFallbackMaxCards)||20));
   const visualRecallThreshold=Math.max(.80,Number(settings.yahooRecommendationVisualRecallThreshold)||.84);
   const visualRecallCards=cards.filter(card=>
-    !acceptedIds.has(card.id)&&card.id!==item.id&&!rejectedByMemory(settings.matchCorrections,item,'yahoo',card)&&card.sources?.includes('recommendation')&&card.image&&
+    !acceptedIds.has(card.id)&&card.id!==item.id&&!rejectedByMemory(settings.matchCorrections,item,'yahoo',card)&&card.image&&
     Number.isFinite(card.price)&&(!ownSellerId||card.sellerId!==ownSellerId)&&!isRejected(card.title)
-  ).sort((a,b)=>a.price-b.price).slice(0,visualRecallLimit);
+  ).sort((a,b)=>Number(ownImages.includes(b.image))-Number(ownImages.includes(a.image))||a.price-b.price).slice(0,visualRecallLimit);
   const visualFingerprints=await Promise.all(visualRecallCards.map(card=>fingerprint(card.image)));
   for(let index=0;index<visualRecallCards.length;index++){
     const card=visualRecallCards[index],candidateCategory=categoryText(null,card);
@@ -334,7 +338,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
     const semantic=semanticSameItem({query:item.title,candidate:card.title,queryCategory:ownCategory,candidateCategory});
     const conditionPriority=/(?:新品|未開封|未使用|未拆封|全新)/i.test(card.title)?0:
       /(?:中古|開封済|箱なし|箱無し|本体のみ|展示品)/i.test(card.title)?2:1;
-    preliminary.push({...card,titleScore:tScore,recallScore,semantic,fromRecommendation:true,visualRecall:true,
+    preliminary.push({...card,titleScore:tScore,recallScore,semantic,fromRecommendation:recommendationEvidence(card),visualRecall:true,
       previewImageScore,lotterySeriesUnconfirmed:lotterySeriesNeedsVisualConfirmation(item.title,card.title),conditionPriority});
     acceptedIds.add(card.id);
   }

@@ -95,8 +95,10 @@ test('encrypted correction sync publishes a safe price and retains fees and emai
     for(const directory of ['public','state','config'])await fs.mkdir(path.join(temp,directory),{recursive:true});
     await fs.copyFile(path.join(root,'public/match-memory.js'),path.join(temp,'public/match-memory.js'));
     await fs.copyFile(path.join(root,'public/shop-profile.js'),path.join(temp,'public/shop-profile.js'));
+    await fs.copyFile(path.join(root,'public/durable-state.js'),path.join(temp,'public/durable-state.js'));
+    await fs.copyFile(path.join(root,'public/build-version.js'),path.join(temp,'public/build-version.js'));
     await fs.writeFile(path.join(temp,'package.json'),' {"type":"module"}');
-    await fs.symlink(await fs.realpath(path.join(root,'node_modules')),path.join(temp,'node_modules'));
+    await fs.symlink(await fs.realpath(path.join(root,'node_modules')),path.join(temp,'node_modules'),process.platform==='win32'?'junction':'dir');
     await fs.writeFile(path.join(temp,'config/accounts.json'),JSON.stringify({accounts:[{id:'melon',enabled:true}]}));
     const password='controlled-fixture-only',own={...listing(),recommendedPrice:6999};
     const manualCosts={a:{accountId:'melon',itemId:'own',title:own.title,purchaseCNY:80,manualFeeCNY:10,shippingJPY:500,updatedAt:days(1)}};
@@ -105,7 +107,12 @@ test('encrypted correction sync publishes a safe price and retains fees and emai
     const payload={version:1,matchCorrections:{a:record()}};
     const body=`<!-- PRICE_GUARD_SYNC_V1\n${encrypt(Buffer.from(JSON.stringify(payload)),password).toString('base64url')}\n-->`;
     const eventPath=path.join(temp,'event.json');await fs.writeFile(eventPath,JSON.stringify({repository:{owner:{login:'owner'}},issue:{title:'[Price Guard Sync:admin]',user:{login:'owner'},body}}));
-    await promisify(execFile)(process.execPath,['scripts/sync-input.mjs'],{cwd:temp,env:{...process.env,DASHBOARD_PASSWORD:password,GITHUB_EVENT_PATH:eventPath,PORTAL_USERS_JSON:'',GITHUB_OUTPUT:''}});
+    const fixtureEnv={DASHBOARD_PASSWORD:password,GITHUB_EVENT_PATH:eventPath,PORTAL_USERS_JSON:'',GITHUB_OUTPUT:''};
+    if(process.platform==='win32'){
+      const saved=Object.fromEntries(Object.keys(fixtureEnv).map(key=>[key,process.env[key]]));
+      try{Object.assign(process.env,fixtureEnv);await import(new URL(`file:///${path.join(temp,'scripts/sync-input.mjs').replaceAll('\\','/')}`))}
+      finally{for(const [key,value] of Object.entries(saved))if(value===undefined)delete process.env[key];else process.env[key]=value}
+    }else await promisify(execFile)(process.execPath,['scripts/sync-input.mjs'],{cwd:temp,env:{...process.env,...fixtureEnv}});
     const result=JSON.parse(decrypt(await fs.readFile(path.join(temp,'public/data/latest.json.enc')),password));
     const baseline=JSON.parse(decrypt(await fs.readFile(path.join(temp,'state/latest.json.enc')),password));
     assert.equal(result.items[0].recommendedPrice,10000);

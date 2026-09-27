@@ -10,6 +10,10 @@ if(!password||password.length<8)throw new Error('DASHBOARD_PASSWORD 至少需要
 const file=path.join(root,'state','latest.json.enc');
 const result=JSON.parse(decrypt(await fs.readFile(file),password).toString('utf8'));
 await writeOutputs({root,result,previous:result,password});
+for(const name of ['discovery.json.enc','discovery-status.json']){
+  try{await fs.copyFile(path.join(root,'state',name),path.join(root,'public/data',name))}
+  catch(error){if(error.code!=='ENOENT')throw error}
+}
 const [phone,baseline]=await Promise.all([
   fs.stat(path.join(root,'public','data','latest.json.enc')),
   fs.stat(path.join(root,'public','data','state.json.enc'))

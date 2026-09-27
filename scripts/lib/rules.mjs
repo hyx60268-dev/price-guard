@@ -3,7 +3,7 @@ const badPattern = /(求购|收购|只收|蹲收|换物|交换|置换|补款|定
 const baitPattern = /(请点进去选项|点击立即购买查看|拍下改价|私聊改价|价格见图|图上价|多个角色|多款可选|任选|标价非实价|自带价|占位价|起步价|最低款价格|标价为最低|标价只是|页面价格不准)/i;
 const selectionPattern = /(请选择|选择规格|选择款式|选款|选图|拍哪款|下单备注|联系客服改价|私聊改价|各款价格|价格不一|每款价格|单独询价|需补差价|补差后发货|以详情价为准|详情价格为准)/i;
 const multiOfferPattern = /(多款|多角色|全系列|合集|系列任选|整套可拆|可拆卖)/i;
-export const MATCHING_RULES_VERSION = 17;
+export const MATCHING_RULES_VERSION = 18;
 
 // 同じIP/シリーズが中国語・日本語・英語や作者名で出品されるケースを、
 // 再利用できる別名辞書で同じ識別語へ寄せる。追加時は商品固有語だけを登録し、
@@ -96,6 +96,7 @@ export function semanticQuantity(value='') {
   const text=normalizedJapanese(value);
   const offer=explicitSaleContents(value);
   if(offer.quantity!==null)return offer.quantity;
+  if(/(?:単品|单个|單個|单盒|單盒|ばら売り|バラ売り)(?:\s|$|[、。])/i.test(listingHeading(text)))return 1;
   const random=/(?:ランダム|random|随机)/i.test(text);
   // 「BOX 6種セット」「6種コンプリート」は6点の商品。説明文に
   // 「ランダム封入」があっても、出品単位そのものを1点に落としてはいけない。
@@ -146,7 +147,8 @@ export function saleUnitProfile(value='') {
   // from the title.  Plain line-up explanations (e.g. "全12種類") are deliberately
   // not treated as a full box here.
   const strongFullBox=/(?:端盒|整盒|一整端|一整盒|整箱|未開封\s*(?:box|ボックス|ケース)|(?:1|一)\s*(?:box|ボックス|ケース)(?:\s*(?:販売|売り|セット|入り|入))?|(?:box|ボックス|ケース)\s*(?:販売|売り)|\d+\s*小箱\s*(?:セット|入り|入)|(?:box|ボックス|ケース).{0,12}\d+\s*(?:個|点|体|種|ピース)(?:入り|入)?|\d+\s*(?:個|点|体|種|ピース)(?:入り|入).{0,12}(?:アソート\s*)?(?:box|ボックス|ケース))/i.test(fullText);
-  const fullBox=strongFullBox||/(?:アソート\s*(?:box|ボックス|ケース)|\d+\s*(?:box|ボックス|ケース)|\d+\s*小箱\s*(?:セット|入り|入)?|(?:box|ボックス|ケース).{0,12}\d+\s*(?:個|点|体|種|ピース)|\d+\s*(?:個|点|体|種|ピース)(?:入り|入|セット)?.{0,12}(?:アソート\s*)?(?:box|ボックス|ケース))/i.test(text);
+  const singleHeading=/(?:単品|单个|單個|单盒|單盒|ばら売り|バラ売り)(?:\s|$|[、。])/i.test(text);
+  const fullBox=!singleHeading&&(strongFullBox||/(?:アソート\s*(?:box|ボックス|ケース)|\d+\s*(?:box|ボックス|ケース)|\d+\s*小箱\s*(?:セット|入り|入)?|(?:box|ボックス|ケース).{0,12}\d+\s*(?:個|点|体|種|ピース)|\d+\s*(?:個|点|体|種|ピース)(?:入り|入|セット)?.{0,12}(?:アソート\s*)?(?:box|ボックス|ケース))/i.test(text));
   const completeSet=/(?:フルコンプ|コンプリート(?:セット)?|(?:全\s*)?\d+\s*種\s*(?:セット|コンプ(?:リート)?|complete))/i.test(text)||
     /(?:商品内容|出品内容|セット内容|上記|こちら).{0,24}(?:全\s*)?\d+\s*種\s*(?:セット|コンプ(?:リート)?|complete)/i.test(fullText);
   const explicitSingle=/(?:単品|ばら売り|バラ売り|1\s*(?:点|個|体|枚|本|ピース))(?:\s|$|[、。・])/i.test(text);
@@ -514,9 +516,9 @@ export function descriptionColorMismatch(query='',candidate=''){
   const colors=value=>{
     const lines=String(value).split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
     // Only product/attribute lines, not unrelated prose or manufacturing notes.
-    const selected=[lines[0],lines[1],...lines.filter(line=>/^(?:【(?:カラー|色)】|(?:カラー|色|颜色|顏色)\s*[:：])/i.test(line))].filter(Boolean);
+    const selected=[lines[0],lines[1],...lines.filter(line=>/^(?:【(?:カラー|色)】|(?:カラー|色|颜色|顏色)\s*[:：]|こちら(?:の商品)?は)/i.test(line))].filter(Boolean);
     return new Set(selected.flatMap(line=>[...identityVariantFacets(line
-      .replace(/【(?:カラー|色)】/g,' ').replace(/[×＋]/g,' ').replace(/系(?=$|[\s、。])/g,' ')).colors]));
+      .replace(/【(?:カラー|色)】/g,' ').replace(/^こちら(?:の商品)?は\s*/,' ').replace(/(?:です|になります)[。！!]?$/,' ').replace(/[×＋]/g,' ').replace(/系(?=$|[\s、。])/g,' ')).colors]));
   };
   const left=colors(query),right=colors(candidate);
   return disjointNonEmpty(left,right)||(left.size>1&&right.size>1&&

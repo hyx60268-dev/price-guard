@@ -108,6 +108,8 @@ export function imageSetSimilarity(left=[],right=[]){
 // This is deliberately conservative: different photos go to review, not pricing.
 export function primaryProductSimilarity(a,b){
   if(!a?.colorGrid?.length||a.colorGrid.length!==b?.colorGrid?.length)return null;
+  // Blank placeholders contain no spatial product evidence, even when identical.
+  if([a,b].some(value=>[value.dHash,value.aHash,value.centerHash].every(hash=>/^(?:0{16}|f{16})$/i.test(hash||''))))return null;
   const hashes=[imageSimilarity(a.dHash,b.dHash),imageSimilarity(a.aHash,b.aHash),imageSimilarity(a.centerHash,b.centerHash)];
   if(hashes.some(value=>!Number.isFinite(value)))return null;
   const distance=a.colorGrid.reduce((sum,value,index)=>sum+Math.abs(value-b.colorGrid[index]),0)/(a.colorGrid.length*255);

@@ -18,9 +18,8 @@ permissions:
   id-token: write
 concurrency:
   group: pages
-  # A code publication replaces an older running build so an outdated notifier
-  # cannot create one last Issue. Scheduled rotations never cancel a full audit.
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  # Do not discard scans or sync inputs while a publication is in flight.
+  cancel-in-progress: false
 jobs:
   scan-and-publish:
     runs-on: ubuntu-latest
@@ -74,6 +73,12 @@ jobs:
         uses: actions/deploy-pages@v4
         with:
           artifact_name: github-pages-users-${{ github.run_attempt }}
+      - name: 确认已发布同步请求
+        if: steps.sync.outputs.processed != '0'
+        run: node scripts/ack-sync-queue.mjs
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          GITHUB_TOKEN: ${{ github.token }}
       - run: npx playwright install --with-deps chromium
       - name: 检查 Yahoo、乐天 Rakuma 与闲鱼
         run: npm run scan
@@ -91,6 +96,19 @@ jobs:
           XIANYU_STORAGE_STATE_B64: ${{ secrets.XIANYU_STORAGE_STATE_B64 }}
           SCAN_TRIGGER: ${{ github.event_name }}
           PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
+      - name: 先发布价格与库存，不等待选品
+        run: node scripts/prepare-publication.mjs
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+          name: github-pages-prices-${{ github.run_attempt }}
+      - uses: actions/deploy-pages@v4
+        with:
+          artifact_name: github-pages-prices-${{ github.run_attempt }}
       - name: 更新热卖选品（1小时缓存、分页及卖家轮换）
         run: npm run discovery
         env:

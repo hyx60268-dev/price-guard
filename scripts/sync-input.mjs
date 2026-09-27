@@ -8,6 +8,8 @@ import { decodeSyncBody } from './lib/sync-payload.mjs';
 import { acceptMatchCorrections } from './lib/match-corrections.mjs';
 import { invalidateCorrectedMatches } from '../public/match-memory.js';
 import { parseShopProfile } from '../public/shop-profile.js';
+import { appliedSyncIssue,syncDigest } from './lib/sync-receipts.mjs';
+import { mergeAccounts } from '../public/durable-state.js';
 
 const here=path.dirname(fileURLToPath(import.meta.url)),root=path.resolve(here,'..');
 const password=process.env.DASHBOARD_PASSWORD;
@@ -19,6 +21,17 @@ const title=String(issue.title||''),userMatch=title.match(/^\[Price Guard Sync(?
 if(!userMatch)throw new Error('不是价格守卫同步请求');
 const statePath=path.join(root,'state','latest.json.enc');
 const previous=JSON.parse(decrypt(await fs.readFile(statePath),password).toString('utf8'));
+if(issue.number&&appliedSyncIssue(previous,issue)){
+  console.log(`同步 #${issue.number} 已合并，等待发布确认`);
+  // A fresh runner restored state, not necessarily public/data. Rebuild the
+  // publication even on an idempotent replay; never deploy an empty directory.
+  await writeOutputs({root,result:previous,previous,password});
+  for(const filename of ['discovery.json.enc','discovery-status.json']){
+    try{await fs.copyFile(path.join(root,'state',filename),path.join(root,'public/data',filename))}
+    catch(error){if(error.code!=='ENOENT')throw error}
+  }
+  process.exit(0);
+}
 const username=(userMatch[1]||'admin').toLowerCase();
 let portalUserRecords=portalUserRecordsForResult(previous),portalUser=portalUsersForResult(previous).find(user=>user.username===username);
 if(username==='admin'){
@@ -75,6 +88,8 @@ for(const raw of payload.managedAccounts||[]){
   }
   if(staticIds.has(id))continue;
   const targetId=managedMatch?.id||id;
+  const current=existing.get(targetId);
+  if(current&&(Date.parse(raw.updatedAt||payload.issuedAt)||0)<=(Date.parse(current.updatedAt)||0))continue;
   existing.set(targetId,{...managedMatch,id:targetId,name:String(raw.name||targetId).trim().slice(0,80),profileUrl,platform,enabled:raw.enabled!==false,managed:true,
     ownerUsername:managedMatch?.ownerUsername||raw.ownerUsername||(username==='admin'?'admin':username),updatedAt:raw.updatedAt||payload.issuedAt||new Date().toISOString()});
   if(username!=='admin')mutableAccountIds.add(targetId);
@@ -82,7 +97,10 @@ for(const raw of payload.managedAccounts||[]){
 for(const id of payload.deletedAccountIds||[]){
   if(staticIds.has(id))continue;
   const account=existing.get(id);
-  if(username==='admin'||mutableAccountIds.has(id)&&(!account?.ownerUsername||account.ownerUsername===username)){existing.delete(id);if(username!=='admin')mutableAccountIds.delete(id)}
+  if(account&&(username==='admin'||mutableAccountIds.has(id)&&(!account.ownerUsername||account.ownerUsername===username))){
+    const updatedAt=payload.deletedAccounts?.[id]?.updatedAt||payload.issuedAt||new Date().toISOString();
+    existing.set(id,mergeAccounts([account],[{...account,enabled:false,updatedAt}])[0]);
+  }
 }
 if(existing.size>100)throw new Error('云端账号数量超过 100 个');
 if(username!=='admin')portalUserRecords=portalUserRecords.map(user=>user.username===username?{...user,accountIds:[...mutableAccountIds],updatedAt:payload.issuedAt||new Date().toISOString()}:user);
@@ -94,7 +112,7 @@ const defaultAccountId=configured.find(account=>account.enabled!==false)?.id;
 const relistAliases=previous.relistAliases||{};
 const items=(previous.items||[]).map(item=>({...item,accountId:item.accountId||defaultAccountId})).filter(item=>activeIds.has(item.accountId)).map(item=>{
   item=invalidateCorrectedMatches(item,matchCorrections);
-  const manual=manualCostFor(manualCosts,item,relistAliases);
+  const manual=manualCostFor(manualCosts,item,relistAliases,previous.items||[]);
   return {...item,...calculateManualFields(item,manual,settings)};
 });
 const byAccount=new Map();
@@ -112,6 +130,10 @@ for(const account of managedAccounts.filter(account=>account.enabled!==false))if
 
 const cloudSyncedAt=new Date().toISOString();
 const result={...previous,version:6,cloudSyncedAt,dataRevision:cloudSyncedAt,settings,manualCosts,matchCorrections,portalPreferences,dismissedDiscoveries,discoveryReviews,portalUsers:portalUserRecords,managedAccounts,accounts,items};
+if(issue.number)result.appliedSyncIssues={...(previous.appliedSyncIssues||{}),[issue.number]:{
+  digest:syncDigest(issue),updatedAt:cloudSyncedAt,
+  needsScan:managedAccounts.some(account=>account.enabled!==false&&!(previous.managedAccounts||[]).some(old=>old.id===account.id&&old.enabled!==false))
+}};
 const {summary}=await writeOutputs({root,result,previous,password});
 // A cost/account/upload sync also deploys the static site. Preserve the latest
 // encrypted discovery payload so that this lightweight deployment cannot blank
