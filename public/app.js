@@ -139,7 +139,7 @@ function clientAdvice({ownPrice,recommendedPrice,costJPY}){
 }
 function effective(item,temporary){
   item=invalidateCorrectedMatches(item,matchCorrections);
-  const saved=temporary||manualFor(item),manualPurchaseCNY=numberOrNull(saved.purchaseCNY),purchaseCNY=numberOrNull(item.averageCNY)??manualPurchaseCNY;
+  const saved=temporary||manualFor(item),manualPurchaseCNY=numberOrNull(saved.purchaseCNY),purchaseCNY=manualPurchaseCNY??numberOrNull(item.averageCNY);
   const manualFeeCNY=numberOrNull(saved.manualFeeCNY),shippingJPY=numberOrNull(saved.shippingJPY);
   const complete=[purchaseCNY,manualFeeCNY,shippingJPY].every(Number.isFinite);
   const costJPY=complete?Math.ceil(((purchaseCNY+manualFeeCNY)*data.settings.exchangeRate+shippingJPY)*data.settings.costMultiplier):null;
@@ -149,14 +149,18 @@ function effective(item,temporary){
     afterUnder1500:Number.isFinite(afterProfitJPY)&&afterProfitJPY<data.settings.profitWarningJPY,needsCostInput:!complete,
     needsPurchaseReference:!Number.isFinite(purchaseCNY),needsManualFees:!Number.isFinite(manualFeeCNY)||!Number.isFinite(shippingJPY),
     advice:item.priceSignal==='raise'?(item.singleMarketSample?'与下一家同款存在提价空间（仅1个核验样本）':'与下一家同款存在提价空间，建议提价'):clientAdvice({ownPrice:item.ownPrice,recommendedPrice:item.recommendedPrice,costJPY}),
-    effectiveCostSource:complete?(Number.isFinite(item.averageCNY)?`${item.costSource==='live'?'闲鱼验证均价':'历史验证价'} + 手工费用`:'人工采购价兜底 + 手工费用'):'待补齐成本值'};
+    effectiveCostSource:complete?(Number.isFinite(manualPurchaseCNY)?'实际采购价 + 手工费用':Number.isFinite(item.averageCNY)?`${item.costSource==='live'?'闲鱼采购参考':'历史验证价'} + 手工费用`:'采购价 + 手工费用'):'待补齐成本值'};
 }
 function items(){return rawItems().map(item=>effective(item))}
-function stats(){const list=items();return [['商品',list.length],['建议调价',list.filter(item=>item.recommendedPrice!==item.ownPrice).length],['30天未售待整理',list.filter(item=>item.listingAge?.eligible).length],['缺采购参考',list.filter(item=>item.needsPurchaseReference).length],['成本已完整',list.filter(item=>!item.needsCostInput).length]]}
+function stats(){const list=items();return [['商品',list.length],['建议调价',list.filter(item=>actionablePrice(item)).length],['缺采购参考',list.filter(item=>item.needsPurchaseReference).length],['成本已完整',list.filter(item=>!item.needsCostInput).length]]}
 function pill(item){const tone=/亏损|不建议|控制成本/.test(item.advice)?'bad':item.needsCostInput||item.confidence!=='高'?'warn':'';return `<span class="pill ${tone}">${escapeHtml(item.advice)}</span>${item.listingAge?.eligible?'<br><span class="pill warn">30天未售，建议评估删除</span>':''}`}
+function pricingReady(item){return !item.comparisonIncomplete&&[item.yahoo,item.rakuma].every(source=>['ok','cached'].includes(source?.status))}
+function actionablePrice(item){return pricingReady(item)&&Number.isFinite(item.recommendedPrice)&&Number.isFinite(item.ownPrice)&&item.recommendedPrice!==item.ownPrice}
+function itemPriority(item){return item.currentProfitJPY<0?0:actionablePrice(item)?1:item.needsPurchaseReference?2:item.needsCostInput?3:item.listingAge?.eligible?4:5}
+function costLabel(item){return Number.isFinite(item.manualPurchaseCNY)?'实际采购 · CNY':Number.isFinite(item.automaticReferenceCNY)?'采购参考 · CNY':'采购待核验 · CNY'}
 function selected(){
   const query=$('#search').value.toLowerCase(),filter=$('#filter').value;
-  return items().filter(item=>(item.title+(item.xianyuQuery||'')).toLowerCase().includes(query)&&(filter==='all'||filter==='stale'&&item.listingAge?.eligible||filter==='reprice'&&item.recommendedPrice!==item.ownPrice||filter==='low'&&item.afterUnder1500||filter==='input'&&item.needsCostInput||filter==='manual'&&item.confidence!=='高'));
+  return items().filter(item=>(item.title+(item.xianyuQuery||'')).toLowerCase().includes(query)&&(filter==='all'||filter==='stale'&&item.listingAge?.eligible||filter==='reprice'&&actionablePrice(item)||filter==='low'&&item.afterUnder1500||filter==='input'&&item.needsCostInput||filter==='manual'&&item.confidence!=='高')).sort((a,b)=>$('#sort').value==='price'?(b.ownPrice||0)-(a.ownPrice||0):$('#sort').value==='title'?a.title.localeCompare(b.title,'zh-CN'):itemPriority(a)-itemPriority(b)||a.title.localeCompare(b.title,'zh-CN'));
 }
 function statusCard(label,value,tone=''){return `<div class="status ${tone}"><small>${escapeHtml(label)}</small><b>${escapeHtml(value)}</b></div>`}
 
@@ -319,14 +323,15 @@ function render(){
   const shown=filtered.slice((pricingPage-1)*PAGE_SIZE,pricingPage*PAGE_SIZE);$('#empty').hidden=filtered.length>0;
   const accountLabel=item=>allAccountsSelected()?`<small class="accountname">${escapeHtml(item.accountName||item.accountId||'')}</small>`:'';
   $('#rows').innerHTML=shown.map(item=>`<tr data-id="${escapeHtml(item.id)}"><td><div class="product"><img src="${escapeHtml(item.image)}" alt=""><b>${accountLabel(item)}${escapeHtml(item.title)}</b></div></td><td class="money">${money(item.ownPrice)}</td><td class="money">${money(item.lowestPrice)}</td><td class="money">${money(item.recommendedPrice)}</td><td>${cny(item.automaticReferenceCNY)}${Number.isFinite(item.manualPurchaseCNY)?`<small>实际采购 ${cny(item.manualPurchaseCNY)}</small>`:''}</td><td class="money">${money(item.costJPY)}</td><td class="money ${item.currentUnder1500?'bad':''}">${money(item.currentProfitJPY)}</td><td class="money ${item.afterUnder1500?'bad':''}">${money(item.afterProfitJPY)}</td><td>${pill(item)}</td></tr>`).join('');
-  $('#cards').innerHTML=shown.map(item=>`<article class="mobile-card" data-id="${escapeHtml(item.id)}"><div class="mobile-head"><img src="${escapeHtml(item.image)}" alt=""><b>${accountLabel(item)}${escapeHtml(item.title)}</b></div><div class="mobile-prices four"><div><small>我的售价</small>${money(item.ownPrice)}</div><div><small>建议价</small>${money(item.recommendedPrice)}</div><div><small>闲鱼自动参考</small>${cny(item.automaticReferenceCNY)}</div><div><small>当前完整成本</small>${money(item.costJPY)}</div><div><small>当前利润</small><span class="${item.currentUnder1500?'bad':''}">${money(item.currentProfitJPY)}</span></div><div><small>改价后利润</small><span class="${item.afterUnder1500?'bad':''}">${money(item.afterProfitJPY)}</span></div></div><div class="mobile-foot">${pill(item)}<span>查看并填写成本 ›</span></div></article>`).join('');
+  $('#resultCount').textContent=`共 ${filtered.length} 件 · 本页 ${shown.length} 件`;
+  $('#cards').innerHTML=shown.map(item=>`<article class="inventory-card"><div class="inventory-image"><img loading="lazy" src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title)}"><span class="inventory-badge">${!pricingReady(item)?'比价待核验':actionablePrice(item)?'建议调价':item.needsPurchaseReference?'成本待核验':'在售'}</span></div><div class="inventory-body"><small class="accountname">${escapeHtml(item.accountName||item.accountId||'')}</small><h3 title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</h3><div class="inventory-numbers"><div><small>当前售价 · JPY</small><strong>${money(item.ownPrice)}</strong></div><div><small>建议售价 · JPY</small><strong class="${actionablePrice(item)?'accent':''}">${!pricingReady(item)?'待核验':money(item.recommendedPrice)}</strong></div><div><small>${costLabel(item)}</small><b>${cny(item.purchaseCNY)}</b></div><div><small>当前利润 · JPY</small><b class="${item.currentUnder1500?'bad':''}">${money(item.currentProfitJPY)}</b></div></div><div class="inventory-footer"><span>${item.needsCostInput?'成本待完善':item.currentProfitJPY<0?'当前亏损':'成本已完整'}</span><button class="soft" data-id="${escapeHtml(item.id)}" data-account="${escapeHtml(item.accountId)}" aria-label="查看 ${escapeHtml(item.title)} 的价格与成本">查看详情 ↗</button></div></div></article>`).join('');
   $('#pagination').innerHTML=filtered.length>PAGE_SIZE?`<button class="soft" data-page="${pricingPage-1}" ${pricingPage===1?'disabled':''}>上一页</button><span>第 ${pricingPage} / ${pageCount} 页 · 共 ${filtered.length} 件</span><button class="soft" data-page="${pricingPage+1}" ${pricingPage===pageCount?'disabled':''}>下一页</button>`:'';
   document.querySelectorAll('[data-page]').forEach(button=>button.onclick=()=>{pricingPage=Number(button.dataset.page);render();document.querySelector('#pricingView')?.scrollIntoView({behavior:'smooth'})});
-  document.querySelectorAll('[data-id]').forEach(element=>element.onclick=()=>detail(element.dataset.id));
+  document.querySelectorAll('[data-id]').forEach(element=>element.onclick=()=>detail(element.dataset.id,element.dataset.account));
 }
 
-function detail(id){
-  const raw=rawItems().find(item=>item.id===id);if(!raw)return;
+function detail(id,accountId){
+  const raw=rawItems().find(item=>item.id===id&&(!accountId||item.accountId===accountId));if(!raw)return;
   const item=effective(raw),saved=manualFor(raw),samples=raw.xianyu?.samples||[],rejected=raw.xianyu?.rejected||[];
   const marketSamples=Number(item.marketSampleCount??item.yahoo?.marketSampleCount)||0;
   const marketChecked=['ok','incomplete','cached'].includes(item.yahoo?.status)&&['ok','incomplete','cached'].includes(item.rakuma?.status),marketIncomplete=Boolean(item.comparisonIncomplete);
@@ -339,8 +344,8 @@ function detail(id){
     <p class="muted">${escapeHtml(item.listingAge?.message||'上架时长待云端确认')} · ${item.listingAge?.source==='platform_open_date'?'平台上架时间':item.listingAge?.source==='first_observed'?'系统首次确认在售时间':'尚无时间依据'}</p>
     <div class="detailhead"><img src="${escapeHtml(item.image)}" alt=""><div><h2>${escapeHtml(item.title)}</h2><p>${pill(item)}　同款匹配：${escapeHtml(matchLabel)}</p></div></div>
     <div class="detailgrid"><div><small>我的售价</small><br><b>${money(item.ownPrice)}</b></div><div><small>Yahoo最低</small><br><b>${money(yahooLowest)}</b></div><div><small>乐天Rakuma最低</small><br><b>${money(rakumaLowest)}</b></div><div><small>两平台综合最低</small><br><b>${money(item.lowestPrice)}</b></div><div><small>建议价</small><br><b>${money(item.recommendedPrice)}</b></div><div><small>同款市场中位价</small><br><b>${marketMedian}</b></div><div><small>同款价格范围</small><br><b>${marketRange}</b></div><div><small>闲鱼验证均价</small><br><b>${cny(item.averageCNY)}</b></div><div><small>当前成本</small><br><b id="previewCost">${money(item.costJPY)}</b></div><div><small>不改价利润</small><br><b id="previewCurrentProfit" class="${item.currentUnder1500?'bad':''}">${money(item.currentProfitJPY)}</b></div><div><small>改价后利润</small><br><b id="previewAfterProfit" class="${item.afterUnder1500?'bad':''}">${money(item.afterProfitJPY)}</b></div></div>
-    <section class="manualbox"><h3>补充人工费用</h3><p class="muted">采购价由系统自动核验闲鱼详情和多个卖家后填入；你只需填写人肉费和日本物流费。仅在自动核验失败时显示人工采购价兜底。</p>
-      <form id="manualCostForm" class="costform">${Number.isFinite(item.averageCNY)?`<label><span>闲鱼自动采购参考</span><input id="purchaseCNY" type="hidden" value="${escapeHtml(saved.purchaseCNY??'')}"><b>${cny(item.averageCNY)}</b></label>`:`<label><span>自动核验失败，人工采购价兜底（人民币）</span><input id="purchaseCNY" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(saved.purchaseCNY??'')}" placeholder="暂时人工填写"></label>`}<label><span>人肉费（人民币）</span><input id="manualFeeCNY" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(saved.manualFeeCNY??'')}" placeholder="由你填写"></label><label><span>日本物流费（日元）</span><input id="shippingJPY" type="number" min="0" step="1" inputmode="numeric" value="${escapeHtml(saved.shippingJPY??'')}" placeholder="由你填写"></label><div class="costactions"><button type="submit">保存本机并计算</button><button type="button" id="saveAndSync">保存并同步云端</button><button type="button" id="clearCost" class="soft">清空</button><span id="costSaveStatus"></span></div></form>
+    <section class="manualbox"><h3>补充人工费用</h3><p class="muted">实际采购价优先用于计算利润；留空时采用已核验的闲鱼参考价。人肉费和日本物流费需填写。</p>
+      <form id="manualCostForm" class="costform"><label><span>实际采购价（人民币，可选）</span><input id="purchaseCNY" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(saved.purchaseCNY??'')}" placeholder="留空则使用已核验参考价"><small>闲鱼参考：${cny(item.automaticReferenceCNY)}</small></label><label><span>人肉费（人民币）</span><input id="manualFeeCNY" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(saved.manualFeeCNY??'')}" placeholder="由你填写"></label><label><span>日本物流费（日元）</span><input id="shippingJPY" type="number" min="0" step="1" inputmode="numeric" value="${escapeHtml(saved.shippingJPY??'')}" placeholder="由你填写"></label><div class="costactions"><button type="submit">保存本机并计算</button><button type="button" id="saveAndSync">保存并同步云端</button><button type="button" id="clearCost" class="soft">清空</button><span id="costSaveStatus"></span></div></form>
       <p><small>公式：((采购价 + 人肉费) × ${data.settings.exchangeRate} + 日本物流费) × ${data.settings.costMultiplier}，向上取整。</small></p></section>
     <p class="links"><a target="_blank" href="${escapeHtml(item.ownUrl)}">我的商品</a><a target="_blank" href="${escapeHtml(item.yahoo?.lowestUrl||item.yahoo?.searchUrl)}">Yahoo同款</a><a target="_blank" href="${escapeHtml(item.rakuma?.lowestUrl||item.rakuma?.searchUrl)}">乐天Rakuma同款</a><a target="_blank" href="${escapeHtml(item.xianyuSearchUrl)}">闲鱼文字搜索</a><button type="button" id="searchMainXianyu" class="linklike">闲鱼搜图</button><button type="button" id="searchMainXhs" class="linklike">小红书搜图</button></p>
     <p><small>系统自动核验方式：读取双方详情正文，先排除数量、销售内容、款式及品相冲突；立牌、卡牌、颈枕等必须有接近一致的首图证据，包装背面或同角色名称不能代替款式核验。图片不同且款式无法确认时不自动改价。手机搜图会先交给系统保存图片，再打开对应 App。</small></p>
@@ -356,17 +361,17 @@ function detail(id){
   document.querySelectorAll('[data-correct]').forEach(button=>button.onclick=()=>{
     const {row,platform}=evidence[Number(button.dataset.correct)];
     const record={accountId:raw.accountId,itemId:raw.id,ownTitle:raw.title,ownImage:raw.image,platform,candidateId:candidateId(platform,row),reason:'not_same_product',updatedAt:new Date().toISOString(),deleted:false};
-    matchCorrections[correctionKey(record)]=record;saveMatchCorrections();render();detail(id);
+    matchCorrections[correctionKey(record)]=record;saveMatchCorrections();render();detail(id,raw.accountId);
   });
-  document.querySelectorAll('[data-undo-correction]').forEach(button=>button.onclick=()=>{const key=button.dataset.undoCorrection;matchCorrections[key]={...matchCorrections[key],deleted:true,updatedAt:new Date().toISOString()};saveMatchCorrections();render();detail(id)});
+  document.querySelectorAll('[data-undo-correction]').forEach(button=>button.onclick=()=>{const key=button.dataset.undoCorrection;matchCorrections[key]={...matchCorrections[key],deleted:true,updatedAt:new Date().toISOString()};saveMatchCorrections();render();detail(id,raw.accountId)});
   $('#syncCorrections').onclick=()=>startCloudSync();
   const temporary=()=>({purchaseCNY:$('#purchaseCNY').value,manualFeeCNY:$('#manualFeeCNY').value,shippingJPY:$('#shippingJPY').value});
   const preview=()=>{const next=effective(raw,temporary());$('#previewCost').textContent=money(next.costJPY);$('#previewCurrentProfit').textContent=money(next.currentProfitJPY);$('#previewAfterProfit').textContent=money(next.afterProfitJPY);$('#previewCurrentProfit').className=next.currentUnder1500?'bad':'';$('#previewAfterProfit').className=next.afterUnder1500?'bad':''};
   ['#purchaseCNY','#manualFeeCNY','#shippingJPY'].forEach(selector=>$(selector).addEventListener('input',preview));
   const save=()=>{const record=fullRecord(raw,temporary());manualCosts[itemKey(raw)]=record;saveManualCosts();render();return record};
-  $('#manualCostForm').onsubmit=event=>{event.preventDefault();save();detail(id);$('#costSaveStatus').textContent='已保存在本机，等待云端同步'};
+  $('#manualCostForm').onsubmit=event=>{event.preventDefault();save();detail(id,raw.accountId);$('#costSaveStatus').textContent='已保存在本机，等待云端同步'};
   $('#saveAndSync').onclick=async()=>{save();await startCloudSync($('#costSaveStatus'))};
-  $('#clearCost').onclick=()=>{manualCosts[itemKey(raw)]=fullRecord(raw,{deleted:true,updatedAt:new Date().toISOString()});saveManualCosts();render();detail(id);$('#costSaveStatus').textContent='已在本机清空；点同步云端后其他设备也会清空'};
+  $('#clearCost').onclick=()=>{manualCosts[itemKey(raw)]=fullRecord(raw,{deleted:true,updatedAt:new Date().toISOString()});saveManualCosts();render();detail(id,raw.accountId);$('#costSaveStatus').textContent='已在本机清空；点同步云端后其他设备也会清空'};
   $('#searchMainXianyu').onclick=()=>openImageSearch({kind:'item',id:item.id,title:item.title,image:item.image},'xianyu');
   $('#searchMainXhs').onclick=()=>openImageSearch({kind:'item',id:item.id,title:item.title,image:item.image},'xhs');
   if(!$('#detail').open)$('#detail').showModal();
@@ -496,6 +501,8 @@ addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPro
 if('serviceWorker'in navigator){
   const hadController=Boolean(navigator.serviceWorker.controller);let reloading=false;
   navigator.serviceWorker.addEventListener('controllerchange',()=>{if(hadController&&!reloading){reloading=true;location.reload()}});
-  navigator.serviceWorker.register('sw.js?v=23',{updateViaCache:'none'}).then(registration=>registration.update()).catch(()=>{});
+  navigator.serviceWorker.register('sw.js?v=24',{updateViaCache:'none'}).then(registration=>registration.update()).catch(()=>{});
 }
 checkCloudStatus(false);
+
+$('#sort').addEventListener('change',()=>{pricingPage=1;render()});
