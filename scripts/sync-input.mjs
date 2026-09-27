@@ -106,7 +106,7 @@ const accounts=(previous.accounts||[]).filter(account=>activeIds.has(account.id)
 for(const account of managedAccounts.filter(account=>account.enabled!==false))if(!accounts.some(current=>current.id===account.id)){
   accounts.push({id:account.id,name:account.name,profileUrl:account.profileUrl,managed:true,profileStatus:'pending_sync',profileError:'',
     profileDelta:{added:[],removed:[],relisted:[],unchanged:0},itemCount:0,lastCatalogCount:0,
-    scanStats:{yahoo:0,yahooLive:0,yahooCached:0,yahooDeferred:0,xianyuRequested:0,xianyuScanned:0,xianyuCached:0,xianyuSkipped:0},items:[]});
+    scanStats:{yahoo:0,yahooLive:0,yahooCached:0,yahooDeferred:0,rakuma:0,rakumaLive:0,rakumaCached:0,rakumaDeferred:0,xianyuRequested:0,xianyuScanned:0,xianyuCached:0,xianyuSkipped:0},items:[]});
 }
 
 const cloudSyncedAt=new Date().toISOString();

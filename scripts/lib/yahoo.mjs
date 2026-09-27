@@ -468,15 +468,16 @@ export function marketPriceDecision(ownPrice,prices=[],settings={},safeguards={}
   const ownSellerId=String(safeguards.ownSellerId||'').trim();
   prices.forEach((value,index)=>{
     const sample=typeof value==='object'&&value?value:{price:value};
-    if(ownSellerId&&sample.sellerId===ownSellerId)return;
-    const price=Number(sample.price),key=sample.sellerId?`seller:${sample.sellerId}`:sample.id?`item:${sample.id}`:`sample:${index}`;
+    if(ownSellerId&&sample.platform!=='rakuma'&&sample.sellerId===ownSellerId)return;
+    const platform=sample.platform||'yahoo';
+    const price=Number(sample.price),key=sample.sellerId?`${platform}:seller:${sample.sellerId}`:sample.id?`${platform}:item:${sample.id}`:`${platform}:sample:${index}`;
     if(!Number.isFinite(price))return;
     const current=unique.get(key);if(!current||price<current.price)unique.set(key,{...sample,price});
   });
   const raw=[...unique.values()].sort((a,b)=>a.price-b.price);
   const verifiedMinPrice=raw[0]?.price??null;
   const plausiblePrices=(safeguards.plausibleCompetitors||[])
-    .filter(value=>!ownSellerId||typeof value!=='object'||!value||value.sellerId!==ownSellerId)
+    .filter(value=>!ownSellerId||typeof value!=='object'||!value||value.platform==='rakuma'||value.sellerId!==ownSellerId)
     .map(value=>Number(typeof value==='object'&&value?value.price:value)).filter(Number.isFinite);
   const plausibleMinPrice=plausiblePrices.length?Math.min(...plausiblePrices):null;
   const guardPrices=[verifiedMinPrice,plausibleMinPrice].filter(Number.isFinite);

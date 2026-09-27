@@ -66,18 +66,22 @@ export function dashboardSummary(result,changeSummary){
     yahooLive:sum.yahooLive+(account.scanStats?.yahooLive||0),
     yahooCached:sum.yahooCached+(account.scanStats?.yahooCached||0),
     yahooDeferred:sum.yahooDeferred+(account.scanStats?.yahooDeferred||0),
+    rakuma:sum.rakuma+(account.scanStats?.rakuma||0),
+    rakumaLive:sum.rakumaLive+(account.scanStats?.rakumaLive||0),
+    rakumaCached:sum.rakumaCached+(account.scanStats?.rakumaCached||0),
+    rakumaDeferred:sum.rakumaDeferred+(account.scanStats?.rakumaDeferred||0),
     xianyuRequested:sum.xianyuRequested+(account.scanStats?.xianyuRequested||0),
     xianyuScanned:sum.xianyuScanned+(account.scanStats?.xianyuScanned||0),
     xianyuVerifiedNew:sum.xianyuVerifiedNew+(account.scanStats?.xianyuVerifiedNew||0),
     xianyuCached:sum.xianyuCached+(account.scanStats?.xianyuCached||0),
     xianyuSkipped:sum.xianyuSkipped+(account.scanStats?.xianyuSkipped||0)
-  }),{yahoo:0,yahooLive:0,yahooCached:0,yahooDeferred:0,xianyuRequested:0,xianyuScanned:0,xianyuVerifiedNew:0,xianyuCached:0,xianyuSkipped:0});
+  }),{yahoo:0,yahooLive:0,yahooCached:0,yahooDeferred:0,rakuma:0,rakumaLive:0,rakumaCached:0,rakumaDeferred:0,xianyuRequested:0,xianyuScanned:0,xianyuVerifiedNew:0,xianyuCached:0,xianyuSkipped:0});
   return {
     version:result.version,checkedAt:result.checkedAt,codeSha:result.scanMeta?.codeSha||null,cloudSyncedAt:result.cloudSyncedAt||null,
     dataRevision:result.dataRevision||result.cloudSyncedAt||result.checkedAt,total:items.length,
     accounts:(result.accounts||[]).map(account=>({id:account.id,name:account.name,count:account.itemCount,profileStatus:account.profileStatus,profileDelta:account.profileDelta,scanStats:account.scanStats})),
     repricing:items.filter(item=>item.recommendedPrice!==item.ownPrice).length,
-    underpriced:items.filter(item=>item.yahoo?.underpriced).length,
+    underpriced:items.filter(item=>item.priceSignal==='raise').length,
     currentLow:items.filter(item=>item.currentUnder1500).length,
     afterLow:items.filter(item=>item.afterUnder1500).length,
     manual:items.filter(item=>item.confidence!=='高').length,

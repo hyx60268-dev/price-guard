@@ -24,6 +24,10 @@
   "yahooRequestIntervalMs": 5000,
   "yahooRateLimitCooldownMs": 60000,
   "yahooFreshMinutes": 15,
+  "rakumaFreshHours": 6,
+  "maxRakumaItemsPerRun": 30,
+  "maxRakumaDetailChecks": 6,
+  "rakumaRequestIntervalMs": 1200,
   "scanBudgetMinutes": 18,
   "timezone": "Asia/Tokyo",
   "discovery": {
