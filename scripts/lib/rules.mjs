@@ -3,7 +3,7 @@ const badPattern = /(求购|收购|只收|蹲收|换物|交换|置换|补款|定
 const baitPattern = /(请点进去选项|点击立即购买查看|拍下改价|私聊改价|价格见图|图上价|多个角色|多款可选|任选|标价非实价|自带价|占位价|起步价|最低款价格|标价为最低|标价只是|页面价格不准)/i;
 const selectionPattern = /(请选择|选择规格|选择款式|选款|选图|拍哪款|下单备注|联系客服改价|私聊改价|各款价格|价格不一|每款价格|单独询价|需补差价|补差后发货|以详情价为准|详情价格为准)/i;
 const multiOfferPattern = /(多款|多角色|全系列|合集|系列任选|整套可拆|可拆卖)/i;
-export const MATCHING_RULES_VERSION = 18;
+export const MATCHING_RULES_VERSION = 19;
 
 // 同じIP/シリーズが中国語・日本語・英語や作者名で出品されるケースを、
 // 再利用できる別名辞書で同じ識別語へ寄せる。追加時は商品固有語だけを登録し、
@@ -11,7 +11,15 @@ export const MATCHING_RULES_VERSION = 18;
 function canonicalProductText(value='') {
   return String(value).normalize('NFKC')
     .replace(/(?:THE\s+)?GIGANT\s+NAME|ギガントネーム/gi,' gigantname ')
-    .replace(/POP\s*MART|ポップマート/gi,' POPMART ')
+    .replace(/POP\s*MART|ポップマート|泡泡玛特|泡泡瑪特/gi,' POPMART ')
+    .replace(/STARBUCKS|スターバックス|星巴克/gi,' starbucks ')
+    .replace(/暗場|暗场/g,' 暗场 ')
+    .replace(/マグカップ|马克杯|馬克杯/g,' mug ')
+    // Translate explicit colour words without removing unknown model names.
+    .replace(/ブラック|黑色/g,' black ').replace(/ホワイト|白色/g,' white ')
+    .replace(/ブルー|蓝色|藍色/g,' blue ').replace(/ブラウン|棕色/g,' brown ')
+    .replace(/(?:醇チタン|醇钛|醇鈦)(?:シリーズ|系列)?/g,' chun_titanium ')
+    .replace(/チタンボトル|钛杯|鈦杯/g,' titanium_bottle ')
     .replace(/(?:スカルパンダ|SKULL\s*PANDA)/gi,' SKULLPANDA ')
     .replace(/(?:マイリトルポニー|My\s*Little\s*Pony)/gi,' MyLittlePony ')
     .replace(/(?:モンチッチ|monchhichi|monchicchi)/gi,' モンチッチ ')
@@ -233,7 +241,7 @@ export function conditionProfile(value=''){
     // 「未開封品」の中の「開封品」を中古扱いしない。
     openedOrUsed:/(?:中古|開封済|(?<!未)開封品|開封しています|飾って|展示品|使用済|使用感|組立済|二手|已开封|展示过)/i.test(text),
     sealedNew:/(?:新品未開封|新品・未開封|未開封|未拆封|全新未拆)/i.test(text),
-    newUnused:/(?:新品[、・]?未使用|新品、未使用|新品未使用|未使用品|(?:^|[\s\n・])新品(?:$|[\s\n・])|(?:^|[\s\n・])未使用(?:$|[\s\n・])|全新未使用|全新仅拆(?:确认|外盒|查看|验货)?|仅拆确认(?:角色)?)/i.test(text)
+    newUnused:/(?:新品[、・]?未使用|新品、未使用|新品未使用|未使用品|(?:^|[\s\n・])新品(?:$|[\s\n・])|(?:^|[\s\n・])未使用(?:$|[\s\n・])|(?:^|[\s，。！、：;；])全新(?=$|[\s，。！、：;；])|全新未使用|全新仅拆(?:确认|外盒|查看|验货)?|仅拆确认(?:角色)?)/i.test(text)
   };
 }
 
@@ -248,7 +256,7 @@ export function conditionCompatible(query='',candidate=''){
   return true;
 }
 
-const descriptorPattern=/(?:特価|早い者勝ち|ロゴ|ブロック|ペンダント|日本非売品|日本未発売|非売品|中国限定|海外限定|国内限定|正規品|新品|未使用|未開封|公式|限定|希少|レア|即発送|即日発送|送料無料|匿名配送|コラボレーション|コラボ|シリーズ|series|セット|まとめ売り|ペア|pair|単品|ランダム|random|\d+\s*周年(?:記念)?|第\s*\d+\s*弾|(?:全\s*)?\d+\s*種|\d+\s*(?:小箱|点|個|体|枚|本|箱|ピース|個入|入り|件)|入り|被りなし|重複なし|ブラインドボックス|アソート\s*(?:box|ボックス)|box|コレクション|ぬいぐるみ|マスコット|キーホルダー|キーチェーン|ストラップ|アクリルスタンド|アクスタ|アクリルブロック|シーンブロック|フィギュア|プラモデル|写真集|書籍|フォトカード|ポストカード|カード|缶バッジ|タンブラー|ボトル|マグ|カップ|特典(?:カード)?付き|おまけ付き)/gi;
+const descriptorPattern=/(?:全新未拆封|全新未拆|全新未使用|全新|未拆封|门店渠道|帶原包裝|带原包装|特価|早い者勝ち|ロゴ|ブロック|ペンダント|日本非売品|日本未発売|非売品|中国限定|海外限定|国内限定|正規品|新品|未使用|未開封|公式|限定|希少|レア|即発送|即日発送|送料無料|匿名配送|コラボレーション|コラボ|シリーズ|series|セット|まとめ売り|ペア|pair|単品|ランダム|random|\d+\s*周年(?:記念)?|第\s*\d+\s*弾|(?:全\s*)?\d+\s*種|\d+\s*(?:小箱|点|個|体|枚|本|箱|ピース|個入|入り|件)|入り|被りなし|重複なし|ブラインドボックス|アソート\s*(?:box|ボックス)|box|コレクション|ぬいぐるみ|マスコット|キーホルダー|キーチェーン|ストラップ|アクリルスタンド|アクスタ|アクリルブロック|シーンブロック|フィギュア|プラモデル|写真集|書籍|フォトカード|ポストカード|カード|缶バッジ|タンブラー|ボトル|マグ|カップ|特典(?:カード)?付き|おまけ付き)/gi;
 
 export function distinctiveTokens(value='') {
   return canonicalProductText(value).toLowerCase().split(/[\s×&＆/／・·,:：，。!！?？【】\[\]()（）<>《》「」『』“”"'‘’+＋\-_]+/)
