@@ -1,4 +1,5 @@
 import { nextRakumaSearchPage } from '../scripts/lib/rakuma.mjs';
+import { collectibleIdentityRequiresVisualProof,hasExplicitVariantMismatch } from '../scripts/lib/rules.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -12,6 +13,13 @@ import { acceptMatchCorrections } from '../scripts/lib/match-corrections.mjs';
 import { invalidateCorrectedMatches } from '../public/match-memory.js';
 
 const fixture=JSON.parse(await fs.readFile(new URL('./fixtures/lappland-price-regression.json',import.meta.url)));
+test('Myethos Japanese brand alias is not an omitted figure variant',()=>{
+ const a='新品未開封 Myethos アークナイツ 1/7 荒蕪ラップランド フィギュア 正規品';
+ const b='荒蕪ラップランド 1/7 フィギュア Myethos アークナイツ ミートス';
+ assert.equal(collectibleIdentityRequiresVisualProof(a,b),false);
+ assert.equal(hasExplicitVariantMismatch(a,b),false);
+ assert.equal(hasExplicitVariantMismatch(a,b.replace('荒蕪ラップランド','スルト')),true);
+});
 const now=Date.now(),source=(candidates=[])=>({status:'ok',rulesVersion:PRICING_RULES_VERSION,checkedAt:new Date(now).toISOString(),candidates});
 const candidate=(price,id='seller')=>({price,id,sellerId:id,url:'https://example.test/'+id,matchMethod:'verified'});
 const snapshot=()=>({id:fixture.own.id,accountId:'melon',title:fixture.own.title,ownPrice:26989,recommendedPrice:29799,yahoo:source(fixture.competitors.map(c=>({...c,matchMethod:'verified'}))),rakuma:source(),mercari:source()});

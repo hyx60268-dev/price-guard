@@ -11,6 +11,7 @@ export const MATCHING_RULES_VERSION = PRICING_RULES_VERSION;
 // 「熊」「フィギュア」のような一般語は絶対に別名扱いしない。
 function canonicalProductText(value='') {
   return String(value).normalize('NFKC')
+    .replace(/Myethos|ミートス/gi,' myethos ')
     .replace(/(?:THE\s+)?GIGANT\s+NAME|ギガントネーム/gi,' gigantname ')
     .replace(/POP\s*MART|ポップマート|泡泡玛特|泡泡瑪特/gi,' POPMART ')
     .replace(/STARBUCKS|スターバックス|星巴克/gi,' starbucks ')
