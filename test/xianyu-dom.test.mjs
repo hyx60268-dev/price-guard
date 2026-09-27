@@ -40,7 +40,7 @@ test('network error and removed listing are not generic unreadable or substitute
   assert.equal(detailStateFailure(read('<div class="empty-container--new">糟糕！宝贝被删掉了</div>'+recommendations)),'detail_unavailable');
 });
 test('multiple target prices cannot be reduced to the cheapest bait amount',()=>{
-  assert.equal(detailStateFailure(read(target.replace('120.50','100 - 200'))),'detail_price_unconfirmed');
+  assert.equal(detailStateFailure(read(target.replace('120.50','100 - 200'))),'detail_multi_price');
 });
 test('technical failures retry instead of entering completed-review cooldown',()=>{
   for(const reason of ['detail_unreadable','detail_network_error','detail_error','detail_price_unconfirmed','detail_seller_unconfirmed','detail_images_unconfirmed']){
@@ -51,4 +51,16 @@ test('technical failures retry instead of entering completed-review cooldown',()
   assert.equal(xianyuResultStatus([{reason:'detail_login_required'},{reason:'detail_unavailable'}],{cardCount:20}),'detail_inaccessible');
   assert.equal(xianyuResultStatus([{reason:'detail_login_required'},{reason:'detail_login_required'}],{cardCount:20}),'login_required');
   assert.equal(xianyuResultStatus([],{cardCount:0,searchLoginRequired:true}),'login_required');
+});
+
+test('price range is a completed multi-price review, not a failed detail fetch',()=>{
+  const state=read(target.replace('120.50','3 - 160'));
+  assert.equal(state.priceRange,true);assert.equal(state.price,null);
+  assert.equal(xianyuResultStatus([{reason:detailStateFailure(state)}],{cardCount:20}),'manual_review');
+});
+test('description heading retains the character omitted by the browser title but excludes tag paragraphs',()=>{
+  const state=read(target.replace('星巴克蓝色豹纹不锈钢保温杯370ml，全新未拆封，单个出售。','鬼灭之刃 无限城篇 中国限定新绎系列\n亚克力立牌A款 时透无一郎\n\ntag 富冈义勇 不死川实弥'),'鬼灭之刃 无限城篇 中国限定新绎系列_闲鱼');
+  assert.ok(state.titles.some(title=>title.includes('时透无一郎')));
+  assert.ok(state.titles.every(title=>!title.includes('富冈义勇')));
+  assert.equal(state.text.includes('富冈义勇'),true);
 });

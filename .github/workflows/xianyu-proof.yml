@@ -6,8 +6,8 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: xianyu-proof
-  cancel-in-progress: true
+  group: pages
+  cancel-in-progress: false
 jobs:
   proof:
     runs-on: ubuntu-latest
@@ -39,3 +39,13 @@ jobs:
           XIANYU_AUTH_PART_3: ${{ secrets.XIANYU_AUTH_PART_3 }}
           XIANYU_STORAGE_STATE_GZIP_B64: ${{ secrets.XIANYU_STORAGE_STATE_GZIP_B64 }}
           XIANYU_STORAGE_STATE_B64: ${{ secrets.XIANYU_STORAGE_STATE_B64 }}
+
+      # The shared lock prevents concurrent session readers and stale cache saves.
+      - name: 保存刷新后的加密会话与访问冷却
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            state
+            public/data/share-images
+          key: price-guard-state-proof-${{ github.run_id }}
