@@ -1,3 +1,5 @@
+import { mercariCompare } from './lib/mercari.mjs';
+import { pricingDecision } from '../public/pricing-policy.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { loadXianyuSession } from './lib/xianyu-session.mjs';
@@ -99,7 +101,7 @@ const contexts=await mapLimit(accounts,Math.min(profileConcurrency,accounts.leng
   const profileDelta=inventoryDelta(previousItems,activeItems);
   activeItems=activeItems.map(item=>({...item,platform:account.platform}));
   console.log(`清单变化：新增 ${profileDelta.added.length}、减少 ${profileDelta.removed.length}、重新上架 ${profileDelta.relisted.length}、复用 ${profileDelta.unchanged}`);
-  return {account,accountIndex,catalogItems,previousItems,previousById,activeItems,profileStatus,profileError,profileDelta,yahooById:new Map(),rakumaById:new Map(),xianyuById:new Map()};
+  return {account,accountIndex,catalogItems,previousItems,previousById,activeItems,profileStatus,profileError,profileDelta,yahooById:new Map(),rakumaById:new Map(),mercariById:new Map(),xianyuById:new Map()};
 });
 
 const relistAliases={...(previous?.relistAliases||{})};
@@ -177,6 +179,23 @@ for(const [index,task] of rakumaTasks.entries()){
   }
 }
 
+// All accounts receive a fair turn. A failed source never becomes 'no offers'.
+const mercariLimit=fullPriceAudit?Infinity:Math.max(1,Number(settings.maxMercariItemsPerRun)||30);
+const mercariTasks=fairRoundRobin(contexts.map(context=>context.activeItems.map((item,itemIndex)=>{
+ const prior=priorFor(context,item),cached=cachedComparison(prior.mercari),stamp=Date.parse(prior.mercari?.checkedAt||'');
+ if(cached&&isFresh(cached.checkedAt,6)){context.mercariById.set(item.id,cached);return null}
+ return {context,item,prior,itemIndex,lastChecked:Number.isFinite(stamp)?stamp:0};
+}).filter(Boolean).sort((a,b)=>a.lastChecked-b.lastChecked||a.itemIndex-b.itemIndex)));
+let mercariBrowser,mercariPage;
+try{for(const [index,{context,item,prior}] of mercariTasks.entries()){
+ if(index>=mercariLimit){context.mercariById.set(item.id,cachedComparison(prior.mercari,'rotation_limit')||{status:'deferred_limit',candidates:[],checkedAt:null});continue}
+ try{
+  if(!mercariPage){const opened=await openContext();mercariBrowser=opened.browser;mercariPage=await opened.context.newPage()}
+  const result=await mercariCompare(mercariPage,{...item,yahoo:context.yahooById.get(item.id)},{...settings,matchCorrections});context.mercariById.set(item.id,result);
+  console.log('[Mercari]',context.account.id,item.id,result.status,'matches='+result.competitorCount,'lowest='+result.lowestPrice);
+ }catch(error){context.mercariById.set(item.id,{status:'error',error:String(error),rulesVersion:MATCHING_RULES_VERSION,checkedAt:new Date().toISOString(),candidates:[]});console.error('[Mercari ERROR]',item.id,String(error))}
+}}finally{await mercariBrowser?.close().catch(()=>{})}
+
 const xianyuState=await xianyuStateFromEnv();
 const initialAccess=sessionManager.access();
 if(!initialAccess.allowed)console.log(`[闲鱼访问冷却] 原因=${initialAccess.reason} 下次允许检查=${initialAccess.retryAt}；本轮继续Yahoo与网页发布`);
@@ -248,24 +267,24 @@ try{
 const accountResults=[];
 for(const context of contexts){
   const rows=context.activeItems.map(item=>{
-    const prior=priorFor(context,item),yc=context.yahooById.get(item.id)||{},rc=context.rakumaById.get(item.id)||{status:'not_requested',candidates:[],lowestPrice:null},xc=context.xianyuById.get(item.id)||{status:'not_requested',samples:[],averageCNY:null};
+    const prior=priorFor(context,item),yc=context.yahooById.get(item.id)||{},rc=context.rakumaById.get(item.id)||{status:'not_requested',candidates:[],lowestPrice:null},mc=context.mercariById.get(item.id)||{status:'not_requested',candidates:[]},xc=context.xianyuById.get(item.id)||{status:'not_requested',samples:[],averageCNY:null};
     const priorVerified=verifiedXianyuCache(prior);
     const cachedAverage=priorVerified?.averageCNY??null;
     const averageCNY=Number.isFinite(xc.averageCNY)?xc.averageCNY:cachedAverage;
     const ownPrice=item.ownPrice;
     const yahooCompetitors=(yc.candidates||[]).map(value=>({...value,platform:'yahoo'}));
     const rakumaCompetitors=(rc.candidates||[]).map(value=>({...value,platform:'rakuma'}));
-    const competitors=[...yahooCompetitors,...rakumaCompetitors].filter(value=>Number.isFinite(Number(value.price))).sort((a,b)=>a.price-b.price);
+    const competitors=[...yahooCompetitors,...rakumaCompetitors,...(mc.candidates||[]).map(value=>({...value,platform:"mercari"}))].filter(value=>Number.isFinite(Number(value.price))).sort((a,b)=>a.price-b.price);
     const verifiedLowest=competitors[0]||null;
     const rakumaCovered=['ok','incomplete','cached'].includes(rc.status);
-    const comparisonIncomplete=isComparisonIncomplete(yc)||isComparisonIncomplete(rc);
-    const combinedMarket=marketPriceDecision(ownPrice,competitors,settings,{plausibleCompetitors:[yc.raiseGuardMinPrice,rc.plausibleMinPrice].filter(Number.isFinite)});
+    const decision=pricingDecision({ownPrice,yahoo:yc,rakuma:rc,mercari:mc});
+    const comparisonIncomplete=!decision.complete;
+    const combinedMarket=marketPriceDecision(ownPrice,competitors,settings,{plausibleCompetitors:[yc.raiseGuardMinPrice,rc.plausibleMinPrice,mc.plausibleMinPrice].filter(Number.isFinite)});
     const lowestPrice=verifiedLowest&&verifiedLowest.price<ownPrice?verifiedLowest.price:ownPrice;
     const lowestUrl=verifiedLowest&&verifiedLowest.price<ownPrice?verifiedLowest.url:(yc.lowestUrl||prior.lowestUrl||item.cachedYahoo?.lowestUrl||item.url||'');
     // Always recalculate against the freshly read own price. A manual price
     // change must not replay yesterday's cached recommendation.
-    const recommendedPrice=comparisonIncomplete?ownPrice:
-      verifiedLowest&&verifiedLowest.price<ownPrice?Math.max(1,Math.floor(verifiedLowest.price)-1):combinedMarket.recommendedPrice;
+    const recommendedPrice=decision.recommendedPrice;
     const needsXianyu=Number.isFinite(lowestPrice)&&lowestPrice<ownPrice;
     const manual=manualCostFor(manualCosts,{...item,accountId:context.account.id},relistAliases,context.activeItems);
     const yahooSource=['ok','incomplete'].includes(yc.status)?'live':yc.status==='cached'?'cached':Number.isFinite(prior.lowestPrice)?'cached':'own_baseline';
@@ -278,16 +297,18 @@ for(const context of contexts){
       marketMinPrice:combinedMarket.marketMinPrice??yc.marketMinPrice??null,marketMaxPrice:combinedMarket.marketMaxPrice??yc.marketMaxPrice??null,
       marketSourcePlatform:verifiedLowest?.platform||'yahoo',comparisonIncomplete,singleMarketSample:combinedMarket.singleVerified,
       averageCNY,confidence,yahooSource,costSource,needsXianyu,needsManualPurchase:needsXianyu&&!Number.isFinite(averageCNY)&&!Number.isFinite(manual?.purchaseCNY),
-      yahoo:yc,rakuma:rc,xianyu:{...(prior.xianyu||{}),...xc,averageCNY,samples},
+      yahoo:yc,rakuma:rc,mercari:mc,xianyu:{...(prior.xianyu||{}),...xc,averageCNY,samples},
       xianyuSearchUrl:xc.searchUrl||prior.xianyuSearchUrl||`https://www.goofish.com/search?q=${encodeURIComponent(item.xianyuQuery||item.title||'')}`};
     base.listingAge=listingAge(base,context.previousById.get(item.id)||{},context.profileStatus);
     base.staleListingSuggested=base.listingAge.eligible;
     const calculated=calculateManualFields(base,manual,settings);
     if(combinedMarket.underpriced&&recommendedPrice>ownPrice)calculated.advice=combinedMarket.singleVerified?'与下一家同款存在提价空间（仅1个核验样本）':'与下一家同款存在提价空间，建议提价';
+    if(comparisonIncomplete)calculated.advice='三平台比价待核验';
     return {...base,...calculated};
   });
   const yahooValues=[...context.yahooById.values()];
   const rakumaValues=[...context.rakumaById.values()];
+  const mercariValues=[...context.mercariById.values()];
   const xianyuValues=[...context.xianyuById.values()];
   const xianyuVerifiedNew=context.activeItems.filter(item=>{
     const current=context.xianyuById.get(item.id),prior=priorFor(context,item);
@@ -300,6 +321,7 @@ for(const context of contexts){
     rakuma:rows.length,rakumaLive:rakumaValues.filter(value=>['ok','incomplete'].includes(value.status)).length,
     rakumaCached:rakumaValues.filter(value=>value.status==='cached').length,
     rakumaDeferred:rakumaValues.filter(value=>value.status==='deferred_limit'||value.cacheReason==='rotation_limit').length,
+    mercari:rows.length,mercariLive:mercariValues.filter(value=>['ok','incomplete'].includes(value.status)).length,mercariCached:mercariValues.filter(value=>value.status==='cached').length,
     xianyuRequested:xianyuValues.filter(value=>!['not_requested'].includes(String(value.status))).length,
     xianyuScanned:xianyuValues.filter(value=>['ok','manual_review','page_empty','login_required','blocked','detail_inaccessible','error'].includes(value.status)).length,
     xianyuVerifiedNew,

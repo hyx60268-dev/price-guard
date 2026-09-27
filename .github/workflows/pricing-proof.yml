@@ -1,0 +1,36 @@
+name: 三平台比价实测
+on:
+  workflow_dispatch:
+    inputs:
+      item_id:
+        description: Yahoo 商品 ID
+        type: string
+        default: z691562730
+  pull_request:
+    paths:
+      - scripts/lib/mercari*
+      - public/pricing-policy.js
+      - scripts/pricing-proof.mjs
+permissions:
+  contents: read
+jobs:
+  public-price-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/pricing-proof.mjs
+        env:
+          PRICING_PROOF_ITEM_ID: ${{ inputs.item_id || 'z691562730' }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-pricing-proof
+          path: data/pricing-proof.json
+          retention-days: 7

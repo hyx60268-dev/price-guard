@@ -1,3 +1,4 @@
+import { pricingDecision, PLATFORM_LABELS, PRICING_RULES_VERSION } from '../public/pricing-policy.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -17,11 +18,11 @@ test('actual procurement wins over automatic reference; overview sorts and opens
  const source=await fs.readFile(new URL('../public/app.js',import.meta.url),'utf8');
  const dom=new JSDOM(html,{url:'https://example.test',runScripts:'outside-only'});
  try{
- Object.assign(dom.window,{mergeAccounts,resolveCostRecord,candidateId,correctionKey,mergeMatchCorrections,rejectedByMemory,invalidateCorrectedMatches,parseShopProfile,FRONTEND_VERSION,fetch:async()=>{throw Error('offline fixture')}});
+ Object.assign(dom.window,{pricingDecision,PLATFORM_LABELS,mergeAccounts,resolveCostRecord,candidateId,correctionKey,mergeMatchCorrections,rejectedByMemory,invalidateCorrectedMatches,parseShopProfile,FRONTEND_VERSION,fetch:async()=>{throw Error('offline fixture')}});
  dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true};
  dom.window.eval(source.replace(/^import .*;\r?\n/gm,'')+`window.fixture={set(value,costs){data=value;manualCosts=costs;currentAccountId='__all__'},effective,selected,render,actionablePrice}`);
- const item={id:'same',accountId:'a',accountName:'A店',title:'商品 A',ownPrice:1000,recommendedPrice:900,averageCNY:90,yahoo:{status:'ok'},rakuma:{status:'ok'}};
- const other={...item,accountId:'b',accountName:'B店',title:'商品 B',comparisonIncomplete:true};
+ const item={id:'same',accountId:'a',accountName:'A店',title:'商品 A',ownPrice:1000,recommendedPrice:900,averageCNY:90,yahoo:{status:'ok',rulesVersion:PRICING_RULES_VERSION,checkedAt:new Date().toISOString(),candidates:[{price:901,url:'https://example.com/a',id:'1',matchMethod:'verified'}]},rakuma:{status:'ok',rulesVersion:PRICING_RULES_VERSION,checkedAt:new Date().toISOString()},mercari:{status:'ok',rulesVersion:PRICING_RULES_VERSION,checkedAt:new Date().toISOString()}};
+ const other={...item,accountId:'b',accountName:'B店',title:'商品 B',comparisonIncomplete:true,mercari:{status:'error'}};
  const costs={'a:item:same':{accountId:'a',itemId:'same',purchaseCNY:20,manualFeeCNY:0,shippingJPY:0},'b:item:same':{accountId:'b',itemId:'same',purchaseCNY:50,manualFeeCNY:0,shippingJPY:0}};
  dom.window.fixture.set({settings:{exchangeRate:20,costMultiplier:1,profitWarningJPY:1500},items:[other,item],accounts:[{id:'a',name:'A店'},{id:'b',name:'B店'}]},costs);
  const effective=dom.window.fixture.effective(item);assert.equal(effective.purchaseCNY,20);assert.equal(effective.automaticReferenceCNY,90);assert.equal(effective.costJPY,400);assert.equal(effective.currentProfitJPY,600);
