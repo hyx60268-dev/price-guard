@@ -78,9 +78,11 @@ jobs:
       - name: 检查 Yahoo、乐天 Rakuma 与闲鱼
         run: npm run scan
         env:
-          # Every code publication performs one long coverage pass. Scheduled
-          # runs then continue any remaining rows instead of restarting at one shop.
-          FULL_PRICE_AUDIT: ${{ (github.event_name == 'push' || inputs.full_audit) && '1' || '0' }}
+          # Normal pushes and scheduled runs use the bounded rotating scan so a
+          # fresh dashboard is published every cycle. Full audit remains an
+          # explicit maintenance action; its progress is still accumulated by
+          # the same encrypted baseline instead of blocking ordinary updates.
+          FULL_PRICE_AUDIT: ${{ inputs.full_audit && '1' || '0' }}
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
           XIANYU_AUTH_PART_1: ${{ secrets.XIANYU_AUTH_PART_1 }}
           XIANYU_AUTH_PART_2: ${{ secrets.XIANYU_AUTH_PART_2 }}
@@ -134,5 +136,5 @@ jobs:
       - name: 验收云端闲鱼自动成本（独立于网页发布）
         run: node scripts/check-cloud-cost.mjs
       - name: 验收全账号价格覆盖（全量运行）
-        if: ${{ always() && (github.event_name == 'push' || inputs.full_audit) }}
+        if: ${{ always() && inputs.full_audit }}
         run: node scripts/check-price-coverage.mjs
