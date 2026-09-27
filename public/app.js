@@ -342,7 +342,7 @@ function detail(id,accountId){
   const marketRange=marketIncomplete?`仍有 ${unchecked} 个低价候选待核验`:marketSamples?`${money(item.marketMinPrice??item.yahoo?.marketMinPrice)} ～ ${money(item.marketMaxPrice??item.yahoo?.marketMaxPrice)}`:marketChecked?'—':'尚未核验';
   const decision=pricingDecision(item),lowest=decision.lowest;
   const coverageText=decision.complete?'三平台本轮核验完成':`等待核验：${Object.entries(decision.coverage).filter(([,ok])=>!ok).map(([platform])=>PLATFORM_LABELS[platform]).join('、')}`;
-  const matchLabel=[item.yahoo?.matchLabel||item.yahoo?.matchConfidence,item.rakuma?.matchLabel].filter(Boolean).join('；')||item.confidence||'需复核';
+  const matchLabel=decision.complete?(lowest?'在售同款已核验，最低来自 '+PLATFORM_LABELS[lowest.platform]:'本轮未发现可比同款'):'三平台证据未齐，暂不建议改价';
   $('#detailBody').innerHTML=`
     <p class="muted">${escapeHtml(item.listingAge?.message||'上架时长待云端确认')} · ${item.listingAge?.source==='platform_open_date'?'平台上架时间':item.listingAge?.source==='first_observed'?'系统首次确认在售时间':'尚无时间依据'}</p>
     <div class="detailhead"><img src="${escapeHtml(item.image)}" alt=""><div><h2>${escapeHtml(item.title)}</h2><p>${pill(item)}　同款匹配：${escapeHtml(matchLabel)}</p></div></div>

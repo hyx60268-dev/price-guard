@@ -17,7 +17,7 @@ export function pricingDecision(item={}, {now=Date.now(),maxAgeHours=6,minimumRa
  const lowest=candidates[0]||null,complete=PRICING_PLATFORMS.every(p=>coverage[p]);
  let recommendedPrice=own;
  if(complete&&own&&lowest){
-  const floor=Math.min(lowest.price,...guards),sellerCount=new Set(candidates.map(c=>c.platform+':'+(c.sellerId||c.id||c.url))).size;
+  const floor=Math.min(lowest.price,...guards),sellerCount=new Set(candidates.filter(c=>c.sellerId||c.sellerKey).map(c=>c.platform+':'+(c.sellerId||c.sellerKey))).size;
   if(lowest.price<=own)recommendedPrice=Math.max(1,Math.floor(lowest.price)-1);
   else if(sellerCount>=2&&floor-own>=minimumRaiseGapJPY&&(floor-own)/own>=.03)recommendedPrice=Math.max(own,Math.floor(floor)-1);
  }

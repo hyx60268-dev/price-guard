@@ -20,7 +20,17 @@ export function readMercariDetail(document){
  const article=document.querySelector('main article');if(!article)return null;
  const title=article.querySelector('h1')?.textContent?.trim()||'';
  const headings=[...article.querySelectorAll('h2,h3')];
- const field=name=>{const n=headings.find(n=>n.textContent.trim()===name);return (n?.nextElementSibling?.innerText||n?.nextElementSibling?.textContent||'').trim()};
+ const field=name=>{
+  const target=article.querySelector(name==='商品の説明'?'[data-testid="description"]':'[data-testid="'+name+'"]');
+  if(target)return (target.innerText||target.textContent||'').trim();
+  let n=headings.find(n=>n.textContent.trim()===name);
+  for(let level=0;n&&n!==article&&level<4;level++,n=n.parentElement){
+   const sibling=n.nextElementSibling;if(!sibling)continue;
+   if(sibling.matches('h1,h2,h3')||sibling.querySelector('h1,h2,h3'))return '';
+   return (sibling.innerText||sibling.textContent||'').trim();
+  }
+  return '';
+ };
  const description=field('商品の説明'),condition=field('商品の状態');
  // The first price after h1 is the target offer. Stop before the description,
  // so dimensions, shipping and unrelated shop recommendations cannot win.
@@ -41,13 +51,13 @@ export function readMercariDetail(document){
 export async function mercariSearch(page,url){
  await page.goto(url,{waitUntil:'domcontentloaded',timeout:60000});
  await page.waitForFunction(()=>document.querySelector('main a[href^="/item/"],main a[href^="/shops/product/"]')||/該当する商品が見つかりません|検索条件に一致する商品がありません|検索結果はありません/.test(document.querySelector('main')?.innerText||''),{},{timeout:45000});
- const result=await page.evaluate(readMercariCards.toString().replace('function readMercariCards(document)','function readMercariCards(document)')+'; readMercariCards(document)');
+ const result=await page.evaluate('('+readMercariCards.toString()+')(document)');
  if(!result.cards.length&&!result.empty)throw Error('煤炉搜索结果不可读');return result;
 }
 export async function mercariDetail(page,url){
  if(!/^https:\/\/jp\.mercari\.com\/(?:item\/m\d+|shops\/product\/[A-Za-z0-9]+)$/.test(url))throw Error('煤炉商品链接无效');
  await page.goto(url,{waitUntil:'domcontentloaded',timeout:60000});
  await page.locator('main article h1').waitFor({timeout:30000});
- const result=await page.evaluate(readMercariDetail.toString()+'; readMercariDetail(document)');
+ const result=await page.evaluate('('+readMercariDetail.toString()+')(document)');
  if(!result?.title||!result.price||!result.description)throw Error('煤炉目标详情字段不完整');return {...result,url,id:url.split('/').at(-1)};
 }

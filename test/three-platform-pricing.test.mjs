@@ -1,3 +1,4 @@
+import { nextRakumaSearchPage } from '../scripts/lib/rakuma.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -37,6 +38,7 @@ test('old rules, stale evidence, errors, missing platforms and pending low offer
 });
 test('raise requires independent sellers and a guard below higher accepted prices prevents an unsafe increase',()=>{
  const item=snapshot();item.yahoo=source([candidate(29800,'same'),candidate(30000,'same')]);assert.equal(pricingDecision(item,{now}).recommendedPrice,26989);
+ const missing=snapshot();missing.yahoo=source([candidate(29800,'a'),candidate(30000,'b')].map(({sellerId,...row})=>row));assert.equal(pricingDecision(missing,{now}).recommendedPrice,26989);
  item.yahoo.candidates[1].sellerId='other';assert.equal(pricingDecision(item,{now}).recommendedPrice,29799);
  item.yahoo.raiseGuardMinPrice=26990;assert.equal(pricingDecision(item,{now}).recommendedPrice,26989);
  const compact=pricingDecision(compactDashboardResult({items:[item]}).items[0],{now});assert.equal(compact.recommendedPrice,26989);assert.equal(compact.lowest.sellerId,'same');assert.equal(compact.complete,true);
@@ -62,4 +64,16 @@ test('Mercari verification uses actual target details, delivered price and fails
  const result=await mercariCompare(null,own,{},deps);assert.equal(result.lowestPrice,26000);assert.equal(result.status,'ok');
  detail.shippingKnown=false;const blocked=await mercariCompare(null,own,{},deps);assert.equal(blocked.status,'incomplete');assert.equal(blocked.candidates.length,0);
  detail.shippingKnown=true;deps.search=async()=>({cards:[{...c,itemStatus:'OPEN'}],hasMore:true});assert.equal((await mercariCompare(null,own,{},deps)).status,'incomplete');
+});
+
+test('Mercari nested heading wrappers retain target description and included shipping',()=>{
+ const dom=new JSDOM('<main><article><h1>フィギュア</h1><div>¥27,000</div><button>購入手続きへ</button><div><div><div><h2>商品の説明</h2></div></div><div><p data-testid="description">未開封新品 Myethos</p></div></div><div><div><div><h3>配送料の負担</h3></div></div><div><span data-testid="配送料の負担">送料込み(出品者負担)</span></div></div></article></main>');
+ try{const d=readMercariDetail(dom.window.document);assert.equal(d.description,'未開封新品 Myethos');assert.equal(d.shippingJPY,0);assert.equal(d.status,'OPEN')}finally{dom.window.close()}
+});
+
+test('Rakuma cannot silently truncate later search pages',()=>{
+ const url='https://fril.jp/s?query=Myethos&transaction=selling&sort=sell_price&order=asc';
+ const page=p=>url+'&page='+p;
+ assert.equal(nextRakumaSearchPage('<a href="'+page(4)+'">last</a><a href="'+page(2)+'">2</a>',url),page(2));
+ assert.equal(nextRakumaSearchPage('<a href="https://evil.test/s?page=2">next</a>',url),null);
 });

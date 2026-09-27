@@ -153,6 +153,16 @@ export function extractRakumaDetail(html='',url=''){
   };
 }
 
+export function nextRakumaSearchPage(html,url){
+ const current=new URL(url),page=Number(current.searchParams.get('page')||1),next=[];
+ for(const match of String(html).matchAll(/<a\b[^>]*>/gi)){
+  const href=attribute(match[0],'href');if(!href)continue;
+  const candidate=new URL(href,url),p=Number(candidate.searchParams.get('page'));
+  if(candidate.origin===current.origin&&candidate.pathname==='/s'&&candidate.searchParams.get('query')===current.searchParams.get('query')&&candidate.searchParams.get('sort')===current.searchParams.get('sort')&&candidate.searchParams.get('order')===current.searchParams.get('order')&&candidate.searchParams.get('transaction')===current.searchParams.get('transaction')&&p>page)next.push(candidate);
+ }
+ next.sort((a,b)=>Number(a.searchParams.get('page'))-Number(b.searchParams.get('page')));return next[0]?.href||null;
+}
+
 export async function rakumaCompare(item,settings={},dependencies={}){
   const getHtml=dependencies.fetchHtml||fetchHtml,fingerprint=dependencies.imageFingerprints||imageFingerprints;
   const query=queryFor(item.title),searchUrl=`https://fril.jp/s?query=${encodeURIComponent(query)}&transaction=selling&sort=sell_price&order=asc`;
@@ -162,9 +172,15 @@ export async function rakumaCompare(item,settings={},dependencies={}){
   const ownSellerId=item.platform==='rakuma'?String(item.sourceDetail?.sellerId||item.sellerId||''):'';
   const ownImageEvidence=await Promise.all([...new Set(ownImages)].slice(0,8).map(fingerprint));
   const ownFingerprints=ownImageEvidence.filter(Boolean),rejected=[];
-  const searchHtml=await getHtml(searchUrl,settings);
-  if(!/link_search_image|商品が見つかりません|商品はありません|該当する商品|0件の/.test(searchHtml))throw new Error('ラクマ搜索结果不可读，不能视为未发现同款');
-  const cards=extractRakumaSearchCards(searchHtml);
+  const collected=new Map();let nextPage=searchUrl,searchPages=0;
+  const maxPages=Math.max(1,Math.min(10,Number(settings.maxRakumaSearchPages)||5));
+  while(nextPage&&searchPages<maxPages){
+   const html=await getHtml(nextPage,settings);
+   if(!/link_search_image|商品が見つかりません|商品はありません|該当する商品|0件の/.test(html))throw new Error('ラクマ搜索结果不可读，不能视为未发现同款');
+   for(const card of extractRakumaSearchCards(html))collected.set(card.id,card);
+   nextPage=nextRakumaSearchPage(html,nextPage);searchPages++;
+  }
+  const cards=[...collected.values()],searchComplete=!nextPage;
   const screened=[];
   for(const card of cards){
     if(card.itemStatus!=='OPEN'||item.platform==='rakuma'&&(card.id===item.id||ownSellerId&&card.sellerId===ownSellerId)){rejected.push({...card,reason:'own_seller_or_not_open'});continue}
@@ -211,7 +227,7 @@ export async function rakumaCompare(item,settings={},dependencies={}){
   const lowerUnconfirmed=unresolved.filter(row=>Number(row.price)<Number(item.ownPrice));
   return {
     audit:{ownItemId:item.id,accountId:item.accountId||null,ownDetailLoaded:Boolean(ownDescription.trim())},
-    rulesVersion:MATCHING_RULES_VERSION,query,searchUrl,status:lowerUnconfirmed.length||!ownDescription.trim()||!competitors.length&&unresolved.length?'incomplete':'ok',
+    rulesVersion:MATCHING_RULES_VERSION,query,searchUrl,searchPages,searchComplete,status:!searchComplete||lowerUnconfirmed.length||!ownDescription.trim()||!competitors.length&&unresolved.length?'incomplete':'ok',
     lowestPrice:competitors[0]?.price??null,lowestUrl:competitors[0]?.url??searchUrl,
     candidates:competitors.slice(0,5),cardCount:cards.length,preliminaryCount:preliminary.length,
     detailCheckedCount:preliminary.length,competitorCount:competitors.length,rejected:rejected.slice(-30),
