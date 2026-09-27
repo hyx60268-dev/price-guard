@@ -29,7 +29,10 @@ export async function loadXianyuSession(root,{env=process.env,now=Date.now(),log
     const gate=await loadXianyuAccess(root,hash('price-guard/anonymous-access/v1'));
     return {file:undefined,source:'anonymous',access:gate.access,persist:async(_context,result)=>{await gate.record(result);return false}}
   }
-  const key=hash(`price-guard/xianyu-session/v1\n${seed}`),seedId=hash(seed);
+  // v2 resets the old global circuit once after narrowing false login blocks.
+  // It still uses only the user-supplied encrypted session and immediately
+  // blocks again when the search page or multiple independent details require login.
+  const key=hash(`price-guard/xianyu-session/v2\n${seed}`),seedId=hash(seed);
   const gate=await loadXianyuAccess(root,key);
   const cache=path.join(root,'state','xianyu-session.json.enc');let lastSaved=0;
   try{

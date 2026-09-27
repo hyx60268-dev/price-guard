@@ -165,9 +165,9 @@ export async function xianyuCost(page,item,settings){
   });
   const evidence=verifiedCostEvidence(coherentPrices(verified).slice(0,settings.maxXianyuSamples||5));
   const {samples:coherent,sellerCount,priceSpread,median:referenceCNY}=evidence;
-  const status=xianyuResultStatus(checks,{ready:evidence.ready,cardCount});
+  const status=xianyuResultStatus(checks,{ready:evidence.ready,cardCount,searchLoginRequired:pageState.loginVisible});
   return {query,usedQuery,searchAttempts,searchUrl:url,status,samples:coherent,averageCNY:status==='ok'?referenceCNY:null,cardCount,
-    detailCheckedCount:checks.length,diagnostic:status==='blocked'?'目标详情触发安全验证；已停止本轮闲鱼检查':status==='login_required'?'目标详情要求登录；已停止本轮闲鱼检查':null,
+    detailCheckedCount:checks.length,diagnostic:status==='blocked'?'目标详情触发安全验证；已停止本轮闲鱼检查':status==='login_required'?'搜索页或多个独立详情要求登录；已停止本轮闲鱼检查':null,
     loginVisible:pageState.loginVisible,preliminaryCount:preliminary.length,verifiedCount:verified.length,rejected:[...rejected,...prefilterRejected].slice(0,30),
     pricedCardCount:priced.filter(card=>Number.isFinite(card.price)&&card.price>1).length,unpricedCardCount:priced.filter(card=>!Number.isFinite(card.price)||card.price<=1).length,prefilterRejectedCount:prefilterRejected.length,
     topCandidates:ranked.slice(0,5).map(card=>({title:card.title.slice(0,120),titleScore:Number(card.titleScore.toFixed(3)),imageScore:Number.isFinite(card.imageScore)?Number(card.imageScore.toFixed(3)):null,price:card.price})),

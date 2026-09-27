@@ -3,6 +3,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      full_audit:
+        description: 全量核验所有账号全部商品（Yahoo与Rakuma）
+        type: boolean
+        default: false
   schedule:
     # GitHub 云端约每 20 分钟检查一次；无需电脑或手机保持开机。
     - cron: '*/20 * * * *'
@@ -13,13 +18,13 @@ permissions:
   id-token: write
 concurrency:
   group: pages
-  # 同时只允许一轮发布。GitHub 仍会替换旧 pending 任务；以 status.json
-  # 的 codeSha 和成功的 deployment 为准，不把排队视为已执行。
-  cancel-in-progress: false
+  # A code publication replaces an older running build so an outdated notifier
+  # cannot create one last Issue. Scheduled rotations never cancel a full audit.
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 jobs:
   scan-and-publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 360
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -73,6 +78,9 @@ jobs:
       - name: 检查 Yahoo、乐天 Rakuma 与闲鱼
         run: npm run scan
         env:
+          # Every code publication performs one long coverage pass. Scheduled
+          # runs then continue any remaining rows instead of restarting at one shop.
+          FULL_PRICE_AUDIT: ${{ (github.event_name == 'push' || inputs.full_audit) && '1' || '0' }}
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
           XIANYU_AUTH_PART_1: ${{ secrets.XIANYU_AUTH_PART_1 }}
           XIANYU_AUTH_PART_2: ${{ secrets.XIANYU_AUTH_PART_2 }}
@@ -125,3 +133,6 @@ jobs:
           artifact_name: github-pages-${{ github.run_attempt }}
       - name: 验收云端闲鱼自动成本（独立于网页发布）
         run: node scripts/check-cloud-cost.mjs
+      - name: 验收全账号价格覆盖（全量运行）
+        if: ${{ always() && (github.event_name == 'push' || inputs.full_audit) }}
+        run: node scripts/check-price-coverage.mjs

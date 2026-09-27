@@ -25,7 +25,7 @@
   "yahooRateLimitCooldownMs": 60000,
   "yahooFreshMinutes": 15,
   "rakumaFreshHours": 6,
-  "maxRakumaItemsPerRun": 30,
+  "maxRakumaItemsPerRun": 90,
   "maxRakumaDetailChecks": 6,
   "rakumaRequestIntervalMs": 1200,
   "scanBudgetMinutes": 18,

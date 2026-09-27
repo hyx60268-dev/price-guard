@@ -94,8 +94,8 @@ const contexts=await mapLimit(accounts,Math.min(profileConcurrency,accounts.leng
       activeItems=reconcileLiveItems(catalogItems,previousItems,discovered.items,account.id);
       profileStatus='live';
       console.log(`${account.platform} 主页成功：${discovered.pages} 页，${activeItems.length} 件当前在售`);
-    }else console.warn(`Yahoo 主页返回 0 件；沿用保存清单 ${activeItems.length} 件`);
-  }catch(error){profileStatus='error';profileError=String(error);console.warn(`Yahoo 主页失败；沿用保存清单：${profileError}`)}
+    }else console.warn(`${account.platform} 主页返回 0 件；沿用保存清单 ${activeItems.length} 件`);
+  }catch(error){profileStatus='error';profileError=String(error);console.warn(`${account.platform} 主页失败；沿用保存清单：${profileError}`)}
   const profileDelta=inventoryDelta(previousItems,activeItems);
   activeItems=activeItems.map(item=>({...item,platform:account.platform}));
   console.log(`清单变化：新增 ${profileDelta.added.length}、减少 ${profileDelta.removed.length}、重新上架 ${profileDelta.relisted.length}、复用 ${profileDelta.unchanged}`);
@@ -107,9 +107,10 @@ for(const context of contexts)for(const relisted of context.profileDelta.reliste
 
 // 只有明确设置 FORCE_FULL_SCAN 才从头强制重扫。部署/手工重跑也沿用轮转缓存，
 // 否则每次都会在时间预算耗尽前反复检查前半段，后半段商品长期得不到核验。
+const fullPriceAudit=process.env.FULL_PRICE_AUDIT==='1';
 const forceYahoo=process.env.FORCE_FULL_SCAN==='1';
 const yahooFreshMinutes=Number(settings.yahooFreshMinutes)||15;
-const deadline=startedAt+(Number(settings.scanBudgetMinutes)||12)*60_000;
+const deadline=startedAt+(fullPriceAudit?280:(Number(settings.scanBudgetMinutes)||12))*60_000;
 const yahooBuckets=contexts.map(context=>context.activeItems.map((item,itemIndex)=>{
   const prior=priorFor(context,item),added=context.profileDelta.added.includes(item.id)||Boolean(item.relistedFrom);
   const priceChanged=Number.isFinite(prior.ownPrice)&&prior.ownPrice!==item.ownPrice;
@@ -152,7 +153,7 @@ await mapLimit(yahooTasks,yahooConcurrency,async(task,taskIndex)=>{
 // ラクマ也按三个店铺公平轮转。每次只刷新固定数量，其余保留上次严格核验结果，
 // 防止数百件商品同时请求令云端任务超时。
 const rakumaFreshHours=Math.max(1,Number(settings.rakumaFreshHours)||6);
-const rakumaLimit=Math.max(0,Number(settings.maxRakumaItemsPerRun)||30);
+const rakumaLimit=fullPriceAudit?Number.POSITIVE_INFINITY:Math.max(0,Number(settings.maxRakumaItemsPerRun)||30);
 const rakumaBuckets=contexts.map(context=>context.activeItems.map((item,itemIndex)=>{
   // Failed attempts rotate to the tail too, without becoming accepted cache.
   const prior=priorFor(context,item),cached=cachedRakuma(prior),checked=Date.parse(prior.rakuma?.checkedAt||'');

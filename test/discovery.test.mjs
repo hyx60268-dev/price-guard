@@ -100,6 +100,7 @@ test('discovery ranks 2 days before 7 days before 30 days and diversifies seller
   const now=Date.parse('2026-09-21T00:00:00Z'),date=days=>new Date(now-days*86400000).toISOString();
   assert.deepEqual(salesWindowCounts([date(1),date(6),date(20)],now),{days2:1,days7:2,days30:3});
   const input=[
+    {id:'garbage',seller:{id:'z'},saleDates:[date(1)],salesCount:1,sourcePriceJPY:50000},
     {id:'old',seller:{id:'a'},saleDates:[date(10),date(12)],salesCount:2,sourcePriceJPY:9000},
     {id:'fresh-a',seller:{id:'a'},saleDates:[date(1),date(1.5)],salesCount:2,sourcePriceJPY:8000},
     {id:'week',seller:{id:'b'},saleDates:[date(3),date(5)],salesCount:2,sourcePriceJPY:7000},
@@ -110,6 +111,7 @@ test('discovery ranks 2 days before 7 days before 30 days and diversifies seller
   assert.deepEqual(ranked.slice(0,3).map(item=>item.id),['fresh-a','fresh-b','fresh-c']);
   assert.equal(ranked.find(item=>item.id==='week').priorityWindow,7);
   assert.equal(ranked.find(item=>item.id==='old').priorityWindow,30);
+  assert.equal(ranked.some(item=>item.id==='garbage'),false);
 });
 
 test('xianyu automatic reference requires coherent prices and independent evidence',()=>{

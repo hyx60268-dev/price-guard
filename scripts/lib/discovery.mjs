@@ -214,7 +214,10 @@ export function rankDiscoveryCandidates(candidates=[],{maxProducts=30,minSales=2
     const windows=salesWindowCounts(candidate.saleDates||[],now);
     const priorityWindow=windows.days2>=minSales?2:windows.days7>=minSales?7:30;
     return {...candidate,salesWindows:windows,priorityWindow};
-  }).sort((a,b)=>a.priorityWindow-b.priorityWindow||
+  // A candidate is not a hot-selling product merely because it appeared once.
+  // The prior sorter assigned every low-volume row to the 30-day tier, so
+  // products with zero or one verified sale could fill the page.
+  }).filter(candidate=>candidate.salesWindows.days30>=minSales).sort((a,b)=>a.priorityWindow-b.priorityWindow||
     (a.priorityWindow===2?b.salesWindows.days2-a.salesWindows.days2:a.priorityWindow===7?b.salesWindows.days7-a.salesWindows.days7:b.salesWindows.days30-a.salesWindows.days30)||
     (b.sellerCount||1)-(a.sellerCount||1)||b.salesCount-a.salesCount||b.sourcePriceJPY-a.sourcePriceJPY);
   const selected=[],sellerUsage=new Map();

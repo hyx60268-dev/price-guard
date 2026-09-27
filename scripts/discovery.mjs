@@ -59,21 +59,24 @@ async function latestPriceSnapshot(){
 }
 
 function ownedYahooScope(snapshot){
-  const sellerIds=new Set(),itemIds=new Set(),productTitles=[...(snapshot?.ownedTitleHistory||[])],records=[];
+  const sellerIds=new Set(),itemIds=new Set(),productKeys=new Set(),productTitles=[...(snapshot?.ownedTitleHistory||[])],records=[];
   const profiles=[settings.profileUrl,...(accountsCfg.accounts||[]).map(account=>account.profileUrl),
     ...(snapshot?.managedAccounts||[]).map(account=>account.profileUrl),...(snapshot?.accounts||[]).map(account=>account.profileUrl)];
   for(const profile of profiles){const id=sellerIdFromProfile(profile);if(id)sellerIds.add(id)}
   const remember=item=>{
     if(item.id)itemIds.add(String(item.id));if(item.sellerId)sellerIds.add(String(item.sellerId));if(item.title)productTitles.push(item.title);
-    if(item.title)records.push({title:item.title,description:item.yahoo?.ownDescription||'',category:item.yahoo?.ownCategory||'',
-      images:[...(item.yahoo?.ownImages||[]),item.image].filter(Boolean)});
+    const aliases=[item.title,item.xianyuQuery,item.title?xianyuQueryFor(item.title):''].filter(Boolean);
+    for(const title of aliases){const key=normalizeProductIdentity(canonicalSaleTitle(title));if(key)productKeys.add(key)}
+    if(item.title)for(const title of aliases)records.push({title,description:item.yahoo?.ownDescription||item.description||'',category:item.yahoo?.ownCategory||item.category||'',
+      images:[...(item.yahoo?.ownImages||[]),...(item.images||[]),item.image].filter(Boolean)});
   };
   for(const item of snapshot?.items||[])remember(item);
   for(const account of snapshot?.accounts||[])for(const item of account.items||[])remember(item);
   for(const id of cfg.excludeYahooSellerIds||[])sellerIds.add(String(id));
   const uniqueTitles=[...new Set(productTitles)];
   for(const title of uniqueTitles)if(title&&!records.some(record=>normalizeProductIdentity(record.title)===normalizeProductIdentity(title)))records.push({title,description:'',category:'',images:[]});
-  return {sellerIds,itemIds,productTitles:uniqueTitles,records:mergeOwnedRecords(records)};
+  for(const title of uniqueTitles){const key=normalizeProductIdentity(canonicalSaleTitle(title));if(key)productKeys.add(key)}
+  return {sellerIds,itemIds,productKeys,productTitles:uniqueTitles,records:mergeOwnedRecords(records)};
 }
 
 const imageFingerprintCache=new Map();
@@ -89,6 +92,8 @@ async function fingerprints(images=[]){
 async function matchesOwnedListing(candidate,owned){
   const candidateTitle=candidate.sourceTitle||candidate.proposedTitle||'',candidateDescription=candidate.sourceDescription||'';
   const candidateImages=candidate.sourceImages||[];
+  const candidateKey=normalizeProductIdentity(canonicalSaleTitle(candidateTitle));
+  if(candidateKey&&owned.productKeys?.has(candidateKey))return true;
   for(const record of owned.records||[]){
     if(sameDiscoveryProduct({title:candidateTitle},{title:record.title})||
       listingTextEquivalent(candidateTitle,candidateDescription,record.title,record.description)||
@@ -112,7 +117,9 @@ async function completeOwnedScope(snapshot){
       owned.productTitles.push(item.title);owned.records.push({title:item.title,description:'',category:'',images:[item.image].filter(Boolean)});
     }}catch{}
   }
-  owned.productTitles=[...new Set(owned.productTitles)];owned.records=mergeOwnedRecords(owned.records);return owned;
+  owned.productTitles=[...new Set(owned.productTitles)];owned.records=mergeOwnedRecords(owned.records);
+  for(const record of owned.records){const key=normalizeProductIdentity(canonicalSaleTitle(record.title));if(key)owned.productKeys.add(key)}
+  return owned;
 }
 
 async function excludeOwnedAndUploaded(items,owned,dismissed=[]){

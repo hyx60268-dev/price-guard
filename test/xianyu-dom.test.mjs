@@ -48,4 +48,7 @@ test('technical failures retry instead of entering completed-review cooldown',()
   }
   assert.equal(xianyuResultStatus([{reason:'description_color_mismatch'}],{cardCount:20}),'manual_review');
   assert.equal(xianyuResultStatus([{reason:'detail_blocked'}],{ready:true}),'blocked');
+  assert.equal(xianyuResultStatus([{reason:'detail_login_required'},{reason:'detail_unavailable'}],{cardCount:20}),'detail_inaccessible');
+  assert.equal(xianyuResultStatus([{reason:'detail_login_required'},{reason:'detail_login_required'}],{cardCount:20}),'login_required');
+  assert.equal(xianyuResultStatus([],{cardCount:0,searchLoginRequired:true}),'login_required');
 });

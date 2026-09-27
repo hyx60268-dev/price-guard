@@ -69,11 +69,14 @@ export function readXianyuDetailDOM() {
 }
 
 // A technical failure is retryable, not a completed negative identity review.
-export function xianyuResultStatus(checks=[],{ready=false,cardCount=0}={}) {
+export function xianyuResultStatus(checks=[],{ready=false,cardCount=0,searchLoginRequired=false}={}) {
   if(checks.some(row=>row.reason==='detail_blocked'))return 'blocked';
-  if(checks.some(row=>row.reason==='detail_login_required'))return 'login_required';
+  // One deep link can demand login even while the session can still read other
+  // public details. Only the search page itself or two independent details may
+  // trip the global access circuit for every listing.
+  if(searchLoginRequired||checks.filter(row=>row.reason==='detail_login_required').length>=2)return 'login_required';
   if(ready)return 'ok';
-  if(checks.some(row=>/^detail_(?:unreadable|price_unconfirmed|seller_unconfirmed|images_unconfirmed|network_error|error)$/.test(row.reason||'')))return 'detail_inaccessible';
+  if(checks.some(row=>/^detail_(?:login_required|unreadable|price_unconfirmed|seller_unconfirmed|images_unconfirmed|network_error|error)$/.test(row.reason||'')))return 'detail_inaccessible';
   return cardCount?'manual_review':'page_empty';
 }
 
@@ -84,10 +87,11 @@ export function completedXianyuReview(cost={}) {
 // Every check is still the full physical-offer verifier. Stop as soon as the
 // existing independent-seller contract is met; extra reads can only add load.
 export async function collectXianyuDetails(candidates, verify, coherent = rows => rows) {
-  const checks=[], accepted=[];
+  const checks=[], accepted=[];let detailLoginFailures=0;
   for(const candidate of candidates){
     const check=await verify(candidate);checks.push(check);
-    if(['detail_blocked','detail_login_required'].includes(check.reason))break;
+    if(check.reason==='detail_blocked')break;
+    if(check.reason==='detail_login_required'&&++detailLoginFailures>=2)break;
     if(check.accepted)accepted.push({...candidate,...check});
     if(verifiedCostEvidence(coherent(accepted)).ready)break;
   }
