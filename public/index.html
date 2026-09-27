@@ -1,7 +1,7 @@
 <!doctype html><html lang="zh-CN"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#13211b">
-<title>价格守卫</title><link rel="manifest" href="manifest.webmanifest?v=23"><link rel="icon" href="favicon.svg"><link rel="stylesheet" href="styles.css?v=23">
+<title>价格守卫</title><link rel="manifest" href="manifest.webmanifest?v=23"><link rel="icon" href="favicon.svg"><link rel="stylesheet" href="styles.css?v=24">
 </head><body>
 <header><div><p class="eyebrow">YAHOO!フリマ × 楽天ラクマ × 闲鱼</p><h1>价格守卫</h1><p id="stamp">读取最近一次云端检查…</p></div><div class="headeractions"><button id="cloudSync" class="ghost" hidden>同步云端</button><button id="help" class="ghost">手机与通知</button><button id="install" class="ghost" hidden>安装到桌面</button></div></header>
 <main>
@@ -15,13 +15,13 @@
    <a id="profileLink" class="soft linkbtn" target="_blank">打开主页</a>
    <span id="accountSync" class="syncpill"></span>
   </section>
-  <section id="statusGrid" class="statusgrid"></section>
+  <details class="scan-details"><summary>数据来源与扫描进度</summary><section id="statusGrid" class="statusgrid"></section></details>
   <section id="loginNotice" class="notice" hidden><strong id="loginTitle">闲鱼状态提醒</strong><span id="loginText"></span></section>
-  <section id="refreshNotice" class="notice info" hidden><strong>已自动刷新</strong><span id="refreshText"></span></section>
+  <section id="refreshNotice" class="notice info" hidden><strong>数据更新</strong><span id="refreshText"></span></section>
   <section id="changeNotice" class="notice" hidden><strong>检测到数据变化</strong><span id="changeText"></span></section>
-  <section class="notice info"><strong>采购价自动核验</strong><span>系统从闲鱼详情和多个独立卖家自动取得采购参考；你只需填写人肉费和日本物流费。自动核验失败时才需人工补采购价。</span></section>
-  <section class="kpis" id="kpis"></section>
-  <section class="toolbar"><label class="search"><span>⌕</span><input id="search" placeholder="搜索商品名称"></label><select id="filter"><option value="all">全部商品</option><option value="reprice">建议调价</option><option value="stale">30天未售，建议评估删除</option><option value="low">调价后利润低于 ¥1,500</option><option value="input">待补完整成本</option><option value="manual">同款需复核</option></select><button id="excel" class="ghost">下载 Excel</button></section>
+
+  <div class="overview-heading"><div><p class="eyebrow dark">INVENTORY OVERVIEW</p><h2>商品工作台</h2><p class="muted">先看价格与成本，再处理需要关注的商品。</p></div><span id="resultCount"></span></div><section class="kpis" id="kpis"></section>
+  <section class="toolbar"><label class="search"><span>⌕</span><input id="search" placeholder="搜索商品名称"></label><select id="filter"><option value="all">全部商品</option><option value="reprice">建议调价</option><option value="stale">30天未售，建议评估删除</option><option value="low">调价后利润低于 ¥1,500</option><option value="input">待补完整成本</option><option value="manual">同款需复核</option></select><select id="sort" aria-label="商品排序"><option value="priority">优先处理</option><option value="price">售价从高到低</option><option value="title">按商品名称</option></select><button id="excel" class="ghost">下载 Excel</button></section>
   <section class="tablewrap"><table><thead><tr><th>商品</th><th>我的售价</th><th>在售最低</th><th>建议价</th><th>采购参考</th><th>成本</th><th>不改价利润</th><th>改价后利润</th><th>判断</th></tr></thead><tbody id="rows"></tbody></table><div id="cards"></div><p id="empty" hidden>没有符合筛选条件的商品。</p><nav id="pagination" class="pagination" aria-label="商品分页"></nav></section>
   </div>
   <section id="discoveryView" hidden>
@@ -36,5 +36,5 @@
 <dialog id="detail"><button class="close" aria-label="关闭">×</button><div id="detailBody"></div></dialog>
 <dialog id="imageSearchDialog"><button class="close" aria-label="关闭">×</button><h2>手机以图搜索</h2><div class="imagehandoff"><img id="imageSearchPreview" alt="待搜索图片"><div><b id="imageSearchTitle"></b><p id="imageSearchStatus" class="muted">先把图片保存到手机，再打开 App 选择刚保存的图片。</p></div></div><div class="imagehandoffactions"><button id="saveSearchImage">① 保存图片到手机</button><button id="openXianyu" class="soft">② 打开闲鱼</button><button id="openXhs" class="soft">② 打开小红书</button></div><p class="muted">iPhone/Android 会先出现系统分享面板，请点“存储图像/保存图片”。网页受手机系统限制，不能代替你点击 App 内的相机按钮；打开 App 后选择相册里最新一张即可。</p></dialog>
 <dialog id="helpDialog"><button class="close" aria-label="关闭">×</button><h2>手机使用、同步与通知</h2><ol class="helpsteps"><li><b>打开仪表盘</b><span>手机 Safari 或 Chrome 打开当前网址，输入管理员给你的用户名和密码。</span></li><li><b>放到手机桌面</b><span>iPhone：Safari“分享 → 添加到主屏幕”；Android：浏览器菜单“安装应用/添加到主屏幕”。</span></li><li><b>绑定自己的店铺</b><span>在“账号管理”粘贴 Yahoo!フリマ 或 fril.jp/shop/ 卖家主页链接，点“同步云端”，再在打开的 GitHub 页面点绿色“Submit new issue”。首次提交会绑定你的 GitHub 身份。</span></li><li><b>接收提醒</b><span>价格、成本和选品变化统一创建 <a target="_blank" href="https://github.com/hyx60268-dev/price-guard/issues">GitHub Issue</a>，不再发送邮件或 Telegram。</span></li></ol></dialog>
-<footer>价格检查约每20分钟 · Yahoo＋ラクマ同款比价 · GitHub Actions 通知 · 可跨设备加密同步</footer><script type="module" src="app.js?v=33"></script>
+<footer>价格检查约每20分钟 · Yahoo＋ラクマ同款比价 · GitHub Actions 通知 · 可跨设备加密同步</footer><script type="module" src="app.js?v=34"></script>
 </body></html>

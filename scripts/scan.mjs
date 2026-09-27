@@ -238,7 +238,7 @@ try{
     if(result.rejected?.length){
       const reasons=Object.entries(result.rejected.reduce((map,row)=>{map[row.reason||'unknown']=(map[row.reason||'unknown']||0)+1;return map},{})).map(([reason,count])=>`${reason}:${count}`).join(', ');
       console.log(`[闲鱼拒绝原因] ${item.id} ${reasons}`);
-      for(const row of result.rejected.slice(0,2))console.log(`[闲鱼拒绝样本] ${item.id} 原因=${row.reason} 标题=${String(row.detailTitle||row.title||'').slice(0,100)} 标题分=${row.titleMatch??'—'} 图片分=${row.imageScore??'—'} 错误=${String(row.error||'').slice(0,180)} 详情字段=${JSON.stringify(row.diagnostic||{})}`);
+      for(const row of [...new Set([...result.rejected.slice(0,2),...result.rejected.filter(row=>/detail_(blocked|login_required|network_error|error)$/.test(row.reason))])])console.log(`[闲鱼拒绝样本] ${item.id} 原因=${row.reason} 标题=${String(row.detailTitle||row.title||'').slice(0,100)} 标题分=${row.titleMatch??'—'} 图片分=${row.imageScore??'—'} 错误=${String(row.error||'').slice(0,180)} 详情字段=${JSON.stringify(row.diagnostic||{})}`);
     }
     if(result.status==='login_required'||result.status==='blocked')anyXianyuLoginRequired=true;
     context.xianyuById.set(item.id,result);

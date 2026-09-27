@@ -47,8 +47,9 @@ export function readXianyuDetailDOM() {
   const description=main&&[...main.querySelectorAll('[class^="desc--"], [class*=" desc--"]')].find(visible);
   const text=(description?.innerText||'').replace(/\s+/g,' ').trim().slice(0,6500);
   const pageText=(document.body?.innerText||'').split(/为你推荐|猜你喜欢|相关推荐/)[0];
-  const blocked=[...document.querySelectorAll('iframe')].some(frame=>visible(frame)&&/baxia|captcha|_____tmd_____|\/punish/i.test(`${frame.id} ${frame.getAttribute('src')||''}`))||
-    /访问频繁|安全验证|滑块|验证码|请稍后重试|被挤爆|drag the slider|verify you are human/i.test(pageText);
+  const challengeFrame=[...document.querySelectorAll('iframe')].some(frame=>visible(frame)&&/baxia|captcha|_____tmd_____|\/punish/i.test(`${frame.id} ${frame.getAttribute('src')||''}`));
+  const challengeText=(pageText.match(/访问频繁|安全验证|滑块|验证码|请稍后重试|被挤爆|drag the slider|verify you are human/i)||[])[0]||null;
+  const blocked=challengeFrame||Boolean(challengeText);
   const loginVisible=Boolean(first('iframe[src*="login"],[role="dialog"][class*="login" i],[class*="notloginMask--"]'));
   const unavailable=Boolean(first('[class*="empty-container--"]'))&&/宝贝被删|已下架|不存在/.test(pageText);
   const networkError=Boolean(first('[class*="error-container--"]'));
@@ -65,7 +66,7 @@ export function readXianyuDetailDOM() {
   if(seller){const url=new URL(seller.href,location.href);const id=url.searchParams.get('userId');if(id&&/^\d+$/.test(id))sellerKey=`goofish:${id}`}
   const optionCount=main?[...main.querySelectorAll('[role="radio"],[class*="sku" i] button,[class*="spec" i] button')].filter(visible).length:0;
   return {text,titles,images:[...new Set(images)].slice(0,16),price:prices.length===1?prices[0]:null,sellerKey,optionCount,blocked,loginVisible,unavailable,networkError,
-    diagnostic:{mainFound:Boolean(main),descriptionLength:text.length,galleryFound:Boolean(gallery),imageCount:images.length,priceCount:prices.length,sellerFound:Boolean(sellerKey)}};
+    diagnostic:{challengeFrame,challengeText,loginVisible,networkError,mainFound:Boolean(main),descriptionLength:text.length,galleryFound:Boolean(gallery),imageCount:images.length,priceCount:prices.length,sellerFound:Boolean(sellerKey)}};
 }
 
 // A technical failure is retryable, not a completed negative identity review.

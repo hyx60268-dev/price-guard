@@ -83,6 +83,7 @@ test('Xianyu replay reads full descriptions rather than accepting identical tril
   const title='FAN HO 香港三部作 写真集';
   const detail={goto:async()=>{},waitForLoadState:async()=>{},waitForTimeout:async()=>{},close:async()=>{},evaluate:async()=>({text:'新品 黒とベージュセット売り、別売り不可。写真集です。',titles:[title],images:['unused-image'],price:90,sellerKey:'goofish:seller',optionCount:0,blocked:false,loginVisible:false})};
   const page={goto:async()=>{},waitForLoadState:async()=>{},waitForTimeout:async()=>{},waitForSelector:async()=>{},url:()=> 'https://www.goofish.com/search',context:()=>({newPage:async()=>detail}),evaluate:async()=>({blocked:false,loginVisible:false}),locator:()=>({evaluateAll:async()=>[{id:'123',url:'https://www.goofish.com/item?id=123',title,text:title,priceText:'90'}]})};
+  const context={newPage:async()=>detail};page.context=()=>context;detail.context=()=>context;
   const result=await xianyuCost(page,{title,xianyuQuery:title,description:'新品 未使用 3冊セット'},{});
   assert.equal(result.averageCNY,null);
   assert.ok(result.rejected.some(row=>row.reason==='sale_unit_mismatch'));

@@ -1,3 +1,4 @@
+import { waitForXianyuNavigation } from './xianyu-pacing.mjs';
 import { cardsFromPage,settle } from './browser.mjs';
 import { coherentIndependentImages,imageFingerprints,imageSetSimilarity,primaryProductSimilarity } from './image.mjs';
 import { offerIdentityGuard } from './offer-identity.mjs';
@@ -14,10 +15,10 @@ async function mapLimit(values,limit,worker){
 
 const transientNavigationError=error=>/ERR_(?:NETWORK_IO_SUSPENDED|NETWORK_CHANGED|INTERNET_DISCONNECTED|CONNECTION_RESET|CONNECTION_CLOSED|TIMED_OUT)|Navigation timeout|Target page, context or browser has been closed/i.test(String(error?.message||error));
 
-async function gotoWithRetry(page,url,options={},attempts=3){
+async function gotoWithRetry(page,url,options={},settings={},attempts=3){
   let lastError;
   for(let attempt=1;attempt<=attempts;attempt++){
-    try{return await page.goto(url,options)}catch(error){
+    try{await waitForXianyuNavigation(page,settings);return await page.goto(url,options)}catch(error){
       lastError=error;
       if(!transientNavigationError(error)||attempt===attempts)throw error;
       await page.waitForTimeout(800*attempt).catch(()=>{});
@@ -40,7 +41,7 @@ async function verifyDetail(context,candidate,item,settings,ownFingerprints,ownP
   const query=item.xianyuQuery||xianyuQueryFor(item.title||'');
   const detail=await context.newPage();
   try{
-    await gotoWithRetry(detail,candidate.url,{waitUntil:'domcontentloaded',timeout:25000});
+    await gotoWithRetry(detail,candidate.url,{waitUntil:'domcontentloaded',timeout:25000},settings);
     await settle(detail,Math.max(900,Math.min(1600,settings.scanDelayMs||1200)));
     let state={};
     for(let attempt=0;attempt<5;attempt++){
@@ -113,7 +114,7 @@ export async function xianyuCost(page,item,settings){
   for(const candidateQuery of searchQueries){
     searchAttempts++;
     usedQuery=candidateQuery;url=`https://www.goofish.com/search?q=${encodeURIComponent(candidateQuery)}`;
-    await gotoWithRetry(page,url,{waitUntil:'domcontentloaded',timeout:35000});await settle(page,Math.max(2500,settings.scanDelayMs||1200));
+    await gotoWithRetry(page,url,{waitUntil:'domcontentloaded',timeout:35000},settings);await settle(page,Math.max(2500,settings.scanDelayMs||1200));
     await page.waitForSelector('a[href*="/item?id="], a[href*="/item/"]',{timeout:6000}).catch(()=>{});
     cards=await cardsFromPage(page,'xianyu');
     pageState=await page.evaluate(()=>{
