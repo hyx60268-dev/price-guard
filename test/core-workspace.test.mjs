@@ -33,6 +33,12 @@ test('actual procurement wins over automatic reference; overview sorts and opens
  assert.equal(dom.window.document.querySelector('#detailBody h2').textContent,'商品 B');
  assert.equal(dom.window.document.querySelector('#purchaseCNY').value,'50');
  assert.equal(dom.window.document.querySelector('.scan-details').open,false);
+ const stale={...item,ownPrice:26989,recommendedPrice:29799,yahoo:{...item.yahoo,rulesVersion:19,matchLabel:'与下一家同款存在提价空间'}};
+ dom.window.fixture.set({settings:{exchangeRate:20,costMultiplier:1,profitWarningJPY:1500},items:[stale],accounts:[{id:'a',name:'A店'}]},costs);
+ dom.window.fixture.render();dom.window.document.querySelector('#cards [data-account="a"]').click();
+ const text=dom.window.document.querySelector('#detailBody').textContent;
+ assert.ok(text.includes('暂不建议改价'));assert.ok(!text.includes('29,799'));assert.ok(!text.includes('与下一家同款存在提价空间'));
+ assert.ok(!text.includes('Yahoo最低'));assert.ok(!text.includes('乐天Rakuma最低'));
  await new Promise(resolve=>setImmediate(resolve));
  }finally{dom.window.close()}
 });

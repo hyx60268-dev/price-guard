@@ -32,11 +32,12 @@ export function readMercariDetail(document){
   return '';
  };
  const description=field('商品の説明'),condition=field('商品の状態');
- // The first price after h1 is the target offer. Stop before the description,
+ // The target price may precede h1 in the responsive DOM. Stop before the description,
  // so dimensions, shipping and unrelated shop recommendations cannot win.
  const nodes=[...article.querySelectorAll('*')],h1=article.querySelector('h1'),end=headings.find(n=>n.textContent.trim()==='商品の説明');
- const header=nodes.slice(nodes.indexOf(h1)+1,nodes.indexOf(end));
- const priceNode=header.find(n=>/^[¥￥]\s*[\d,]+$/.test(n.textContent.trim()));
+ const header=nodes.slice(0,nodes.indexOf(end));
+ const targetPrices=[...article.querySelectorAll('[data-testid="price"]')].filter(n=>!n.closest('a'));
+ const priceNode=(targetPrices.length===1&&/^[¥￥]?\s*[\d,]+(?:円)?$/.test(targetPrices[0].textContent.trim())?targetPrices[0]:null)||header.find(n=>/^[¥￥]\s*[\d,]+$/.test(n.textContent.trim()));
  const price=Number(priceNode?.textContent.replace(/[^\d]/g,''))||null;
  const checkout=header.find(n=>n.tagName==='BUTTON'&&/購入手続きへ/.test(n.textContent)&&!n.disabled);
  const shippingText=field('送料')||field('配送料の負担');

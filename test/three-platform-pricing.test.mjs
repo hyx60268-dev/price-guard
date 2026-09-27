@@ -77,3 +77,8 @@ test('Rakuma cannot silently truncate later search pages',()=>{
  assert.equal(nextRakumaSearchPage('<a href="'+page(4)+'">last</a><a href="'+page(2)+'">2</a>',url),page(2));
  assert.equal(nextRakumaSearchPage('<a href="https://evil.test/s?page=2">next</a>',url),null);
 });
+
+test('Mercari responsive DOM may place price before the product h1',()=>{
+ const dom=new JSDOM('<main><article><div data-testid="price"><span>¥</span><span>27,000</span></div><h1>Myethos フィギュア</h1><button>購入手続きへ</button><h2>商品の説明</h2><p>未開封新品</p><h3>配送料の負担</h3><div>送料込み(出品者負担)</div></article></main>');
+ try{assert.equal(readMercariDetail(dom.window.document).price,27000)}finally{dom.window.close()}
+});
