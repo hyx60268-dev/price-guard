@@ -50,3 +50,14 @@ test('all supported secret formats work; corrupt state never logs credentials',a
   assert.equal(logs.join().includes('malformed-secret'),false);
  }finally{await fs.rm(root,{recursive:true,force:true})}
 });
+test('login sync includes IndexedDB and verifies real details before uploading secrets',async()=>{
+ const source=await fs.readFile(new URL('../scripts/login-sync.mjs',import.meta.url),'utf8');
+ const firstCapture=source.indexOf('context.storageState({indexedDB:true})');
+ const verification=source.indexOf('await verifyRealCost(context)');
+ const secondCapture=source.indexOf('context.storageState({indexedDB:true})',firstCapture+1);
+ const firstSecretUpload=source.indexOf("run('gh',['secret','set'");
+ assert.ok(firstCapture>=0);
+ assert.ok(verification>firstCapture);
+ assert.ok(secondCapture>verification);
+ assert.ok(firstSecretUpload>secondCapture);
+});

@@ -63,11 +63,20 @@ try{
   await page.goto('https://www.goofish.com/');
   console.log('\n请在打开的浏览器登录闲鱼，并搜索任意商品确认能看到真实结果。');
   await rl.question('确认已登录后回到这里按回车，程序会保存登录状态并同步 GitHub：');
-  const session=await context.storageState();
-  const xianyuCookies=session.cookies.filter(cookie=>/(?:goofish|idlefish)\.com$/i.test(cookie.domain.replace(/^\./,'')));
+  // Xianyu may keep part of the authenticated browser session in IndexedDB.
+  // Saving cookies/localStorage alone can look logged in on the search page but
+  // still redirect every item detail to login in the cloud runner.
+  let session=await context.storageState({indexedDB:true});
+  let xianyuCookies=session.cookies.filter(cookie=>/(?:goofish|idlefish)\.com$/i.test(cookie.domain.replace(/^\./,'')));
   if(!xianyuCookies.length)throw new Error('未检测到闲鱼登录 Cookie，请先在浏览器内完成登录。');
+  await verifyRealCost(context);
+  // Verification may refresh cookies or browser storage. Upload the state after
+  // that successful detail request, not the earlier pre-verification snapshot.
+  session=await context.storageState({indexedDB:true});
+  xianyuCookies=session.cookies.filter(cookie=>/(?:goofish|idlefish)\.com$/i.test(cookie.domain.replace(/^\./,'')));
+  if(!xianyuCookies.length)throw new Error('详情验证后闲鱼登录状态丢失，已停止同步。');
   await fs.writeFile(authFile,JSON.stringify(session));
-  console.log(`闲鱼登录状态已保存：${xianyuCookies.length} 个会话 Cookie。同步阶段不再自动搜索，避免触发滑块验证。`);
+  console.log(`闲鱼登录状态已验证并保存：${xianyuCookies.length} 个会话 Cookie，真实商品详情可读取。`);
 
   const raw=await fs.readFile(authFile);
   const encoded=zlib.gzipSync(raw,{level:9}).toString('base64');
