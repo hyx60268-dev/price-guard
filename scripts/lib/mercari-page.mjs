@@ -44,8 +44,13 @@ export function readMercariDetail(document){
  const originalJPY=yen(converted?.textContent);
  const parsedPrices=targetPrices.map(n=>yen(n.textContent)).filter(n=>Number.isFinite(n)&&n>0);
  const uniquePrices=[...new Set(parsedPrices)];
+ const canonical=document.querySelector('link[rel="canonical"]')?.getAttribute('href');
+ const metadataCurrency=document.querySelector('meta[name="product:price:currency"]')?.getAttribute('content');
+ const metadataPrice=Number(document.querySelector('meta[name="product:price:amount"]')?.getAttribute('content'));
+ const metadataJPY=canonical===document.location?.href?.split('?')[0]&&metadataCurrency==='JPY'&&metadataPrice>0?metadataPrice:null;
  const priceNode=header.find(n=>/^[¥￥]\s*[\d,]+$/.test(n.textContent.trim()));
- const price=Number.isFinite(originalJPY)&&originalJPY>0?originalJPY:uniquePrices.length===1?uniquePrices[0]:uniquePrices.length>1?null:Number(priceNode?.textContent.replace(/[^\d]/g,''))||null;
+ const visiblePrice=Number.isFinite(originalJPY)&&originalJPY>0?originalJPY:uniquePrices.length===1?uniquePrices[0]:uniquePrices.length>1?null:Number(priceNode?.textContent.replace(/[^\d]/g,''))||null;
+ const price=uniquePrices.length>1||visiblePrice&&metadataJPY&&visiblePrice!==metadataJPY?null:visiblePrice||metadataJPY;
  const checkout=header.find(n=>n.tagName==='BUTTON'&&/購入手続きへ/.test(n.textContent)&&!n.disabled);
  const shippingText=field('送料')||field('配送料の負担');
  const shippingIncluded=/送料込み|出品者負担/.test(shippingText);

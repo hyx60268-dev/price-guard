@@ -95,3 +95,9 @@ test('overseas Mercari price must use original JPY and exclude USD and exchange-
  const dom=new JSDOM('<main><article><h1>Myethos フィギュア</h1><div>US$180.09</div><div data-testid="converted-currency-section"><p>(</p><p>¥</p><p>27,000</p><p> 為替レート更新日時 9月27日 02:10 UTC</p><p>)</p></div><button>購入手続きへ</button><h2>商品の説明</h2><div>新品 未開封</div></article></main>');
  try{assert.equal(readMercariDetail(dom.window.document).price,27000);dom.window.document.querySelector('[data-testid="converted-currency-section"]').remove();assert.equal(readMercariDetail(dom.window.document).price,null)}finally{dom.window.close()}
 });
+
+test('Mercari public product metadata is bound to the exact target and JPY currency',()=>{
+ const url='https://jp.mercari.com/item/m41780895426';
+ const dom=new JSDOM(`<head><link rel="canonical" href="${url}"><meta name="product:price:currency" content="JPY"><meta name="product:price:amount" content="27000"></head><main><article><h1>Myethos フィギュア</h1><button>購入手続きへ</button><h2>商品の説明</h2><p>未開封</p></article></main>`,{url});
+ try{const d=dom.window.document;assert.equal(readMercariDetail(d).price,27000);assert.equal(readMercariDetail(d).shippingKnown,false);d.querySelector('meta[name="product:price:currency"]').content='USD';assert.equal(readMercariDetail(d).price,null);d.querySelector('meta[name="product:price:currency"]').content='JPY';d.querySelector('link').href='https://jp.mercari.com/item/m999';assert.equal(readMercariDetail(d).price,null)}finally{dom.window.close()}
+});
