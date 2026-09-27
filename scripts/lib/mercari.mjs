@@ -38,8 +38,7 @@ export async function mercariCompare(page,item,settings={},dependencies={}){
       const detail=await (dependencies.detail||mercariDetail)(page,card.url);
       if(ownSellerId&&detail.sellerId===ownSellerId){rejected.push({...card,reason:'own_seller'});continue}
       if(detail.status!=='OPEN'){rejected.push({...card,reason:detail.status==='SOLD'?'not_open':'availability_unconfirmed'});continue}
-      if(!detail.shippingKnown){rejected.push({...card,reason:'shipping_unconfirmed',shippingText:detail.shippingText});continue}
-      detail.price=detail.itemPrice+detail.shippingJPY;
+
       if(!ownDescription.trim()||!detail.description.trim()){rejected.push({...card,reason:'sale_description_unavailable'});continue}
       if(hasExplicitDefect(detail.title,detail.description)){rejected.push({...card,reason:'defect'});continue}
       const detailImages=[...detail.images,card.image].filter(Boolean);
@@ -60,6 +59,8 @@ export async function mercariCompare(page,item,settings={},dependencies={}){
       if(!semantic.accepted&&!specificationEquivalent&&!exactTitleEquivalent&&!textEquivalent&&!visualEquivalent){
         rejected.push({...card,reason:semantic.reason||'detail_mismatch',imageScore,primaryImageScore});continue
       }
+      if(!detail.shippingKnown){rejected.push({...card,reason:'shipping_unconfirmed',shippingText:detail.shippingText});continue}
+      detail.price=detail.itemPrice+detail.shippingJPY;
       const queryFamily=productFamily(`${item.title}\n${ownDescription}`,ownCategory),candidateFamily=productFamily(`${detail.title}\n${detail.description}`,detail.category);
       competitors.push({...card,...detail,platform:'mercari',image:detail.images[0]||card.image,imageScore,primaryImageScore,queryFamily,candidateFamily,matchMethod:visualEquivalent?'strong_visual_primary_product':'detail_type_quantity_equivalent_text'});
     }catch(error){rejected.push({...card,reason:'detail_error',error:String(error)})}

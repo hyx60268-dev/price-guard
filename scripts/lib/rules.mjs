@@ -388,7 +388,7 @@ function namedIdentityConflict(query='',candidate=''){
     return value.length>=4||(/^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+$/u.test(value)&&value.length>=2);
   };
   const uniqueStrong=(source,targetText)=>[...new Set(distinctiveTokens(source).map(normalize))]
-    .filter(token=>token&&token!=='popmart'&&strong(token)&&!targetText.includes(token));
+    .filter(token=>token&&token!=='popmart'&&!/^(?:プラスチック|pvc|abs|製|塗装済み|完成品)+$/i.test(token)&&strong(token)&&!targetText.includes(token));
   const leftOnly=uniqueStrong(leftHeading,rightText),rightOnly=uniqueStrong(rightHeading,leftText);
   return leftOnly.length>0&&rightOnly.length>0;
 }

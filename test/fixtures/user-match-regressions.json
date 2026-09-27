@@ -490,5 +490,14 @@
     "candidateDescription": "Myethos製のアークナイツ 1/7スケールフィギュア「荒蕪ラップランド」です。\n精巧な造形とダイナミックなポージングが特徴的な正規品となります。\n\n【ブランド】Myethos\n【作品名】アークナイツ（明日方舟）\n【キャラクター】ラップランド\n【スケール】1/7\n【カラー】ブラック系\n【商品の状態】新品未開封\n\nよろしくお願いいたします。",
     "primaryImageScore": 0.921875,
     "expected": null
+  },
+  {
+    "case": "商店常规材质和成品描述不应被当成不同角色或型号",
+    "ownTitle": "新品未開封　Myethos アークナイツ 1/7 荒蕪ラップランド フィギュア　正規品",
+    "ownDescription": "Myethos アークナイツ 荒蕪ラップランド 1/7\n\n新品未開封\n\n【サイズ】\n専用台座付属・全高：約261mm\n【素材】\nPVC&ABS&金属",
+    "candidateTitle": "【新品】フィギュア 荒蕪ラップランド 「アークナイツ」 1/7 プラスチック製塗装済み完成品",
+    "candidateDescription": "メーカー：Myethos 新品 フィギュア本体、専用台座 全高約261mm",
+    "primaryImageScore": 1,
+    "expected": null
   }
 ]
