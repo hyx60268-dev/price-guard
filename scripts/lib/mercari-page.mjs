@@ -58,6 +58,7 @@ export async function mercariDetail(page,url){
  if(!/^https:\/\/jp\.mercari\.com\/(?:item\/m\d+|shops\/product\/[A-Za-z0-9]+)$/.test(url))throw Error('煤炉商品链接无效');
  await page.goto(url,{waitUntil:'domcontentloaded',timeout:60000});
  await page.locator('main article h1').waitFor({timeout:30000});
+ await page.waitForFunction('() => { const d=('+readMercariDetail.toString()+')(document); return Boolean(d&&d.price&&d.description); }',{},{timeout:20000}).catch(()=>{});
  const result=await page.evaluate('('+readMercariDetail.toString()+')(document)');
- if(!result?.title||!result.price||!result.description)throw Error('煤炉目标详情字段不完整');return {...result,url,id:url.split('/').at(-1)};
+ if(!result?.title||!result.price||!result.description)throw Error('煤炉目标详情字段不完整 '+JSON.stringify({title:Boolean(result?.title),price:result?.price,description:Boolean(result?.description),status:result?.status}));return {...result,url,id:url.split('/').at(-1)};
 }

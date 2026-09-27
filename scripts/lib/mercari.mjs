@@ -24,6 +24,8 @@ export async function mercariCompare(page,item,settings={},dependencies={}){
     if(card.itemStatus!=='OPEN'||item.platform==='mercari'&&(card.id===item.id||ownSellerId&&card.sellerId===ownSellerId)){rejected.push({...card,reason:'own_seller_or_not_open'});continue}
     if(rejectedByMemory(settings.matchCorrections,item,'mercari',card)){rejected.push({...card,reason:'saved_user_correction'});continue}
     const semantic=semanticSameItem({query:item.title,candidate:card.title,queryCategory:ownCategory,candidateCategory:card.category});
+    const ownFamily=productFamily(item.title,ownCategory),cardFamily=productFamily(card.title,card.category);
+    if(ownFamily&&cardFamily&&ownFamily!==cardFamily){rejected.push({...card,reason:'physical_product_type_unconfirmed'});continue}
     const score=titleScore(item.title,card.title),anchors=distinctiveCoverage(item.title,card.title);
     if(semantic.accepted||score>=.62||(score>=.45&&anchors.matchedCount>=2))screened.push({...card,titleScore:score,semantic});
     else rejected.push({...card,reason:semantic.reason||'weak_title',titleScore:score});

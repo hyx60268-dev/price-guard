@@ -145,7 +145,11 @@ export function extractRakumaDetail(html='',url=''){
   const sellerId=source.match(/seller_user_id(?:&quot;|")\s*:\s*(?:&quot;|")?(\d+)/i)?.[1]||'';
   const category=String(product.category||'')||decodeHtml(source.match(/data-rat-igenrenamepath=["']([^"']+)["']/i)?.[1]||'');
   const condition=decodeHtml(source.match(/(?:item_condition|item-status-status)[^\n]{0,180}?(?:&quot;|>|:)\s*([^<"&]{2,30})/i)?.[1]||'');
+  const shippingRow=[...source.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].find(m=>/配送料の負担/.test(m[1]));
+  const shippingText=decodeHtml(shippingRow?.[1]?.match(/<td\b[^>]*>([\s\S]*?)<\/td>/i)?.[1]||'').replace(/<[^>]+>/g,'').trim();
+  const shippingKnown=/送料込|出品者負担/.test(shippingText);
   return {
+    itemPrice:Number(product.offers.price),shippingJPY:shippingKnown?0:null,shippingKnown,shippingText,
     id:String(url).match(/item\.fril\.jp\/([a-f0-9]+)/i)?.[1]||'',url,
     title:decodeHtml(product.name),description:decodeHtml(product.description||''),
     price:Number(product.offers.price),status:/InStock$/i.test(availability)?'OPEN':'SOLD',sellerId,category,condition,
@@ -186,6 +190,8 @@ export async function rakumaCompare(item,settings={},dependencies={}){
     if(card.itemStatus!=='OPEN'||item.platform==='rakuma'&&(card.id===item.id||ownSellerId&&card.sellerId===ownSellerId)){rejected.push({...card,reason:'own_seller_or_not_open'});continue}
     if(rejectedByMemory(settings.matchCorrections,item,'rakuma',card)){rejected.push({...card,reason:'saved_user_correction'});continue}
     const semantic=semanticSameItem({query:item.title,candidate:card.title,queryCategory:ownCategory,candidateCategory:card.category});
+    const ownFamily=productFamily(item.title,ownCategory),cardFamily=productFamily(card.title,card.category);
+    if(ownFamily&&cardFamily&&ownFamily!==cardFamily){rejected.push({...card,reason:'physical_product_type_unconfirmed'});continue}
     const score=titleScore(item.title,card.title),anchors=distinctiveCoverage(item.title,card.title);
     if(semantic.accepted||score>=.62||(score>=.45&&anchors.matchedCount>=2))screened.push({...card,titleScore:score,semantic});
     else rejected.push({...card,reason:semantic.reason||'weak_title',titleScore:score});
@@ -198,6 +204,7 @@ export async function rakumaCompare(item,settings={},dependencies={}){
       const detail=extractRakumaDetail(await getHtml(card.url,settings),card.url);
       if(ownSellerId&&detail.sellerId===ownSellerId){rejected.push({...card,reason:'own_seller'});continue}
       if(detail.status!=='OPEN'){rejected.push({...card,reason:'not_open'});continue}
+      if(!detail.shippingKnown){rejected.push({...card,reason:'shipping_unconfirmed'});continue}
       if(!ownDescription.trim()||!detail.description.trim()){rejected.push({...card,reason:'sale_description_unavailable'});continue}
       if(hasExplicitDefect(detail.title,detail.description)){rejected.push({...card,reason:'defect'});continue}
       const detailImages=[...detail.images,card.image].filter(Boolean);
@@ -223,7 +230,7 @@ export async function rakumaCompare(item,settings={},dependencies={}){
     }catch(error){rejected.push({...card,reason:'detail_error',error:String(error)})}
   }
   competitors.sort((a,b)=>a.price-b.price);
-  const unresolved=[...screened.slice(preliminary.length),...rejected.filter(row=>['detail_error','sale_description_unavailable','collectible_variant_image_unconfirmed','primary_variant_unconfirmed'].includes(row.reason))];
+  const unresolved=[...screened.slice(preliminary.length),...rejected.filter(row=>['shipping_unconfirmed','detail_error','sale_description_unavailable','collectible_variant_image_unconfirmed','primary_variant_unconfirmed'].includes(row.reason))];
   const lowerUnconfirmed=unresolved.filter(row=>Number(row.price)<Number(item.ownPrice));
   return {
     audit:{ownItemId:item.id,accountId:item.accountId||null,ownDetailLoaded:Boolean(ownDescription.trim())},

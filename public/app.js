@@ -296,7 +296,7 @@ function render(){
   $('#stamp').textContent=`最近检查：${Number.isNaN(date.valueOf())?'等待首次扫描':date.toLocaleString('zh-CN')} · 页面会自动接收新结果`;
   const login=data.login||{},accessCooling=login.xianyuAccess?.allowed===false;$('#loginNotice').hidden=!(accessCooling||login.xianyuRequired||login.xianyuAuthExpired);
   $('#loginTitle').textContent=accessCooling?'闲鱼访问受阻，已暂停重复请求':login.xianyuAuthExpired?'闲鱼目标详情需要重新登录':'闲鱼目标详情验证受阻';
-  $('#loginText').textContent=accessCooling?`自动成本尚未恢复。将在 ${new Date(login.xianyuAccess.retryAt).toLocaleString('zh-CN')} 之后的扫描重新检查；Yahoo＋乐天 Rakuma 比价继续运行。已填写的采购成本保留。`:'已停止本轮闲鱼检查，不使用下方推荐商品代替目标详情。人工采购成本保留；不符合新版详情、实价及独立卖家证据的历史自动参考需重新核验。';
+  $('#loginText').textContent=accessCooling?`自动成本尚未恢复。将在 ${new Date(login.xianyuAccess.retryAt).toLocaleString('zh-CN')} 之后的扫描重新检查；三平台比价继续运行。已填写的采购成本保留。`:'已停止本轮闲鱼检查，不使用下方推荐商品代替目标详情。人工采购成本保留；不符合新版详情、实价及独立卖家证据的历史自动参考需重新核验。';
   const changes=data.changes;$('#changeNotice').hidden=!changes?.hasChanges;
   $('#changeText').textContent=changes?.hasChanges?`本次共 ${changes.total} 项变化：新增 ${changes.added}、下架 ${changes.removed}、价格/利润变化 ${changes.updated}。`:'';
   $('#profileLink').href=current.profileUrl;
@@ -312,12 +312,12 @@ function render(){
     statusCard('乐天Rakuma比价',`实时 ${scan.rakumaLive??0} / 缓存 ${scan.rakumaCached??0} / 延后 ${scan.rakumaDeferred??0}`,(scan.rakumaDeferred||0)?'warn':'good')+
     statusCard('闲鱼采购参考',`尝试 ${scan.xianyuScanned??0} / 本轮新增 ${scan.xianyuVerifiedNew??0} / 历史 ${scan.xianyuCached??0}`,accessCooling||data.login?.xianyuRequired||data.login?.xianyuAuthExpired?'bad':(scan.xianyuVerifiedNew||0)+(scan.xianyuCached||0)>0?'good':'warn')+
     statusCard('成本数据',`已完整 ${savedCosts}/${list.length}`,savedCosts===list.length?'good':'warn');
-  const coverageVersion=data.pricingCoverage?.rulesVersion;
+  const coverageVersion=true;
   if(coverageVersion){
-    for(const [platform,label] of [['yahoo','Yahoo'],['rakuma','Rakuma']]){
-      const reviewed=list.filter(item=>item[platform]?.rulesVersion===coverageVersion&&item[platform]?.checkedAt&&['ok','incomplete'].includes(item[platform]?.evidenceStatus||item[platform]?.status));
+    for(const [platform,label] of Object.entries(PLATFORM_LABELS)){
+      const reviewed=list.filter(item=>pricingDecision(item).coverage[platform]);
       const unresolved=reviewed.filter(item=>(item[platform]?.evidenceStatus||item[platform]?.status)==='incomplete').length;
-      $('#statusGrid').insertAdjacentHTML('beforeend',statusCard(`${label} 新规则全量核验`,`已检查 ${reviewed.length}/${list.length} · 待检查 ${list.length-reviewed.length} · 证据待核 ${unresolved}`,reviewed.length===list.length&&!unresolved?'good':'warn'));
+      $('#statusGrid').insertAdjacentHTML('beforeend',statusCard(`${label} 当前有效核验`,`已检查 ${reviewed.length}/${list.length} · 待检查 ${list.length-reviewed.length} · 证据待核 ${unresolved}`,reviewed.length===list.length&&!unresolved?'good':'warn'));
     }
   }
   $('#kpis').innerHTML=stats().map(([label,value])=>`<div class="kpi"><strong>${value}</strong><span>${label}</span></div>`).join('');
