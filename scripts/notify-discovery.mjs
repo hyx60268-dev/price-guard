@@ -32,11 +32,12 @@ const dashboard=process.env.DASHBOARD_URL||`https://${(process.env.GITHUB_REPOSI
 const message=`选品发现新增 ${summary.added} 个候选（已核验 ${summary.addedReady||0}，待复核 ${summary.addedPending||0}），可在仪表盘查看月销量、售价、闲鱼采购价和图片。\n${dashboard}`;
 let sent=false;
 if(process.env.GITHUB_TOKEN&&process.env.GITHUB_REPOSITORY){
-  const owner=process.env.GITHUB_REPOSITORY_OWNER,headers={authorization:`Bearer ${process.env.GITHUB_TOKEN}`,'content-type':'application/json','user-agent':'price-guard','x-github-api-version':'2022-11-28'};
+  const headers={authorization:`Bearer ${process.env.GITHUB_TOKEN}`,'content-type':'application/json','user-agent':'price-guard','x-github-api-version':'2022-11-28'};
   const endpoint=`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/issues`;
-  const payload={title:`发现 ${summary.added} 个热卖选品`,body:`${owner?`@${owner} `:''}${message}\n\n详情只在密码解锁后的仪表盘显示。\n${notificationMarker}`,assignees:owner?[owner]:[]};
-  let response=await fetch(endpoint,{method:'POST',headers,body:JSON.stringify(payload)});
-  if(!response.ok&&payload.assignees.length)response=await fetch(endpoint,{method:'POST',headers,body:JSON.stringify({...payload,assignees:[]})});
+  // An unassigned, unmentioned Issue stays in GitHub and does not explicitly
+  // trigger GitHub's mention/assignment email notifications.
+  const payload={title:`发现 ${summary.added} 个热卖选品`,body:`${message}\n\n详情只在密码解锁后的仪表盘显示。\n${notificationMarker}`};
+  const response=await fetch(endpoint,{method:'POST',headers,body:JSON.stringify(payload)});
   if(!response.ok)throw new Error(`GitHub 选品提醒失败：HTTP ${response.status} ${await response.text()}`);sent=true;
 }
 if(sent){await fs.mkdir('state',{recursive:true});await fs.writeFile(fingerprintFile,fingerprint)}

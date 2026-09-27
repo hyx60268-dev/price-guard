@@ -40,15 +40,15 @@ function changeText(change){
 }
 let sent=false;
 if(process.env.GITHUB_TOKEN && process.env.GITHUB_REPOSITORY){
-  const endpoint=`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/issues`,owner=process.env.GITHUB_REPOSITORY_OWNER;
+  const endpoint=`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/issues`;
   const headers={authorization:`Bearer ${process.env.GITHUB_TOKEN}`,'content-type':'application/json','user-agent':'price-guard','x-github-api-version':'2022-11-28'};
   const lines=(summary.changes||[]).slice(0,20).map(changeText),remaining=Math.max(0,(summary.changes||[]).length-lines.length);
-  const payload={title:`价格变动提醒：${summary.total} 项`,body:`${owner?`@${owner} `:''}${message}\n\n${lines.map(line=>`- ${line}`).join('\n')}${remaining?`\n- 以及另外 ${remaining} 项`:''}\n\n这是自动提醒。商品明细和利润只在加密仪表盘中显示。\n${notificationMarker}`,labels:[],assignees:owner?[owner]:[]};
-  let response=await fetch(endpoint,{
+  // Keep the alert in GitHub without mentioning or assigning a user. Both
+  // actions are direct GitHub email triggers and violate GitHub-only alerts.
+  const payload={title:`价格变动提醒：${summary.total} 项`,body:`${message}\n\n${lines.map(line=>`- ${line}`).join('\n')}${remaining?`\n- 以及另外 ${remaining} 项`:''}\n\n这是自动提醒。商品明细和利润只在加密仪表盘中显示。\n${notificationMarker}`,labels:[]};
+  const response=await fetch(endpoint,{
     method:'POST',headers,body:JSON.stringify(payload)
   });
-  // 某些仓库策略不允许 Actions 自动指派；仍保留不指派的提醒作为降级方案。
-  if(!response.ok&&payload.assignees.length)response=await fetch(endpoint,{method:'POST',headers,body:JSON.stringify({...payload,assignees:[]})});
   if(!response.ok) throw new Error(`GitHub 手机提醒失败：HTTP ${response.status} ${await response.text()}`);
   console.log('已创建 GitHub Issue 提醒'); sent=true;
 }
