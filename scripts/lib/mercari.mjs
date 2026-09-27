@@ -59,7 +59,7 @@ export async function mercariCompare(page,item,settings={},dependencies={}){
       if(!semantic.accepted&&!specificationEquivalent&&!exactTitleEquivalent&&!textEquivalent&&!visualEquivalent){
         rejected.push({...card,reason:semantic.reason||'detail_mismatch',imageScore,primaryImageScore});continue
       }
-      if(!detail.shippingKnown){rejected.push({...card,reason:'shipping_unconfirmed',shippingText:detail.shippingText});continue}
+      if(!detail.shippingKnown){rejected.push({...card,reason:'shipping_unconfirmed',shippingText:detail.shippingText,diagnostic:detail.priceDiagnostic});continue}
       detail.price=detail.itemPrice+detail.shippingJPY;
       const queryFamily=productFamily(`${item.title}\n${ownDescription}`,ownCategory),candidateFamily=productFamily(`${detail.title}\n${detail.description}`,detail.category);
       competitors.push({...card,...detail,platform:'mercari',image:detail.images[0]||card.image,imageScore,primaryImageScore,queryFamily,candidateFamily,matchMethod:visualEquivalent?'strong_visual_primary_product':'detail_type_quantity_equivalent_text'});

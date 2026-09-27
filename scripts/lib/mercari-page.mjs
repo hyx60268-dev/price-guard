@@ -53,7 +53,7 @@ export function readMercariDetail(document){
  const shippingJPY=shippingIncluded?0:fixedShipping;
  const seller=article.querySelector('a[href^="/user/profile/"],a[href^="/shops/profile/"]');
  const images=[...article.querySelectorAll('[aria-label^="商品画像"] img,[aria-label^="商品サムネイル"] img')].map(n=>n.currentSrc||n.src).filter(Boolean);
- return {priceDiagnostic:price?undefined:{targetPrices:targetPrices.map(n=>n.outerHTML.slice(0,700)),headerPrices:header.filter(n=>/[¥￥]|[0-9],[0-9]{3}/.test(n.textContent)).slice(-10).map(n=>n.outerHTML.slice(0,500))},title,description,condition,price,itemPrice:price,shippingJPY,shippingText,shippingKnown:shippingJPY!==null,
+ return {priceDiagnostic:price&&shippingJPY!==null?undefined:{headerText:header.map(n=>n.children.length?'':n.textContent).join(' ').slice(0,1200),shippingHeadings:headings.filter(n=>/送料|配送/.test(n.textContent)).map(n=>n.parentElement.outerHTML.slice(0,1500)),converted:converted?.outerHTML.slice(0,1000),targetPrices:targetPrices.map(n=>n.outerHTML.slice(0,700)),headerPrices:header.filter(n=>/[¥￥]|[0-9],[0-9]{3}/.test(n.textContent)).slice(-10).map(n=>n.outerHTML.slice(0,500))},title,description,condition,price,itemPrice:price,shippingJPY,shippingText,shippingKnown:shippingJPY!==null,
   status:checkout?'OPEN':'UNKNOWN',sellerId:seller?.getAttribute('href')||'',images:[...new Set(images)]};
 }
 export async function mercariSearch(page,url){
@@ -66,7 +66,7 @@ export async function mercariDetail(page,url){
  if(!/^https:\/\/jp\.mercari\.com\/(?:item\/m\d+|shops\/product\/[A-Za-z0-9]+)$/.test(url))throw Error('煤炉商品链接无效');
  await page.goto(url,{waitUntil:'domcontentloaded',timeout:60000});
  await page.locator('main article h1').waitFor({timeout:30000});
- await page.waitForFunction('() => { const d=('+readMercariDetail.toString()+')(document); return Boolean(d&&d.price&&d.description); }',{},{timeout:20000}).catch(()=>{});
+ await page.waitForFunction('() => { const d=('+readMercariDetail.toString()+')(document); return Boolean(d&&d.price&&d.description&&d.shippingText); }',{},{timeout:30000}).catch(()=>{});
  const result=await page.evaluate('('+readMercariDetail.toString()+')(document)');
  if(!result?.title||!result.price||!result.description)throw Error('煤炉目标详情字段不完整 '+JSON.stringify({title:Boolean(result?.title),price:result?.price,description:Boolean(result?.description),status:result?.status,diagnostic:result?.priceDiagnostic}));return {...result,url,id:url.split('/').at(-1)};
 }
