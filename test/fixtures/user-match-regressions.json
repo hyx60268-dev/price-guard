@@ -115,5 +115,59 @@
     "candidateDescription": "全新 单张 PET合影卡",
     "primaryImageScore": 1,
     "expected": "explicit_variant_mismatch"
+  },
+  {
+    "case": "melon：单品正文提到系列端盒不能变成整盒",
+    "ownTitle": "POP MART グローグー 単品",
+    "ownDescription": "シリーズは12個入りBOXで販売されています",
+    "candidateTitle": "POP MART グローグー 1BOX 12個入り",
+    "candidateDescription": "新品",
+    "primaryImageScore": 1,
+    "expected": "sale_unit_mismatch"
+  },
+  {
+    "case": "melon：正文后段明确出售棕色",
+    "ownTitle": "スターバックス ボトル",
+    "ownDescription": "新品\n発送予定\nカラー：ブルー",
+    "candidateTitle": "スターバックス ボトル",
+    "candidateDescription": "新品\n発送予定\nこちらはブラウンです",
+    "primaryImageScore": 1,
+    "expected": "description_color_mismatch"
+  },
+  {
+    "case": "local-1789214704376：单品正文提到系列端盒不能变成整盒",
+    "ownTitle": "POP MART グローグー 単品",
+    "ownDescription": "シリーズは12個入りBOXで販売されています",
+    "candidateTitle": "POP MART グローグー 1BOX 12個入り",
+    "candidateDescription": "新品",
+    "primaryImageScore": 1,
+    "expected": "sale_unit_mismatch"
+  },
+  {
+    "case": "local-1789214704376：正文后段明确出售棕色",
+    "ownTitle": "スターバックス ボトル",
+    "ownDescription": "新品\n発送予定\nカラー：ブルー",
+    "candidateTitle": "スターバックス ボトル",
+    "candidateDescription": "新品\n発送予定\nこちらはブラウンです",
+    "primaryImageScore": 1,
+    "expected": "description_color_mismatch"
+  },
+  {
+    "case": "account-p6579087：单品正文提到系列端盒不能变成整盒",
+    "ownTitle": "POP MART グローグー 単品",
+    "ownDescription": "シリーズは12個入りBOXで販売されています",
+    "candidateTitle": "POP MART グローグー 1BOX 12個入り",
+    "candidateDescription": "新品",
+    "primaryImageScore": 1,
+    "expected": "sale_unit_mismatch"
+  },
+  {
+    "case": "account-p6579087：正文后段明确出售棕色",
+    "ownTitle": "スターバックス ボトル",
+    "ownDescription": "新品\n発送予定\nカラー：ブルー",
+    "candidateTitle": "スターバックス ボトル",
+    "candidateDescription": "新品\n発送予定\nこちらはブラウンです",
+    "primaryImageScore": 1,
+    "expected": "description_color_mismatch"
   }
 ]

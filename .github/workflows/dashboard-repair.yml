@@ -17,8 +17,8 @@ permissions:
   id-token: write
 
 concurrency:
-  group: dashboard-repair
-  cancel-in-progress: true
+  group: pages
+  cancel-in-progress: false
 
 jobs:
   repack-and-publish:
@@ -34,6 +34,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm test
       - name: 恢复完整加密基准
         run: node scripts/restore-published-state.mjs
         env:

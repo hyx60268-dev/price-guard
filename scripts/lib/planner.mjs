@@ -2,12 +2,15 @@ import { inferSize } from './rules.mjs';
 import { normalizeProductIdentity } from './state.mjs';
 import { verifiedCostEvidence,XIANYU_VERIFICATION } from './xianyu-evidence.mjs';
 
-export function reconcileLiveItems(catalogItems=[],previousItems=[],liveItems=[],accountId='default'){
+export function reconcileLiveItems(catalogItems=[],previousItems=[],liveItems=[],accountId='default',history=[]){
   const previous=new Map(previousItems.map(item=>[item.id,item]));
   const catalog=new Map(catalogItems.map(item=>[item.id,item]));
-  const historic=[...previousItems,...catalogItems];
+  const historic=[...previousItems,...catalogItems,...history.filter(item=>item.accountId===accountId)];
+  const liveIds=new Set(liveItems.map(item=>item.id));
+  const superseded=new Set(historic.map(item=>item.relistedFrom).filter(Boolean));
   const byTitle=new Map();
   for(const item of historic){
+    if(superseded.has(item.id))continue;
     const key=normalizeProductIdentity(item.title||'');
     if(!key)continue;
     const values=byTitle.get(key)||[];
@@ -21,7 +24,7 @@ export function reconcileLiveItems(catalogItems=[],previousItems=[],liveItems=[]
     let relisted={};
     if(!exactOld.id&&!exactSaved.id){
       const key=normalizeProductIdentity(live.title||'');
-      const candidates=(byTitle.get(key)||[]).filter(item=>item.id!==live.id&&!usedRelists.has(item.id));
+      const candidates=(byTitle.get(key)||[]).filter(item=>!liveIds.has(item.id)&&!usedRelists.has(item.id));
       // 同名商品が複数ある場合は誤った原価継承を避け、人工確認に回す。
       relisted=candidates.length===1?candidates[0]:{};
       if(relisted.id)usedRelists.add(relisted.id);
@@ -36,7 +39,7 @@ export function reconcileLiveItems(catalogItems=[],previousItems=[],liveItems=[]
       seq:index+1,
       xianyuQuery:saved.xianyuQuery??old.xianyuQuery??'',
       size:saved.size??old.size??inferSize(live.title),
-      relistedFrom:relisted.id||undefined
+      relistedFrom:relisted.id||old.relistedFrom||undefined
     };
   });
 }

@@ -5,6 +5,7 @@ import { encryptFile } from './crypto.mjs';
 import { makeWorkbook } from './excel.mjs';
 import { cloudCostStatus } from './cloud-cost-status.mjs';
 import { pricingCoverage } from './pricing-coverage.mjs';
+import { FRONTEND_VERSION } from '../../public/build-version.js';
 
 function safeUsername(value=''){return String(value).trim().toLowerCase().replace(/[^a-z0-9_-]/g,'').slice(0,48)}
 function safeEmail(value=''){
@@ -37,7 +38,7 @@ export function compactDashboardResult(result={}){
     ...item,sourceDetail:undefined,cachedYahoo:undefined,
     yahoo:compactComparison(item.yahoo),rakuma:compactComparison(item.rakuma),xianyu:compactComparison(item.xianyu)
   }));
-  return {...result,accounts,items};
+  return {...result,listingHistory:undefined,appliedSyncIssues:undefined,accounts,items};
 }
 
 function normalizePortalUserRecords(values=[]){
@@ -85,6 +86,8 @@ export function scopeResultForPortalUser(result,user){
   const notificationEmail=safeEmail(result.portalPreferences?.[user.username]?.notificationEmail||user.notificationEmail);
   const matchCorrections=Object.fromEntries(Object.entries(result.matchCorrections||{}).filter(([,record])=>allowed.has(record.accountId)));
   return {...result,pricingCoverage:pricingCoverage(items,accounts),matchCorrections,portalUsers:undefined,portalPreferences:undefined,portalUser:{username:user.username,displayName:user.displayName,role:'member',notificationEmail},accounts,items,manualCosts,managedAccounts,
+    listingHistory:undefined,appliedSyncIssues:undefined,dismissedDiscoveries:{},discoveryReviews:{},
+    relistAliases:Object.fromEntries(Object.entries(result.relistAliases||{}).filter(([key])=>allowed.has(key.slice(0,key.lastIndexOf(':'))))),
     ownedTitleHistory:items.map(item=>item.title).filter(Boolean)};
 }
 
@@ -106,7 +109,7 @@ export function dashboardSummary(result,changeSummary){
     xianyuSkipped:sum.xianyuSkipped+(account.scanStats?.xianyuSkipped||0)
   }),{yahoo:0,yahooLive:0,yahooCached:0,yahooDeferred:0,rakuma:0,rakumaLive:0,rakumaCached:0,rakumaDeferred:0,xianyuRequested:0,xianyuScanned:0,xianyuVerifiedNew:0,xianyuCached:0,xianyuSkipped:0});
   return {
-    version:result.version,checkedAt:result.checkedAt,codeSha:result.scanMeta?.codeSha||null,cloudSyncedAt:result.cloudSyncedAt||null,
+    frontendVersion:FRONTEND_VERSION,version:result.version,checkedAt:result.checkedAt,codeSha:result.scanMeta?.codeSha||null,cloudSyncedAt:result.cloudSyncedAt||null,
     dataRevision:result.dataRevision||result.cloudSyncedAt||result.checkedAt,total:items.length,
     accounts:(result.accounts||[]).map(account=>({id:account.id,name:account.name,count:account.itemCount,profileStatus:account.profileStatus,profileDelta:account.profileDelta,scanStats:account.scanStats})),
     repricing:items.filter(item=>item.recommendedPrice!==item.ownPrice).length,

@@ -38,11 +38,6 @@ async function pendingIssues(){
   return [...byNumber.values()].sort((a,b)=>Number(a.number)-Number(b.number));
 }
 
-async function commentAndClose(issue,body){
-  await github(`/issues/${issue.number}/comments`,{method:'POST',body:JSON.stringify({body})});
-  await github(`/issues/${issue.number}`,{method:'PATCH',body:JSON.stringify({state:'closed'})});
-}
-
 async function stateSummary(){
   const bytes=await fs.readFile(path.join(root,'state','latest.json.enc'));
   const state=JSON.parse(decrypt(bytes,password).toString('utf8'));
@@ -51,6 +46,7 @@ async function stateSummary(){
 
 const issues=await pendingIssues(),event=await currentEvent();
 if(!issues.length){
+  if(process.env.GITHUB_OUTPUT)await fs.appendFile(process.env.GITHUB_OUTPUT,'processed=0\nfailed=0\n');
   if(event.issue&&syncTitle.test(String(event.issue.title||'')))throw new Error('同步请求尚未出现在 GitHub 队列，请重新运行');
   console.log('没有等待处理的加密同步请求');
   process.exit(0);
@@ -74,13 +70,12 @@ try{
     if(syncError){
       const detail=String(syncError?.stderr||syncError?.message||syncError).replace(/\s+/g,' ').slice(0,500);
       console.error(`同步 Issue #${issue.number} 失败：${detail}`);
-      try{await commentAndClose(issue,`同步失败，未修改云端数据：${detail}\n\n请修正后从仪表盘重新生成同步请求。`)}catch(apiError){console.error(`无法关闭失败的 Issue #${issue.number}：${String(apiError)}`)}
+      // Leave the durable input open: an I/O failure may be transient or partial.
       failed++;
       continue;
     }
     const summary=await stateSummary();processed++;
-    try{await commentAndClose(issue,`已安全合并并进入发布队列：${summary.accounts} 个账号、${summary.costs} 条加密成本记录、${summary.dismissed} 个已上传选品。仪表盘发布后会自动刷新。`)}
-    catch(apiError){console.error(`Issue #${issue.number} 已合并，但确认/关闭失败，将在下一轮幂等重试：${String(apiError)}`)}
+    console.log(`Issue #${issue.number} 已合并，保留请求直到部署成功`);
   }
 }finally{await fs.rm(temporary,{recursive:true,force:true})}
 

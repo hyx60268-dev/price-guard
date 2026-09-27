@@ -1,6 +1,7 @@
 import { advice,calculateCost } from './rules.mjs';
 import { mergeMatchCorrections } from '../../public/match-memory.js';
 import { parseShopProfile } from '../../public/shop-profile.js';
+import { mergeAccounts,resolveCostRecord } from '../../public/durable-state.js';
 
 const generic=/中国限定|海外限定|日本未発売|日本非売品|正規品|新品|未使用|未開封|公式|送料無料|匿名配送/gi;
 
@@ -18,8 +19,8 @@ export function itemIdentityKeys(item={},accountIdOverride){
   const keys=[];
   const query=normalizeProductIdentity(item.xianyuQuery||'');
   const title=normalizeProductIdentity(item.title||'');
-  if(query)keys.push(`${accountId}:query:${query}`);
   if(title)keys.push(`${accountId}:title:${title}`);
+  if(query)keys.push(`${accountId}:query:${query}`);
   return [...new Set(keys)];
 }
 
@@ -90,13 +91,7 @@ export function mergeDiscoveryReviews(base={},incoming={}){
 }
 
 export function mergeManagedAccounts(base=[],incoming=[]){
-  const output=new Map();
-  for(const account of [...(base||[]),...(incoming||[])]){
-    if(!account?.id||!account?.profileUrl)continue;
-    const current=output.get(account.id);
-    if(!current||timestamp(account)>=timestamp(current))output.set(account.id,{...current,...account});
-  }
-  return [...output.values()];
+  return mergeAccounts(base,incoming);
 }
 
 export function mergePortalUserRecords(base=[],incoming=[]){
@@ -110,7 +105,7 @@ export function mergePortalUserRecords(base=[],incoming=[]){
 
 export function reconcileDurableState(cache={},published={}){
   const revision=value=>Date.parse(value?.dataRevision||value?.cloudSyncedAt||value?.checkedAt||'')||0;
-  const base=revision(published)>revision(cache)?published:cache;
+  const base=revision(published)>=revision(cache)?published:cache;
   return {
     ...base,
     manualCosts:mergeManualCosts(cache.manualCosts||{},published.manualCosts||{}),
@@ -119,6 +114,8 @@ export function reconcileDurableState(cache={},published={}){
     matchCorrections:mergeMatchCorrections(cache.matchCorrections||{},published.matchCorrections||{}),
     managedAccounts:mergeManagedAccounts(cache.managedAccounts||[],published.managedAccounts||[]),
     portalUsers:mergePortalUserRecords(cache.portalUsers||[],published.portalUsers||[]),
+    appliedSyncIssues:{...(cache.appliedSyncIssues||{}),...(published.appliedSyncIssues||{})},
+    listingHistory:{...(cache.listingHistory||{}),...(published.listingHistory||{})},
     ownedTitleHistory:[...new Set([...(cache.ownedTitleHistory||[]),...(published.ownedTitleHistory||[])])].slice(-5000),
     relistAliases:{...(cache.relistAliases||{}),...(published.relistAliases||{})}
   };
@@ -128,24 +125,8 @@ export function discoveryDismissalKey(item={}){
   return String(item.productKey||normalizeProductIdentity(item.sourceTitle||item.proposedTitle||item.title||'')||item.id||'');
 }
 
-export function manualCostFor(costs={},item={},aliases={}){
-  const accountId=item.accountId||'default';
-  const directKeys=[`${accountId}:${item.id}`,`${accountId}:item:${item.id}`,...itemIdentityKeys(item)];
-  const oldId=aliases?.[`${accountId}:${item.id}`]||item.relistedFrom;
-  if(oldId)directKeys.push(`${accountId}:${oldId}`,`${accountId}:item:${oldId}`);
-  let best=null;
-  for(const key of directKeys)if(costs[key]){
-    const candidate=normalizeManualCostRecord(costs[key],item);
-    if(!best||timestamp(candidate)>timestamp(best))best=candidate;
-  }
-  const wanted=new Set(itemIdentityKeys(item));
-  for(const record of Object.values(costs||{})){
-    const normalized=normalizeManualCostRecord(record);
-    if(normalized.accountId!==accountId)continue;
-    if(normalized.itemId===item.id||normalized.identityKeys.some(key=>wanted.has(key))){
-      if(!best||timestamp(normalized)>timestamp(best))best=normalized;
-    }
-  }
+export function manualCostFor(costs={},item={},aliases={},inventory=[]){
+  const best=resolveCostRecord(costs,item,aliases,inventory);
   return best&&!best.deleted?normalizeManualCostRecord(best,item):null;
 }
 

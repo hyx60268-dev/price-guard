@@ -14,13 +14,14 @@ const stateDir=path.join(root,'state');
 await fs.mkdir(stateDir,{recursive:true});
 
 async function localJson(filename){
-  try{return JSON.parse(decrypt(await fs.readFile(path.join(stateDir,filename)),password).toString('utf8'))}catch{return null}
+  try{return JSON.parse(decrypt(await fs.readFile(path.join(stateDir,filename)),password).toString('utf8'))}
+  catch(error){if(error.code==='ENOENT')return null;throw new Error('本地完整状态无法解密，停止恢复以免覆盖数据')}
 }
 async function remoteBytes(filename){
-  try{
-    const response=await fetch(`${base}/${filename}?restore=${Date.now()}`,{headers:{'cache-control':'no-cache'}});
-    return response.ok?Buffer.from(await response.arrayBuffer()):null;
-  }catch{return null}
+  const response=await fetch(`${base}/${filename}?restore=${Date.now()}`,{headers:{'cache-control':'no-cache'},signal:AbortSignal.timeout(30000)});
+  if(response.status===404)return null;
+  if(!response.ok)throw new Error(`发布状态恢复失败 HTTP ${response.status}，停止发布以免使用过期基准`);
+  return Buffer.from(await response.arrayBuffer());
 }
 
 const publishedBytes=await remoteBytes('state.json.enc')||await remoteBytes('latest.json.enc');
@@ -31,7 +32,7 @@ if(publishedBytes){
     const reconciled=reconcileDurableState(cache,published);
     await fs.writeFile(path.join(stateDir,'latest.json.enc'),encrypt(Buffer.from(JSON.stringify(reconciled)),password));
     console.log(`已合并发布状态：${reconciled.managedAccounts?.length||0} 个动态账号，${Object.keys(reconciled.manualCosts||{}).length} 条成本`);
-  }catch(error){console.warn(`发布状态校验失败，沿用缓存：${String(error)}`)}
+  }catch(error){throw new Error('发布状态校验失败，停止发布以免旧缓存覆盖云端数据',{cause:error})}
 }else console.log('尚无可下载的发布状态，沿用缓存');
 
 for(const filename of ['discovery.json.enc','discovery-status.json']){
