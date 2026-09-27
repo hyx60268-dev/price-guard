@@ -13,7 +13,7 @@ import { imageFingerprints,imageSetSimilarity } from './lib/image.mjs';
 import { listingSpecificationEquivalent,listingTextEquivalent,productFamily,titleScore } from './lib/rules.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url)),root=path.resolve(here,'..');
-const DISCOVERY_VERSION=11;
+const DISCOVERY_VERSION=12;
 const readJson=file=>fs.readFile(file,'utf8').then(JSON.parse);
 const exists=file=>fs.access(file).then(()=>true).catch(()=>false);
 const wait=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
@@ -335,8 +335,15 @@ async function mercariDetail(page,url){
     let listingTimeText='';
     for(let node=heading?.nextElementSibling;node;node=node.nextElementSibling){
       if(/^H[123]$/.test(node.tagName))break;
-      const value=(node.innerText||'').trim();
-      if(/^\d+\s*(?:分|時間|日|週間|ヶ月)前$/.test(value)){listingTimeText=value;break}
+      const value=(node.innerText||'').trim(),match=value.match(/(?:^|\n)(\d+\s*(?:分|時間|日|週間|ヶ月)前)(?:\n|$)/);
+      if(match){listingTimeText=match[1];break}
+    }
+    // Mercari has used both sibling and nested containers for this field.  If
+    // the narrow sibling walk misses it, inspect only the description section
+    // (never comments/recommendations) before giving up.
+    if(!listingTimeText){
+      const afterDescription=text.split('商品の説明').slice(1).join('商品の説明').split(/商品の情報|カテゴリー|コメント/)[0]||'';
+      listingTimeText=(afterDescription.match(/(?:^|\n)\s*(\d+\s*(?:分|時間|日|週間|ヶ月)前)\s*(?:\n|$)/m)||[])[1]||'';
     }
     const title=article.querySelector('h1')?.innerText?.trim()||document.title.replace(/\s*-\s*メルカリ.*$/,'');
     const priceText=[...article.querySelectorAll('*')].find(node=>/^[¥￥]\s*[\d,]+$/.test(node.textContent?.trim()||''))?.textContent||'';
@@ -361,7 +368,18 @@ async function mercariSellerCards(page,url){
 
 async function scanMercari(context,errors){
   const page=await context.newPage(),detail=await context.newPage(),origin='https://jp.mercari.com';
-  const sellers=new Map(),groups=[];
+  const sellers=new Map(),groups=[],seedSalesBySeller=new Map();
+  const addGroup=(seller,verified,kind)=>{
+    if(verified.length<Number(cfg.minSalesPerSeller)){sourceScanStats.mercariInsufficientRecentGroups++;return false}
+    const representative=[...verified].sort((a,b)=>Date.parse(b.soldAt)-Date.parse(a.soldAt))[0];
+    if(!isChinaLimitedProduct(representative)){sourceScanStats.mercariNonLimitedGroups++;return false}
+    const duplicate=groups.some(candidate=>String(candidate.seller?.id)===String(seller.id)&&sameDiscoveryProduct(
+      {title:candidate.sourceTitle,description:candidate.sourceDescription},{title:representative.title,description:representative.description}
+    ));
+    if(duplicate)return false;
+    groups.push(makeSourceCandidate('mercari',seller,verified,representative));
+    sourceScanStats[kind]++;return true;
+  };
   try{
     const excluded=new Set((cfg.excludeMercariSellerIds||[]).map(String));
     const searchTerms=[...new Set(cfg.mercariKeywords||[cfg.keyword,'上海限定','bilibili 限定'])];
@@ -387,13 +405,31 @@ async function scanMercari(context,errors){
         const item=await mercariDetail(detail,cleanItemHref(seed.href,origin));
         if(item.sold&&/(?:中国\s*限定|上海\s*限定|bilibili.{0,12}限定)/i.test(`${item.title} ${item.description}`)){
           verifiedSeeds++;
-          if(item.sellerId&&!excluded.has(String(item.sellerId))&&!sellers.has(item.sellerId))sellers.set(item.sellerId,{id:item.sellerId,name:item.sellerName||item.sellerId,url:item.sellerUrl,seed:item});
+          if(item.sellerId&&!excluded.has(String(item.sellerId))){
+            const seller={id:item.sellerId,name:item.sellerName||item.sellerId,url:item.sellerUrl,seed:item};
+            if(!sellers.has(item.sellerId))sellers.set(item.sellerId,seller);
+            const soldAt=parseListingTime(item.listingTimeText);
+            if(!soldAt)sourceScanStats.mercariMissingDate++;
+            const verifiedCard={...seed,...item,sold:true,soldAt,timeEvidence:'listing_page_relative',url:cleanItemHref(seed.href,origin)};
+            if(eligibleDiscoveryCard(verifiedCard,cfg)){
+              if(!seedSalesBySeller.has(item.sellerId))seedSalesBySeller.set(item.sellerId,[]);
+              seedSalesBySeller.get(item.sellerId).push(verifiedCard);
+            }
+          }
         }
       }catch(error){errors.push(`Mercari种子${index+1}: ${String(error)}`)}
       await wait(450);
     }
     Object.assign(sourceScanStats,{mercariRawCards:rawSeeds.length,mercariMarkedSeeds:markedSeeds.length,mercariSeeds:verifiedSeeds,mercariSellers:sellers.size});
     console.log(`[选品源] Mercari 关键词卡片 ${rawSeeds.length}，页面标记已售 ${markedSeeds.length}，详情确认已售 ${verifiedSeeds}，检查卖家 ${sellers.size}`);
+    // The keyword seed details have already supplied seller, product, price,
+    // sold evidence and time.  Reuse that evidence immediately instead of
+    // discarding it and requiring the same sale to survive a second profile
+    // crawl within the source time budget.
+    for(const [sellerId,cards] of seedSalesBySeller){
+      const seller=sellers.get(sellerId);if(!seller)continue;
+      for(const group of clusterSellerSales(cards))if(group.items.length>=Number(cfg.minSalesPerSeller))addGroup(seller,group.items,'mercariSeedCandidates');
+    }
     const selectedSellers=rotateDiscoverySellers([...sellers.values()],sellerAttempts.mercari,Number(cfg.sellerLimitPerPlatform));
     sourceScanStats.mercariSellersDeferred=sellers.size-selectedSellers.length;
     for(const seller of selectedSellers){
@@ -418,10 +454,7 @@ async function scanMercari(context,errors){
             }catch(error){errors.push(`Mercari成交${card.id}: ${String(error)}`)}
             if(verified.length>=6)break;await wait(350);
           }
-          if(verified.length<Number(cfg.minSalesPerSeller))continue;
-          const representative=verified.sort((a,b)=>Date.parse(b.soldAt)-Date.parse(a.soldAt))[0];
-          if(!isChinaLimitedProduct(representative))continue;
-          groups.push(makeSourceCandidate('mercari',seller,verified,representative));
+          addGroup(seller,verified,'mercariSellerCandidates');
         }
       }catch(error){errors.push(`Mercari卖家${seller.id}: ${String(error)}`)}
     }
@@ -521,7 +554,7 @@ const errors=[],authState=await xianyuStateFromEnv();
 let browser,context,xPage,xianyuAuthRequired=!sessionManager.access().allowed;
 const sourceCandidates=[];
 const sellerAttempts={mercari:{...(prior?.sellerAttempts?.mercari||{})},yahoo:{...(prior?.sellerAttempts?.yahoo||{})}};
-const sourceScanStats={mercariRawCards:0,mercariMarkedSeeds:0,mercariSeeds:0,mercariSellers:0,mercariSellerCards:0,mercariRepeatedGroups:0,mercariSearchPages:0,mercariSellerPages:0,mercariSearchPageCaps:0,mercariSellerPageCaps:0,mercariMissingDate:0,yahooSeeds:0,yahooSellers:0,yahooSearchPages:0,yahooSellerPages:0,yahooSellerCards:0,yahooMissingSaleDate:0};
+const sourceScanStats={mercariRawCards:0,mercariMarkedSeeds:0,mercariSeeds:0,mercariSellers:0,mercariSellerCards:0,mercariRepeatedGroups:0,mercariSearchPages:0,mercariSellerPages:0,mercariSearchPageCaps:0,mercariSellerPageCaps:0,mercariMissingDate:0,mercariSeedCandidates:0,mercariSellerCandidates:0,mercariInsufficientRecentGroups:0,mercariNonLimitedGroups:0,yahooSeeds:0,yahooSellers:0,yahooSearchPages:0,yahooSellerPages:0,yahooSellerCards:0,yahooMissingSaleDate:0};
 let sourceDeadline=Infinity;
 function sourceBudgetExpired(platform){
   if(Date.now()<sourceDeadline)return false;
