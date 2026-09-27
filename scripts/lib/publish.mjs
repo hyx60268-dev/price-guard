@@ -18,12 +18,12 @@ const compactCandidate=value=>value&&typeof value==='object'?{
   price:Number.isFinite(Number(value.price))?Number(value.price):null,platform:value.platform||null,
   reason:value.reason||null,titleScore:value.titleScore??null,imageScore:value.imageScore??null,
   primaryImageScore:value.primaryImageScore??null,matchMethod:value.matchMethod||null,
-  detailTitle:value.detailTitle||null,sellerKey:value.sellerKey||null,priceSource:value.priceSource||null,
+  detailTitle:value.detailTitle||null,sellerId:value.sellerId||null,itemPrice:value.itemPrice??null,shippingJPY:value.shippingJPY??null,sellerKey:value.sellerKey||null,priceSource:value.priceSource||null,
   titleMatch:value.titleMatch??null,bodyMatch:value.bodyMatch??null
 }:null;
 
 function compactComparison(value={}){
-  const keep=['status','checkedAt','cacheReason','rulesVersion','lowestPrice','lowestUrl','searchUrl','marketMedianPrice','marketMinPrice','marketMaxPrice','marketSampleCount','cardCount','detailCheckedCount','preliminaryCount','unresolvedCandidateCount','uncheckedLowerCandidateCount','unconfirmedLowerCandidateCount','unconfirmedLowerCount','matchLabel','matchConfidence','averageCNY','verifiedCount','sellerCount'];
+  const keep=['status','evidenceStatus','raiseGuardMinPrice','plausibleMinPrice','checkedAt','cacheReason','rulesVersion','lowestPrice','lowestUrl','searchUrl','marketMedianPrice','marketMinPrice','marketMaxPrice','marketSampleCount','cardCount','detailCheckedCount','preliminaryCount','unresolvedCandidateCount','uncheckedLowerCandidateCount','unconfirmedLowerCandidateCount','unconfirmedLowerCount','matchLabel','matchConfidence','averageCNY','verifiedCount','sellerCount'];
   const output={};
   for(const key of keep)if(value[key]!==undefined)output[key]=value[key];
   output.candidates=(value.candidates||[]).slice(0,5).map(compactCandidate).filter(Boolean);
@@ -36,7 +36,7 @@ export function compactDashboardResult(result={}){
   const accounts=(result.accounts||[]).map(({items,...account})=>account);
   const items=(result.items||[]).map(item=>({
     ...item,sourceDetail:undefined,cachedYahoo:undefined,
-    yahoo:compactComparison(item.yahoo),rakuma:compactComparison(item.rakuma),xianyu:compactComparison(item.xianyu)
+    yahoo:compactComparison(item.yahoo),rakuma:compactComparison(item.rakuma),mercari:compactComparison(item.mercari),xianyu:compactComparison(item.xianyu)
   }));
   return {...result,listingHistory:undefined,appliedSyncIssues:undefined,accounts,items};
 }

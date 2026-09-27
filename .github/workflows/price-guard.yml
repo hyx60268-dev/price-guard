@@ -59,17 +59,23 @@ jobs:
           PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
           GITHUB_TOKEN: ${{ github.token }}
       # 用户登录文件很小。合并到新用户后先发布一次，不让用户等待后面的全量扫描。
-      - name: 配置账号快速发布
-        if: steps.sync.outputs.processed != '0'
+      - name: 为新版本恢复完整看板数据
+        if: github.event_name == 'push'
+        run: node scripts/repack-dashboard.mjs
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
+      - name: 配置账号和新版界面快速发布
+        if: github.event_name == 'push' || steps.sync.outputs.processed != '0'
         uses: actions/configure-pages@v5
       - name: 上传账号快速发布包
-        if: steps.sync.outputs.processed != '0'
+        if: github.event_name == 'push' || steps.sync.outputs.processed != '0'
         uses: actions/upload-pages-artifact@v3
         with:
           path: public
           name: github-pages-users-${{ github.run_attempt }}
       - name: 立即发布新用户和账号
-        if: steps.sync.outputs.processed != '0'
+        if: github.event_name == 'push' || steps.sync.outputs.processed != '0'
         uses: actions/deploy-pages@v4
         with:
           artifact_name: github-pages-users-${{ github.run_attempt }}

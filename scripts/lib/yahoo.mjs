@@ -435,7 +435,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
       }
       const detailImage=detailImages[0]||card.image;
       competitors.push({...card,url:`https://paypayfleamarket.yahoo.co.jp/item/${detail.id}`,title:detail.title,
-        text:`${detail.title}\n${detail.description||''}`,image:detailImage,price:Number(detail.price),itemStatus:detail.status,
+        text:`${detail.title}\n${detail.description||''}`,sellerId:String(detail.seller?.id||card.sellerId||''),image:detailImage,price:Number(detail.price),itemStatus:detail.status,
         titleScore:detailTitleScore,imageScore,primaryImageScore,semantic,queryFamily,candidateFamily,
         matchMethod:lotteryEquivalent?'lottery_release_prize_character':assortmentEquivalent?'same_packaging_assortment':exactTitleEquivalent?'exact_bidirectional_title_identity':visualEquivalent?'strong_visual_primary_product':textEquivalent?'detail_type_quantity_equivalent_text':'detail_type_quantity_text_images'});
     }catch(error){rejected.push({id:card.id,price:card.price,reason:'detail_error',error:String(error)})}
@@ -454,7 +454,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   const reviewReasons=new Set(['primary_variant_unconfirmed','sale_description_unavailable','collectible_variant_image_unconfirmed','lottery_series_unconfirmed','physical_image_unconfirmed','detail_error']);
   const pendingReviews=rejected.filter(candidate=>reviewReasons.has(candidate.reason));
   const unconfirmedLowerCandidates=rejected.filter(candidate=>reviewReasons.has(candidate.reason)&&Number(candidate.price)<Number(item.ownPrice));
-  const verificationIncomplete=uncheckedLowerCandidates.length>0||unconfirmedLowerCandidates.length>0||!competitors.length&&pendingReviews.length>0||!ownDetail?.description?.trim();
+  const verificationIncomplete=Boolean(broadSearchDue&&!search)||uncheckedLowerCandidates.length>0||unconfirmedLowerCandidates.length>0||!competitors.length&&pendingReviews.length>0||!ownDetail?.description?.trim();
   const recommended=verificationIncomplete?Number(item.ownPrice):lowest&&!lowest.isOwn?Math.max(1,Math.floor(lowest.price)-1):market.recommendedPrice;
   const sourceCovered=Boolean(search||ownBundle);
   const matchLabel=verificationIncomplete?'存在待核验候选或详情缺失，暂不改价':lowest&&!lowest.isOwn?'已核验在售同款':underpriced?'与下一家同款存在提价空间':competitors.length?'已核验同款，你当前最低':'未发现同款';

@@ -10,7 +10,7 @@ function searchHtml({title,price=7800}){
   return `<div class="item"><a href="${url}" class="link_search_image" data-rat-itemid="21821488/855341843" data-rat-item_name="${title}" data-rat-igenre="123" data-rat-price="${price}"><img data-original="https://img.fril.jp/img/1/m/1.jpg"></a></div>`;
 }
 function detailHtml({title,description,price=7800,available=true}){
-  return `<script type="application/ld+json">${JSON.stringify({'@type':'Product',name:title,description,image:'https://img.fril.jp/img/1/l/1.jpg',offers:{price,availability:`https://schema.org/${available?'InStock':'OutOfStock'}`}})}</script><div data-rat-igenre="123"></div>`;
+  return `<script type="application/ld+json">${JSON.stringify({'@type':'Product',name:title,description,image:'https://img.fril.jp/img/1/l/1.jpg',offers:{price,availability:`https://schema.org/${available?'InStock':'OutOfStock'}`}})}</script><div data-rat-igenre="123"></div><table><tr><th>配送料の負担</th><td>送料込</td></tr></table>`;
 }
 async function compare({ownTitle,candidateTitle=ownTitle,ownDescription,candidateDescription=ownDescription,sameImage=true}){
   return rakumaCompare({id:'own',accountId:'melon',title:ownTitle,ownPrice:9000,image:'own-image',yahoo:{ownDescription,ownCategory:'雑貨',ownImages:['own-image']}},{maxRakumaDetailChecks:4},{
@@ -58,4 +58,10 @@ test('encrypted sync accepts a correction for a displayed Rakuma candidate',()=>
   const incoming={one:{accountId:'melon',itemId:'own',platform:'rakuma',candidateId:id,reason:'not_same_product',updatedAt,deleted:false}};
   const accepted=acceptMatchCorrections({},incoming,[item],null,Date.now());
   assert.equal(Object.values(accepted)[0].platform,'rakuma');
+});
+
+test('Rakuma missing availability stays unknown and missing shipping is not silently free',()=>{
+ const html=detailHtml({title:'Myethos フィギュア',description:'新品'});
+ assert.equal(extractRakumaDetail(html.replace('https://schema.org/InStock',''),url).status,'UNKNOWN');
+ assert.equal(extractRakumaDetail(html.replace('送料込','着払い'),url).shippingKnown,false);
 });

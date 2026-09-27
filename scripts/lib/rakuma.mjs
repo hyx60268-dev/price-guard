@@ -145,12 +145,26 @@ export function extractRakumaDetail(html='',url=''){
   const sellerId=source.match(/seller_user_id(?:&quot;|")\s*:\s*(?:&quot;|")?(\d+)/i)?.[1]||'';
   const category=String(product.category||'')||decodeHtml(source.match(/data-rat-igenrenamepath=["']([^"']+)["']/i)?.[1]||'');
   const condition=decodeHtml(source.match(/(?:item_condition|item-status-status)[^\n]{0,180}?(?:&quot;|>|:)\s*([^<"&]{2,30})/i)?.[1]||'');
+  const shippingRow=[...source.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].find(m=>/配送料の負担/.test(m[1]));
+  const shippingText=decodeHtml(shippingRow?.[1]?.match(/<td\b[^>]*>([\s\S]*?)<\/td>/i)?.[1]||'').replace(/<[^>]+>/g,'').trim();
+  const shippingKnown=/送料込|出品者負担/.test(shippingText);
   return {
+    itemPrice:Number(product.offers.price),shippingJPY:shippingKnown?0:null,shippingKnown,shippingText,
     id:String(url).match(/item\.fril\.jp\/([a-f0-9]+)/i)?.[1]||'',url,
     title:decodeHtml(product.name),description:decodeHtml(product.description||''),
-    price:Number(product.offers.price),status:/InStock$/i.test(availability)?'OPEN':'SOLD',sellerId,category,condition,
+    price:Number(product.offers.price),status:/InStock$/i.test(availability)?'OPEN':/OutOfStock$|SoldOut$/i.test(availability)?'SOLD':'UNKNOWN',sellerId,category,condition,
     images:[...new Set(images)].slice(0,10)
   };
+}
+
+export function nextRakumaSearchPage(html,url){
+ const current=new URL(url),page=Number(current.searchParams.get('page')||1),next=[];
+ for(const match of String(html).matchAll(/<a\b[^>]*>/gi)){
+  const href=attribute(match[0],'href');if(!href)continue;
+  const candidate=new URL(href,url),p=Number(candidate.searchParams.get('page'));
+  if(candidate.origin===current.origin&&candidate.pathname==='/s'&&candidate.searchParams.get('query')===current.searchParams.get('query')&&candidate.searchParams.get('sort')===current.searchParams.get('sort')&&candidate.searchParams.get('order')===current.searchParams.get('order')&&candidate.searchParams.get('transaction')===current.searchParams.get('transaction')&&p>page)next.push(candidate);
+ }
+ next.sort((a,b)=>Number(a.searchParams.get('page'))-Number(b.searchParams.get('page')));return next[0]?.href||null;
 }
 
 export async function rakumaCompare(item,settings={},dependencies={}){
@@ -162,14 +176,22 @@ export async function rakumaCompare(item,settings={},dependencies={}){
   const ownSellerId=item.platform==='rakuma'?String(item.sourceDetail?.sellerId||item.sellerId||''):'';
   const ownImageEvidence=await Promise.all([...new Set(ownImages)].slice(0,8).map(fingerprint));
   const ownFingerprints=ownImageEvidence.filter(Boolean),rejected=[];
-  const searchHtml=await getHtml(searchUrl,settings);
-  if(!/link_search_image|商品が見つかりません|商品はありません|該当する商品|0件の/.test(searchHtml))throw new Error('ラクマ搜索结果不可读，不能视为未发现同款');
-  const cards=extractRakumaSearchCards(searchHtml);
+  const collected=new Map();let nextPage=searchUrl,searchPages=0;
+  const maxPages=Math.max(1,Math.min(10,Number(settings.maxRakumaSearchPages)||5));
+  while(nextPage&&searchPages<maxPages){
+   const html=await getHtml(nextPage,settings);
+   if(!/link_search_image|商品が見つかりません|商品はありません|該当する商品|0件の/.test(html))throw new Error('ラクマ搜索结果不可读，不能视为未发现同款');
+   for(const card of extractRakumaSearchCards(html))collected.set(card.id,card);
+   nextPage=nextRakumaSearchPage(html,nextPage);searchPages++;
+  }
+  const cards=[...collected.values()],searchComplete=!nextPage;
   const screened=[];
   for(const card of cards){
     if(card.itemStatus!=='OPEN'||item.platform==='rakuma'&&(card.id===item.id||ownSellerId&&card.sellerId===ownSellerId)){rejected.push({...card,reason:'own_seller_or_not_open'});continue}
     if(rejectedByMemory(settings.matchCorrections,item,'rakuma',card)){rejected.push({...card,reason:'saved_user_correction'});continue}
     const semantic=semanticSameItem({query:item.title,candidate:card.title,queryCategory:ownCategory,candidateCategory:card.category});
+    const ownFamily=productFamily(item.title,ownCategory),cardFamily=productFamily(card.title,card.category);
+    if(ownFamily&&cardFamily&&ownFamily!==cardFamily){rejected.push({...card,reason:'physical_product_type_unconfirmed'});continue}
     const score=titleScore(item.title,card.title),anchors=distinctiveCoverage(item.title,card.title);
     if(semantic.accepted||score>=.62||(score>=.45&&anchors.matchedCount>=2))screened.push({...card,titleScore:score,semantic});
     else rejected.push({...card,reason:semantic.reason||'weak_title',titleScore:score});
@@ -181,7 +203,8 @@ export async function rakumaCompare(item,settings={},dependencies={}){
     try{
       const detail=extractRakumaDetail(await getHtml(card.url,settings),card.url);
       if(ownSellerId&&detail.sellerId===ownSellerId){rejected.push({...card,reason:'own_seller'});continue}
-      if(detail.status!=='OPEN'){rejected.push({...card,reason:'not_open'});continue}
+      if(detail.status!=='OPEN'){rejected.push({...card,reason:detail.status==='SOLD'?'not_open':'availability_unconfirmed'});continue}
+      if(!detail.shippingKnown){rejected.push({...card,reason:'shipping_unconfirmed'});continue}
       if(!ownDescription.trim()||!detail.description.trim()){rejected.push({...card,reason:'sale_description_unavailable'});continue}
       if(hasExplicitDefect(detail.title,detail.description)){rejected.push({...card,reason:'defect'});continue}
       const detailImages=[...detail.images,card.image].filter(Boolean);
@@ -207,11 +230,11 @@ export async function rakumaCompare(item,settings={},dependencies={}){
     }catch(error){rejected.push({...card,reason:'detail_error',error:String(error)})}
   }
   competitors.sort((a,b)=>a.price-b.price);
-  const unresolved=[...screened.slice(preliminary.length),...rejected.filter(row=>['detail_error','sale_description_unavailable','collectible_variant_image_unconfirmed','primary_variant_unconfirmed'].includes(row.reason))];
+  const unresolved=[...screened.slice(preliminary.length),...rejected.filter(row=>['availability_unconfirmed','shipping_unconfirmed','detail_error','sale_description_unavailable','collectible_variant_image_unconfirmed','primary_variant_unconfirmed'].includes(row.reason))];
   const lowerUnconfirmed=unresolved.filter(row=>Number(row.price)<Number(item.ownPrice));
   return {
     audit:{ownItemId:item.id,accountId:item.accountId||null,ownDetailLoaded:Boolean(ownDescription.trim())},
-    rulesVersion:MATCHING_RULES_VERSION,query,searchUrl,status:lowerUnconfirmed.length||!ownDescription.trim()||!competitors.length&&unresolved.length?'incomplete':'ok',
+    rulesVersion:MATCHING_RULES_VERSION,query,searchUrl,searchPages,searchComplete,status:!searchComplete||lowerUnconfirmed.length||!ownDescription.trim()||!competitors.length&&unresolved.length?'incomplete':'ok',
     lowestPrice:competitors[0]?.price??null,lowestUrl:competitors[0]?.url??searchUrl,
     candidates:competitors.slice(0,5),cardCount:cards.length,preliminaryCount:preliminary.length,
     detailCheckedCount:preliminary.length,competitorCount:competitors.length,rejected:rejected.slice(-30),
