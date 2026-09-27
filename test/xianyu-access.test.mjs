@@ -61,3 +61,10 @@ test('explicit Japan-import cost cards are excluded without requiring word or im
   assert.equal(xianyuSearchExclusion({title:'全新现货 Threezero DLX 变2擎天柱'}),null);
   assert.equal(xianyuSearchExclusion({title:'日本限定 星巴克蓝色豹纹370ml'}),null);
 });
+
+test('explicit selectable and range-price cards do not consume scarce authenticated detail reads',()=>{
+  assert.equal(xianyuSearchExclusion({title:'鬼灭之刃 新绎系列 自选款式 标价可直拍tag 时透无一郎'}),'explicit_multi_variant_card');
+  assert.equal(xianyuSearchExclusion({title:'时透无一郎',priceText:'¥ 3 - 160'}),'explicit_price_range_card');
+  assert.equal(xianyuSearchExclusion({title:'时透无一郎 单个',priceText:'¥90'}),null);
+  assert.equal(xianyuSearchExclusion({title:'端盒10个整套'}),null);
+});

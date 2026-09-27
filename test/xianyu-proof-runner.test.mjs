@@ -17,3 +17,8 @@ test('missing descriptions cannot use stale catalog text as detail proof',async(
   const result=await runXianyuProof({items,fetchOwn:async()=>({detail:{}}),verify:async()=>assert.fail('must not scan'),persist:async()=>{},log:()=>{}});
   assert.equal(result.tested,0);assert.equal(result.sourceUnavailable,4);
 });
+
+test('an explicit current listing gets title and translated query from its live source detail',async()=>{
+  let item;await runXianyuProof({items:[{id:'z1'}],fetchOwn:async()=>({detail:{title:'鬼滅の刃 時透無一郎 アクリルスタンド',description:'新品',images:['image']}}),verify:async value=>{item=value;return {status:'manual_review'}},persist:async()=>{},log:()=>{}});
+  assert.equal(item.title,'鬼滅の刃 時透無一郎 アクリルスタンド');assert.ok(item.xianyuQuery);assert.deepEqual(item.yahoo.ownImages,['image']);
+});
