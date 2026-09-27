@@ -457,5 +457,29 @@
     "candidateTitle": "星巴克醇钛系列钛杯430ml，全新未拆封，门店渠道，带原包装",
     "candidateDescription": "全新未拆封 1个",
     "primaryImageScore": 1
+  },
+  {
+    "case": "melon：中文全新后标点经NFKC归一仍识别",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "candidateDescription": "全新，原包装 1个",
+    "primaryImageScore": 1
+  },
+  {
+    "case": "local-1789214704376：中文全新后标点经NFKC归一仍识别",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "candidateDescription": "全新，原包装 1个",
+    "primaryImageScore": 1
+  },
+  {
+    "case": "account-p6579087：中文全新后标点经NFKC归一仍识别",
+    "ownTitle": "Starbucks 430ml ブラック",
+    "ownDescription": "新品 未使用 1個",
+    "candidateTitle": "星巴克 430ml 黑色",
+    "candidateDescription": "全新，原包装 1个",
+    "primaryImageScore": 1
   }
 ]
