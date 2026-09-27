@@ -1,6 +1,6 @@
 // A search card (or a recommendation below a blocked detail) is not a verified
 // offer. Keep this contract shared by the scanner, cache and discovery pipeline.
-export const XIANYU_VERIFICATION = 'shared_offer_identity_detail_v10';
+export const XIANYU_VERIFICATION = 'shared_offer_identity_detail_v11';
 
 export function positivePrice(value) {
   if(value===null||value===undefined||String(value).trim()==='')return null;
@@ -108,5 +108,10 @@ export async function collectXianyuDetails(candidates, verify, coherent = rows =
 // Japan-import middlemen already fail the detail offer guard. Exclude their
 // explicitly labelled search cards before spending scarce detail requests.
 export function xianyuSearchExclusion(card={}) {
-  return /日本代购|煤炉代购/i.test(String(card.title||''))?'japan_import_not_procurement':null;
+  const title=String(card.title||'');
+  if(/日本代购|煤炉代购/i.test(title))return 'japan_import_not_procurement';
+  if(/自选(?:款式|角色|图案)|多款可选|任选款式|拍下改价|私聊改价|标价非实价/.test(title))return 'explicit_multi_variant_card';
+  const price=String(card.priceText||'').replace(/[¥￥,\s]/g,'');
+  if(/^\d+(?:\.\d{1,2})?[-–~至]\d+(?:\.\d{1,2})?$/.test(price))return 'explicit_price_range_card';
+  return null;
 }

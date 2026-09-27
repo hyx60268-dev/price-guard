@@ -13,7 +13,9 @@ const catalog=JSON.parse(await fs.readFile(path.join(root,'config/catalogs/melon
 const sessionManager=await loadXianyuSession(root);
 const stateFile=sessionManager.file;
 if(!sessionManager.access().allowed){console.error('[PROOF COOLDOWN]',JSON.stringify(sessionManager.access()));process.exit(1)}
-const selected=catalog.filter(item=>item.xianyuQuery&&item.image).slice(0,9);
+const requestedId=String(process.env.XIANYU_PROOF_ITEM_ID||'').trim();
+if(requestedId&&!/^z\d+$/.test(requestedId))throw new Error('验收商品必须是有效的 Yahoo 商品ID');
+const selected=requestedId?[{id:requestedId}]:catalog.filter(item=>item.xianyuQuery&&item.image).slice(0,9);
 const {browser,context}=await openContext(stateFile);
 const page=await context.newPage();
 let summary;
