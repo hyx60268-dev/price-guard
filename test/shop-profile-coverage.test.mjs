@@ -5,7 +5,7 @@ import { mergeAccountConfigs } from '../scripts/lib/state.mjs';
 import { cachedComparison,comparisonIncomplete,pricingCoverage } from '../scripts/lib/pricing-coverage.mjs';
 import { fairPriorityRoundRobin } from '../scripts/lib/planner.mjs';
 import { MATCHING_RULES_VERSION } from '../scripts/lib/rules.mjs';
-import { discoverRakumaProfile,extractRakumaDetail,extractRakumaSearchCards } from '../scripts/lib/rakuma.mjs';
+import { discoverRakumaProfile,extractRakumaDetail,extractRakumaSearchCards,fetchRakumaHtml } from '../scripts/lib/rakuma.mjs';
 import { yahooCompare,marketPriceDecision } from '../scripts/lib/yahoo.mjs';
 
 test('shop URL normalization is shared, platform-aware and restricted to genuine profile hosts',()=>{
@@ -41,6 +41,23 @@ test('Rakuma inventory follows every profile page, filters sold listings and ded
   assert.ok(result.items.every(x=>x.platform==='rakuma'&&x.ownPrice===1000));assert.equal(result.complete,true);
   assert.equal(urls[1],'https://fril.jp/shop/testshop/page/2');
   await assert.rejects(discoverRakumaProfile('https://fril.jp/shop/testshop',{}, {fetchHtml:async()=>'<html>challenge</html>'}),/不可读/);
+});
+test('Rakuma public HTML falls back after a cloud HTTP 403 without forwarding private state',async()=>{
+ const html='<html><div class="item-list">'+card('aa')+'</div>'+' '.repeat(9000)+'</html>';
+ let directCalls=0,readerCalls=0;
+ const result=await fetchRakumaHtml('https://fril.jp/shop/testshop',{rakumaRequestIntervalMs:1},{
+  disableProxyMemory:true,
+  fetchImpl:async()=>{directCalls++;return new Response('forbidden',{status:403})},
+  readerFetchImpl:async(url,options)=>{
+   readerCalls++;
+   assert.equal(url,'https://r.jina.ai/https://fril.jp/shop/testshop');
+   assert.equal(options.headers['x-return-format'],'html');
+   assert.equal(options.headers['x-no-cache'],'true');
+   assert.equal(Object.keys(options.headers).some(name=>/cookie|authorization/i.test(name)),false);
+   return new Response(html,{status:200});
+  }
+ },1);
+ assert.equal(result,html);assert.equal(directCalls,1);assert.equal(readerCalls,1);
 });
 test('Rakuma detail images never include another item from the recommendation rail',()=>{
   const html=`<script type="application/ld+json">${JSON.stringify({'@type':'Product',name:'商品',description:'新品',image:'https://img.fril.jp/img/11/l/1.jpg',offers:{price:1000,availability:'https://schema.org/InStock'}})}</script><img src="https://img.fril.jp/img/22/l/1.jpg"><img src="https://img.fril.jp/img/11/l/2.jpg">`;

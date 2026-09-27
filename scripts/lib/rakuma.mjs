@@ -11,6 +11,7 @@ import { parseShopProfile } from '../../public/shop-profile.js';
 
 const UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140 Safari/537.36';
 let requestGate=Promise.resolve(),nextRequestAt=0;
+let proxyPreferredUntil=0;
 const wait=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
 
 function decodeHtml(value=''){
@@ -35,21 +36,54 @@ function requestTurn(interval=1200){
   requestGate=turn.catch(()=>{});return turn;
 }
 
-async function fetchHtml(url,settings={},attempts=2){
+async function responseHtml(response){
+  if(!response.ok)throw new Error(`HTTP ${response.status}`);
+  const html=await response.text();
+  if(html.length<8000)throw new Error(`页面内容异常短 (${html.length} bytes)`);
+  return html;
+}
+
+async function fetchViaReader(url,settings={},fetchImpl=fetch,attempts=2){
+  // Rakuma currently returns HTTP 403 to GitHub-hosted runner IPs even for its
+  // public pages. Reader fetches only the same public URL and returns full HTML;
+  // no account, cookie or private data is sent through it.
+  const readerUrl=`https://r.jina.ai/${url}`;
+  let last;
+  for(let attempt=1;attempt<=attempts;attempt++){
+    await requestTurn(Math.max(1500,Number(settings.rakumaRequestIntervalMs)||1200));
+    const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),45000);
+    try{
+      const response=await fetchImpl(readerUrl,{headers:{'user-agent':UA,'accept-language':'ja-JP,ja;q=0.9','x-return-format':'html','x-no-cache':'true'},signal:controller.signal,redirect:'follow'});
+      return await responseHtml(response);
+    }catch(error){last=error;if(attempt<attempts)await wait(1200*attempt)}finally{clearTimeout(timeout)}
+  }
+  throw new Error(`ラクマ公开页面代理请求失败：${String(last)}`);
+}
+
+export async function fetchRakumaHtml(url,settings={},dependencies={},attempts=2){
+  if(!/^https:\/\/(?:fril\.jp|item\.fril\.jp)\//i.test(url||''))throw new Error('ラクマ公开链接无效');
+  const directFetch=dependencies.fetchImpl||fetch,readerFetch=dependencies.readerFetchImpl||fetch;
+  if(Date.now()<proxyPreferredUntil)return fetchViaReader(url,settings,readerFetch,attempts);
   let last;
   for(let attempt=1;attempt<=attempts;attempt++){
     await requestTurn(settings.rakumaRequestIntervalMs);
     const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),20000);
     try{
-      const response=await fetch(url,{headers:{'user-agent':UA,'accept-language':'ja-JP,ja;q=0.9'},signal:controller.signal,redirect:'follow'});
-      if(!response.ok)throw new Error(`HTTP ${response.status}`);
-      const html=await response.text();
-      if(html.length<8000)throw new Error(`页面内容异常短 (${html.length} bytes)`);
-      return html;
-    }catch(error){last=error;if(attempt<attempts)await wait(900*attempt)}finally{clearTimeout(timeout)}
+      const response=await directFetch(url,{headers:{'user-agent':UA,'accept':'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8','accept-language':'ja-JP,ja;q=0.9','cache-control':'no-cache','referer':'https://fril.jp/'},signal:controller.signal,redirect:'follow'});
+      return await responseHtml(response);
+    }catch(error){
+      last=error;
+      // Do not send dozens of requests that Rakuma has already rejected. The
+      // fallback remains preferred for this process after a 403.
+      if(/HTTP 403/.test(String(error))){if(!dependencies.disableProxyMemory)proxyPreferredUntil=Date.now()+6*60*60_000;break}
+      if(attempt<attempts)await wait(900*attempt);
+    }finally{clearTimeout(timeout)}
   }
-  throw new Error(`ラクマ请求失败：${String(last)}`);
+  try{return await fetchViaReader(url,settings,readerFetch,attempts)}
+  catch(readerError){throw new Error(`ラクマ请求失败：${String(last)}；${String(readerError)}`)}
 }
+
+const fetchHtml=fetchRakumaHtml;
 
 export function extractRakumaSearchCards(html='',kind='search'){
   const source=String(html),cards=[];
