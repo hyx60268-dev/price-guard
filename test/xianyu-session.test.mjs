@@ -61,3 +61,10 @@ test('login sync includes IndexedDB and verifies real details before uploading s
  assert.ok(secondCapture>verification);
  assert.ok(firstSecretUpload>secondCapture);
 });
+test('Windows login launcher recovers when opened directly from a ZIP',async()=>{
+ const source=await fs.readFile(new URL('../一键同步闲鱼登录.cmd',import.meta.url),'utf8');
+ assert.match(source,/if exist "%SYNC_PS1%" goto run_sync/);
+ assert.match(source,/price-guard\/archive\/refs\/heads\/main\.zip/);
+ assert.match(source,/Expand-Archive/);
+ assert.doesNotMatch(source,/powershell\.exe[^\r\n]*-NoExit/);
+});
