@@ -7,6 +7,9 @@ const shape=p=>({title:heading(p.sourceTitle||p.title||''),description:p.sourceD
 const images=p=>[...(p.sourceImages||[]),...(p.images||[]),...(p.yahoo?.ownImages||[]),p.image].filter(Boolean);
 export function sameMerchantProduct(a,b){
  const left=shape(a),right=shape(b);
+ // A profile card can precede its detail fetch. Missing description is unknown,
+ // not a conflicting condition; compare headings until both details exist.
+ if(!left.description||!right.description){left.description='';right.description=''}
  if(!sameDiscoveryProduct(left,right))return false;
  // Card artwork can vary even when the series and rarity match. A shared
  // concrete image is required before hiding or grouping such records.

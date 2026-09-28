@@ -4,6 +4,7 @@ import { curateMerchantProducts,sameMerchantProduct } from '../scripts/lib/merch
 const a={sourceId:'a',sourcePlatform:'yahoo',sourceTitle:'【中国限定】Anker AeroClip 2 ワイヤレスイヤホン 張凌赫 コラボ 限定ギフトボックス レッド',event:'listed'},b={...a,sourceId:'b',sourceTitle:'【中国限定】Anker ワイヤレスイヤホン 張凌赫 コラボ ギフトボックスセット AeroClip2 レッドイヤホン',event:'sold'};
 test('screenshot relist and sold records become one product with both observations',()=>{
  const r=curateMerchantProducts([a,b]);assert.equal(r.products.length,1);assert.equal(r.products[0].observations.length,2);assert.equal(r.mergedListings,1);
+ assert.equal(curateMerchantProducts([{...a,sourceDescription:'新品未開封 ギフトボックス'},b]).products.length,1);
  const title='聖闘士聖衣神話EX サジタリアス星矢 黄金聖衣の継承者 BANDAI 中国限定';assert.equal(sameMerchantProduct({title:'新発売 '+title},{title}),true);
 });
 test('all managed inventory excludes same products from external merchants',()=>{
