@@ -136,7 +136,8 @@ const cloudSyncedAt=new Date().toISOString();
 const result={...previous,merchantMonitors,version:6,cloudSyncedAt,dataRevision:cloudSyncedAt,settings,manualCosts,matchCorrections,portalPreferences,dismissedDiscoveries,discoveryReviews,portalUsers:portalUserRecords,managedAccounts,accounts,items};
 if(issue.number)result.appliedSyncIssues={...(previous.appliedSyncIssues||{}),[issue.number]:{
   digest:syncDigest(issue),updatedAt:cloudSyncedAt,
-  needsScan:merchantsChanged||managedAccounts.some(account=>account.enabled!==false&&!(previous.managedAccounts||[]).some(old=>old.id===account.id&&old.enabled!==false))
+  needsMerchantScan:merchantsChanged,
+  needsScan:managedAccounts.some(account=>account.enabled!==false&&!(previous.managedAccounts||[]).some(old=>old.id===account.id&&old.enabled!==false))
 }};
 const {summary}=await writeOutputs({root,result,previous,password});
 // A cost/account/upload sync also deploys the static site. Preserve the latest

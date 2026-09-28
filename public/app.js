@@ -1,3 +1,4 @@
+import { merchantMonitorStatus } from './merchant-status.js';
 import { syncHandoff,copySyncBody } from './sync-handoff.js';
 import { merchantProfile,mergeMerchantConfigs } from './merchant-config.js';
 import { buildOwnedOffers,excludeOwnedOffers } from './owned-offers.js';
@@ -544,7 +545,7 @@ function getMerchantMonitors(){return mergeMerchantConfigs(data?.merchantMonitor
 function renderMerchantSettings(){
  $('#merchantSettings').hidden=currentUsername!=='admin';if(currentUsername!=='admin')return;
  const records=getMerchantMonitors(),cloud=new Map((data?.merchantMonitors||[]).map(m=>[m.key,m]));
- $('#merchantList').innerHTML=records.filter(m=>m.enabled).map(m=>{const saved=cloud.get(m.key);const synced=saved?.enabled&&Date.parse(saved.updatedAt)>=Date.parse(m.updatedAt);return '<div class="merchant-row"><div><a target="_blank" rel="noopener" href="'+escapeHtml(m.url)+'">'+escapeHtml(m.name)+' · '+escapeHtml(m.platform)+'</a><small>'+escapeHtml(m.url)+'</small><small>'+(synced?'已同步 · 等待 / 执行每日监控':'本机已保存 · 待提交云端')+'</small></div><button type="button" class="soft" data-remove-merchant="'+escapeHtml(m.key)+'">移除</button></div>'}).join('')||'<p class="muted">还没有监控商家</p>';
+ $('#merchantList').innerHTML=records.filter(m=>m.enabled).map(m=>{const saved=cloud.get(m.key);const synced=saved?.enabled&&Date.parse(saved.updatedAt)>=Date.parse(m.updatedAt);return '<div class="merchant-row"><div><a target="_blank" rel="noopener" href="'+escapeHtml(m.url)+'">'+escapeHtml(m.name)+' · '+escapeHtml(m.platform)+'</a><small>'+escapeHtml(m.url)+'</small><small>'+escapeHtml(merchantMonitorStatus(m,data?.merchantMonitors||[],discoveryData))+'</small></div><button type="button" class="soft" data-remove-merchant="'+escapeHtml(m.key)+'">移除</button></div>'}).join('')||'<p class="muted">还没有监控商家</p>';
  document.querySelectorAll('[data-remove-merchant]').forEach(button=>button.onclick=async()=>{
   const next=records.map(m=>m.key===button.dataset.removeMerchant?{...m,enabled:false,updatedAt:new Date().toISOString()}:m);
   localStorage.setItem(scopedKey(merchantKey),JSON.stringify(next));renderMerchantSettings();await startCloudSync($('#merchantSaveStatus'),'merchants');
