@@ -1,4 +1,5 @@
 import { createOwnSourceLoader } from './lib/own-source.mjs';
+import { xianyuReviewPlan } from './lib/xianyu-review-plan.mjs';
 import { mercariCompare } from './lib/mercari.mjs';
 import { pricingDecision } from '../public/pricing-policy.js';
 import fs from 'node:fs/promises';
@@ -227,15 +228,15 @@ for(const [contextIndex,context] of contexts.entries())for(const item of context
   // Only a completed, non-verified review may enter the retry cooldown.
   // Login/challenge/errors and deferred rows must be retried/rotated; otherwise
   // one failed batch stamps checkedAt and can freeze the whole inventory for a day.
-  const priorXianyuStatus=String(prior.xianyu?.status||'');
-  if(prior.xianyu?.verification===XIANYU_VERIFICATION&&['manual_review','page_empty'].includes(priorXianyuStatus)&&prior.xianyu?.checkedAt&&isFresh(prior.xianyu.checkedAt,xianyuRetryHours)){
-    context.xianyuById.set(item.id,{status:'skipped_recent_review',samples:[],averageCNY:null,checkedAt:prior.xianyu.checkedAt});continue;
+  const reviewPlan=xianyuReviewPlan(item,prior,{retryHours:xianyuRetryHours});
+  if(reviewPlan.skip){
+    context.xianyuById.set(item.id,{...prior.xianyu,status:'skipped_recent_review',reviewStatus:reviewPlan.reviewStatus,samples:[],averageCNY:null});continue;
   }
   // Refresh an automatic market reference for every listing. A user-confirmed
   // purchase cost remains authoritative for profit, but no longer prevents the
   // background reference scan from running.
   const attemptedAt=Date.parse(prior.xianyu?.checkedAt||'');
-  xianyuBuckets[contextIndex].push({context,item,prior,priority:Number.isFinite(manual?.purchaseCNY)?1:0,lastAttempt:Number.isFinite(attemptedAt)?attemptedAt:0});
+  xianyuBuckets[contextIndex].push({context,item,prior,priority:reviewPlan.changedQuery?-1:Number.isFinite(manual?.purchaseCNY)?1:0,lastAttempt:Number.isFinite(attemptedAt)?attemptedAt:0});
 }
 for(const bucket of xianyuBuckets)bucket.sort((a,b)=>a.priority-b.priority||a.lastAttempt-b.lastAttempt||a.item.seq-b.item.seq);
 const xianyuTasks=[];
