@@ -1,6 +1,6 @@
 // Public product DOM only. Recommendations and other shop products are never
 // part of the target description, price, availability, or image evidence.
-export function readMercariCards(document){
+export function readMercariCards(document,{includeUnpriced=false}={}){
  const seen=new Set(),cards=[];
  for(const a of document.querySelectorAll('main a[href^="/item/"],main a[href^="/shops/product/"]')){
   const href=a.getAttribute('href').split('?')[0];if(seen.has(href))continue;seen.add(href);
@@ -9,7 +9,7 @@ export function readMercariCards(document){
   const title=label.replace(/の(?:画像|サムネイル).*$/,'').trim();
   const priceText=`${text} ${label}`,match=priceText.match(/[¥￥]\s*([\d,]+)/)||priceText.match(/([\d,]+)円/);
   const price=Number(match?.[1]?.replace(/,/g,''));
-  if(title&&price>0)cards.push({id:href.split('/').at(-1),url:`https://jp.mercari.com${href}`,title,price,image:img?.currentSrc||img?.src||'',itemStatus:/SOLD|売り切れ/i.test(label+' '+text)?'SOLD':'OPEN'});
+  if(title&&(price>0||includeUnpriced))cards.push({id:href.split('/').at(-1),url:`https://jp.mercari.com${href}`,title,price:price>0?price:null,image:img?.currentSrc||img?.src||'',itemStatus:/SOLD|売り切れ/i.test(label+' '+text)?'SOLD':'OPEN'});
  }
  const text=document.querySelector('main')?.innerText||document.querySelector('main')?.textContent||'';
  const empty=/該当する商品が見つかりません|検索条件に一致する商品がありません|検索結果はありません/.test(text);
