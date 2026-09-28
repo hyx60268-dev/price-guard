@@ -14,6 +14,10 @@ function canonicalProductText(value='') {
     .replace(/Myethos|ミートス/gi,' myethos ')
     .replace(/(?:THE\s+)?GIGANT\s+NAME|ギガントネーム/gi,' gigantname ')
     .replace(/POP\s*MART|ポップマート|泡泡玛特|泡泡瑪特/gi,' POPMART ')
+    // Product-type translations are descriptors, not model/character names.
+    .replace(/毛绒(?:玩偶)?挂件|毛絨(?:玩偶)?掛件|ぬいぐるみペンダント/g,' ぬいぐるみ ペンダント ')
+    .replace(/毛绒玩偶|毛絨玩偶/g,' ぬいぐるみ ')
+    .replace(/系列/g,' シリーズ ')
     .replace(/STARBUCKS|スターバックス|星巴克/gi,' starbucks ')
     .replace(/暗場|暗场/g,' 暗场 ')
     .replace(/マグカップ|马克杯|馬克杯/g,' mug ')

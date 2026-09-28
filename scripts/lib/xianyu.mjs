@@ -38,7 +38,7 @@ function cardPrice(card={}){
 }
 
 async function verifyDetail(context,candidate,item,settings,ownFingerprints,ownPrimary,onAccessible=()=>{}){
-  const query=item.xianyuQuery||xianyuQueryFor(item.title||'');
+  const query=xianyuQueryFor(item.xianyuQuery||item.title||'');
   const detail=await context.newPage();
   try{
     await gotoWithRetry(detail,candidate.url,{waitUntil:'domcontentloaded',timeout:25000},settings);
@@ -60,7 +60,7 @@ async function verifyDetail(context,candidate,item,settings,ownFingerprints,ownP
       .split(/【(?:商品信息|商品状态|成色|包装|配送|温馨提示|提醒)】|(?:商品信息|商品状态|成色|包装|配送方式)[:：]/)[0]
       .replace(/\s+/g,' ').trim().slice(0,220)||String(candidate.title||'').slice(0,220);
     const ownDescription=item.yahoo?.ownDescription||item.description||'';
-    const identityArgs={ownTitle:item.title||query,ownDescription,candidateTitle:identityTitle,candidateDescription:state.text,ownCategory:item.yahoo?.ownCategory||''};
+    const identityArgs={ownTitle:xianyuQueryFor(item.title||query),ownDescription,candidateTitle:identityTitle,candidateDescription:state.text,ownCategory:item.yahoo?.ownCategory||''};
     const sharedText=offerIdentityGuard({...identityArgs,checkImages:false});
     if(!sharedText.accepted)return {accepted:false,reason:sharedText.reason,detailTitle:identityTitle};
     const titleMatch=titleScore(query,identityTitle);
@@ -103,11 +103,11 @@ async function verifyDetail(context,candidate,item,settings,ownFingerprints,ownP
 }
 
 export async function xianyuCost(page,item,settings){
-  const query=item.xianyuQuery||xianyuQueryFor(item.title||'');
+  const query=xianyuQueryFor(item.xianyuQuery||item.title||'');
   if(!query)return {query,status:'missing_query',samples:[],averageCNY:null};
   const compact=value=>String(value).replace(/(?:中国限定|海外限定|正規品|正规品|新品|未使用|未開封|即日発送|匿名配送|送料無料)/gi,' ').replace(/\s+/g,' ').trim();
   const simplified=compact(query);
-  const withoutSeries=simplified.replace(/[^\s]{1,16}(?:系列|シリーズ)/gi,' ').replace(/\s+/g,' ').trim();
+  const withoutSeries=simplified.replace(/系列|シリーズ/gi,' ').replace(/\s+/g,' ').trim();
   const short=withoutSeries.split(' ').filter(token=>token.length>1).slice(0,6).join(' ');
   const searchQueries=[...new Set([query,simplified,withoutSeries,short].filter(value=>value&&value.length>=3))];
   let cards=[],pageState={loginVisible:false,blocked:false,snippet:''},usedQuery=query,url='',searchAttempts=0;

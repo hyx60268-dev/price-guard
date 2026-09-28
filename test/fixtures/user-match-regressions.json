@@ -499,5 +499,23 @@
     "candidateDescription": "メーカー：Myethos 新品 フィギュア本体、専用台座 全高約261mm",
     "primaryImageScore": 1,
     "expected": null
+  },
+  {
+    "case": "同款中日毛绒挂件描述不能当成两个版本",
+    "ownTitle": "RIIZE Fluffy Club ぬいぐるみペンダント",
+    "ownDescription": "新品 1個",
+    "candidateTitle": "RIIZE Fluffy Club 系列毛绒挂件",
+    "candidateDescription": "全新 1个",
+    "primaryImageScore": 1,
+    "expected": null
+  },
+  {
+    "case": "翻译商品类型后仍拒绝黑白不同款",
+    "ownTitle": "RIIZE Fluffy Club ぬいぐるみペンダント ブラック",
+    "ownDescription": "新品 1個",
+    "candidateTitle": "RIIZE Fluffy Club 系列毛绒挂件 白色",
+    "candidateDescription": "全新 1个",
+    "primaryImageScore": 1,
+    "expected": "description_color_mismatch"
   }
 ]

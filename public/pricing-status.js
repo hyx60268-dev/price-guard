@@ -30,10 +30,10 @@ export function pricingStatus(item={},options={}){
 
 export function pricingSummary(items=[],options={}){
  const counts={ready:0,queued:0,stale:0,error:0,insufficient:0};let actionable=0;
- for(const item of items){const status=pricingStatus(item,options);counts[status.state]++;if(status.complete&&status.decision.priceSignal!=='hold')actionable++;}
+ for(const item of items){const status=pricingStatus(item,options);counts[status.state]++;if(status.decision.canRecommend&&status.decision.priceSignal!=='hold')actionable++;}
  const total=items.length,remaining=total-counts.ready;
  return {total,...counts,remaining,actionable,
   label:!actionable&&remaining?(counts.queued+counts.stale?'比价更新中':'比价未完成'):'建议调价',
   value:!actionable&&remaining?'—':actionable,
-  note:remaining?`已核验 ${counts.ready}/${total} 件，另有 ${remaining} 件未完成；当前建议仅覆盖已核验商品。`:`已核验 ${counts.ready}/${total} 件${total&&!actionable?'，暂无需要调价的商品。':'。'}`};
+  note:remaining?`已核验 ${counts.ready}/${total} 件，另有 ${remaining} 件未完成；降价参考可使用已核验同款；提价需三平台核验完成。`:`已核验 ${counts.ready}/${total} 件${total&&!actionable?'，暂无需要调价的商品。':'。'}`};
 }

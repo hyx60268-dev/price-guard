@@ -27,11 +27,11 @@ test('actual procurement wins over automatic reference; overview sorts and opens
  const costs={'a:item:same':{accountId:'a',itemId:'same',purchaseCNY:20,manualFeeCNY:0,shippingJPY:0},'b:item:same':{accountId:'b',itemId:'same',purchaseCNY:50,manualFeeCNY:0,shippingJPY:0}};
  dom.window.fixture.set({settings:{exchangeRate:20,costMultiplier:1,profitWarningJPY:1500},items:[other,item],accounts:[{id:'a',name:'A店'},{id:'b',name:'B店'}]},costs);
  const effective=dom.window.fixture.effective(item);assert.equal(effective.purchaseCNY,20);assert.equal(effective.automaticReferenceCNY,90);assert.equal(effective.costJPY,400);assert.equal(effective.currentProfitJPY,600);
- assert.equal(dom.window.fixture.actionablePrice(other),false);
+ assert.equal(dom.window.fixture.actionablePrice(other),true);
  assert.equal(dom.window.fixture.selected()[0].accountId,'a');
  dom.window.fixture.render();assert.equal(dom.window.document.querySelectorAll('.inventory-card').length,2);
  assert.match(dom.window.document.querySelector('#pricingProgress').textContent,/已核验 1\/2/);
- assert.match(dom.window.document.querySelector('#cards').textContent,/采集失败/);
+ assert.match(dom.window.document.querySelector('#cards').textContent,/建议降价/);
  dom.window.document.querySelector('#cards [data-account="b"]').click();
  assert.equal(dom.window.document.querySelector('#detailBody h2').textContent,'商品 B');
  assert.equal(dom.window.document.querySelector('#purchaseCNY').value,'50');
@@ -40,7 +40,7 @@ test('actual procurement wins over automatic reference; overview sorts and opens
  dom.window.fixture.set({settings:{exchangeRate:20,costMultiplier:1,profitWarningJPY:1500},items:[stale],accounts:[{id:'a',name:'A店'}]},costs);
  dom.window.fixture.render();dom.window.document.querySelector('#cards [data-account="a"]').click();
  const text=dom.window.document.querySelector('#detailBody').textContent;
- assert.ok(text.includes('暂不建议改价'));assert.ok(!text.includes('29,799'));assert.ok(!text.includes('与下一家同款存在提价空间'));
+ assert.ok(text.includes('暂无可靠调价依据'));assert.ok(!text.includes('29,799'));assert.ok(!text.includes('与下一家同款存在提价空间'));
  assert.ok(!text.includes('Yahoo最低'));assert.ok(!text.includes('乐天Rakuma最低'));
  await new Promise(resolve=>setImmediate(resolve));
  }finally{dom.window.close()}

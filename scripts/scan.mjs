@@ -1,3 +1,4 @@
+import { createOwnSourceLoader } from './lib/own-source.mjs';
 import { mercariCompare } from './lib/mercari.mjs';
 import { pricingDecision } from '../public/pricing-policy.js';
 import fs from 'node:fs/promises';
@@ -6,7 +7,7 @@ import { loadXianyuSession } from './lib/xianyu-session.mjs';
 import { deferredXianyuAccess } from './lib/xianyu-access.mjs';
 import { fileURLToPath } from 'node:url';
 import { openContext } from './lib/browser.mjs';
-import { discoverYahooProfile,marketPriceDecision,yahooCompare } from './lib/yahoo.mjs';
+import { discoverYahooProfile,fetchYahooItemBundle,marketPriceDecision,yahooCompare } from './lib/yahoo.mjs';
 import { discoverRakumaProfile,fetchRakumaItem,rakumaCompare } from './lib/rakuma.mjs';
 import { cachedComparison,comparisonIncomplete as isComparisonIncomplete,pricingCoverage } from './lib/pricing-coverage.mjs';
 import { xianyuCost } from './lib/xianyu.mjs';
@@ -111,7 +112,7 @@ for(const context of contexts)for(const item of context.activeItems)if(item.reli
 // 否则每次都会在时间预算耗尽前反复检查前半段，后半段商品长期得不到核验。
 const fullPriceAudit=process.env.FULL_PRICE_AUDIT==='1';
 const forceYahoo=process.env.FORCE_FULL_SCAN==='1';
-const yahooFreshMinutes=Number(settings.yahooFreshMinutes)||15;
+const yahooFreshMinutes=Number(settings.yahooFreshMinutes)||360;
 const deadline=startedAt+(fullPriceAudit?280:(Number(settings.scanBudgetMinutes)||12))*60_000;
 const yahooBuckets=contexts.map(context=>context.activeItems.map((item,itemIndex)=>{
   const prior=priorFor(context,item),added=context.profileDelta.added.includes(item.id)||Boolean(item.relistedFrom);
@@ -127,8 +128,11 @@ const yahooBuckets=contexts.map(context=>context.activeItems.map((item,itemIndex
 // 每个店铺轮流取一件，不让商品多或旧缓存多的账号占满整轮预算。
 const yahooTasks=fairPriorityRoundRobin(yahooBuckets);
 
+// One in-flight read per own listing, shared across independent platform workers.
+// A deferred Yahoo task must not deprive Rakuma/Mercari/Xianyu of the sale description.
+const {hydrate:hydratedItem,yahooBundle:ownBundle}=createOwnSourceLoader({fetchYahooBundle:id=>fetchYahooItemBundle(id,settings),fetchRakumaItem:item=>fetchRakumaItem(item,settings)});
 const yahooConcurrency=Math.max(1,Math.min(4,Number(settings.yahooConcurrency)||3));
-await mapLimit(yahooTasks,yahooConcurrency,async(task,taskIndex)=>{
+const yahooWork=mapLimit(yahooTasks,yahooConcurrency,async(task,taskIndex)=>{
   const {context,item,prior}=task;
   const fresh=cachedYahoo(prior,item);
   if(!forceYahoo&&fresh&&prior.ownPrice===item.ownPrice&&isFreshMinutes(fresh.checkedAt,yahooFreshMinutes)){
@@ -139,12 +143,12 @@ await mapLimit(yahooTasks,yahooConcurrency,async(task,taskIndex)=>{
   }
   try{
     if(item.platform==='rakuma'){
-      item.sourceDetail=await fetchRakumaItem(item,settings);
+      item.sourceDetail=(await hydratedItem(item,prior)).sourceDetail;
       if(item.sourceDetail.status!=='OPEN')throw new Error('自有ラクマ商品不再在售，等待主页刷新');
       item.ownPrice=item.sourceDetail.price;
     }
     const profileSellerId=String(context.account.profileUrl||'').match(/\/user\/([^/?#]+)/i)?.[1]||'';
-    const result=await yahooCompare(null,item,{...settings,matchCorrections,ownSellerId:item.sellerId||profileSellerId,forceYahooBroadSearch:forceYahoo||task.priority<=1});context.yahooById.set(item.id,result);
+    const result=await yahooCompare(null,item,{...settings,matchCorrections,ownSellerId:item.sellerId||profileSellerId,forceYahooBroadSearch:forceYahoo||task.priority<=1},{fetchYahooItemBundle:(id)=>id===item.id?ownBundle(id):fetchYahooItemBundle(id,settings)});context.yahooById.set(item.id,result);
     console.log(`[Yahoo ${taskIndex+1}/${yahooTasks.length}] ${context.account.name} ${item.id} cards=${result.cardCount} matches=${result.competitorCount} lowest=${result.lowestPrice} source=${result.sourceStatus?.search||'unknown'}`);
   }catch(error){
     console.error(`[Yahoo ERROR][${context.account.id}:${item.id}]`,String(error));
@@ -165,12 +169,12 @@ const rakumaTasks=fairRoundRobin(rakumaBuckets);
 for(const context of contexts)for(const item of context.activeItems){
   const cached=cachedRakuma(priorFor(context,item));if(cached&&isFresh(cached.checkedAt,rakumaFreshHours))context.rakumaById.set(item.id,cached);
 }
+const rakumaWork=(async()=>{
 for(const [index,task] of rakumaTasks.entries()){
   const {context,item,prior}=task;
-  if(index>=rakumaLimit){context.rakumaById.set(item.id,cachedRakuma(prior,'rotation_limit')||{status:'deferred_limit',candidates:[],lowestPrice:null,checkedAt:null});continue}
+  if(index>=rakumaLimit||Date.now()>=deadline){context.rakumaById.set(item.id,cachedRakuma(prior,'rotation_limit')||{status:'deferred_limit',candidates:[],lowestPrice:null,checkedAt:null});continue}
   try{
-    const yahoo=context.yahooById.get(item.id)||{};
-    const result=await rakumaCompare({...item,yahoo:{...(item.yahoo||{}),...yahoo}},{...settings,matchCorrections});
+    const result=await rakumaCompare(await hydratedItem(item,prior),{...settings,matchCorrections});
     context.rakumaById.set(item.id,result);
     console.log(`[ラクマ ${index+1}/${Math.min(rakumaTasks.length,rakumaLimit)}] ${context.account.name} ${item.id} cards=${result.cardCount} matches=${result.competitorCount} lowest=${result.lowestPrice??'—'}`);
   }catch(error){
@@ -179,6 +183,8 @@ for(const [index,task] of rakumaTasks.entries()){
   }
 }
 
+})();
+
 // All accounts receive a fair turn. A failed source never becomes 'no offers'.
 const mercariLimit=fullPriceAudit?Infinity:Math.max(1,Number(settings.maxMercariItemsPerRun)||30);
 const mercariTasks=fairRoundRobin(contexts.map(context=>context.activeItems.map((item,itemIndex)=>{
@@ -186,15 +192,18 @@ const mercariTasks=fairRoundRobin(contexts.map(context=>context.activeItems.map(
  if(cached&&isFresh(cached.checkedAt,6)){context.mercariById.set(item.id,cached);return null}
  return {context,item,prior,itemIndex,lastChecked:Number.isFinite(stamp)?stamp:0};
 }).filter(Boolean).sort((a,b)=>a.lastChecked-b.lastChecked||a.itemIndex-b.itemIndex)));
+const mercariWork=(async()=>{
 let mercariBrowser,mercariPage;
 try{for(const [index,{context,item,prior}] of mercariTasks.entries()){
- if(index>=mercariLimit){context.mercariById.set(item.id,cachedComparison(prior.mercari,'rotation_limit')||{status:'deferred_limit',candidates:[],checkedAt:null});continue}
+ if(index>=mercariLimit||Date.now()>=deadline){context.mercariById.set(item.id,cachedComparison(prior.mercari,'rotation_limit')||{status:'deferred_limit',candidates:[],checkedAt:null});continue}
  try{
   if(!mercariPage){const opened=await openContext();mercariBrowser=opened.browser;mercariPage=await opened.context.newPage()}
-  const result=await mercariCompare(mercariPage,{...item,yahoo:context.yahooById.get(item.id)},{...settings,matchCorrections});context.mercariById.set(item.id,result);
+  const result=await mercariCompare(mercariPage,await hydratedItem(item,prior),{...settings,matchCorrections});context.mercariById.set(item.id,result);
   console.log('[Mercari]',context.account.id,item.id,result.status,'matches='+result.competitorCount,'lowest='+result.lowestPrice);
  }catch(error){context.mercariById.set(item.id,{status:'error',error:String(error),rulesVersion:MATCHING_RULES_VERSION,checkedAt:new Date().toISOString(),candidates:[]});console.error('[Mercari ERROR]',item.id,String(error))}
 }}finally{await mercariBrowser?.close().catch(()=>{})}
+
+})();
 
 const xianyuState=await xianyuStateFromEnv();
 const initialAccess=sessionManager.access();
@@ -232,20 +241,21 @@ for(const bucket of xianyuBuckets)bucket.sort((a,b)=>a.priority-b.priority||a.la
 const xianyuTasks=[];
 for(let index=0;index<Math.max(0,...xianyuBuckets.map(bucket=>bucket.length));index++)for(const bucket of xianyuBuckets)if(bucket[index])xianyuTasks.push(bucket[index]);
 
+const xianyuWork=(async()=>{
 try{
   for(const [index,task] of xianyuTasks.entries()){
     const {context,item}=task;
     // Yahoo owns the general scan budget, but the small fixed Xianyu batch must
     // still run afterwards; otherwise a large inventory permanently starves cost
     // refreshes before they start.
-    if(index>=xianyuLimit){context.xianyuById.set(item.id,{status:'deferred_limit',samples:[],averageCNY:null});continue}
+    if(index>=xianyuLimit||Date.now()>=deadline){context.xianyuById.set(item.id,{status:'deferred_limit',samples:[],averageCNY:null});continue}
     if(!sessionManager.access().allowed){context.xianyuById.set(item.id,deferredXianyuAccess(sessionManager.access()));continue}
     if(anyXianyuLoginRequired){context.xianyuById.set(item.id,{status:'deferred_auth',samples:[],averageCNY:null});continue}
     console.log(`[闲鱼 ${index+1}/${Math.min(xianyuTasks.length,xianyuLimit)}] ${context.account.name} ${item.title}`);
     let result;
     try{
-      const yc=context.yahooById.get(item.id)||{};
-      result=await xianyuCost(await ensureXianyuPage(),{...item,yahoo:{...(item.yahoo||{}),...yc}},{...settings,matchCorrections});
+      const hydrated=await hydratedItem(item,task.prior);
+      result=await xianyuCost(await ensureXianyuPage(),hydrated,{...settings,matchCorrections});
       await sessionManager.persist(xContext,result).catch(()=>console.warn('[闲鱼会话] 更新保存失败，保留原会话'));
       if(result.status==='login_required'&&xianyuMode==='saved'){
         xianyuAuthExpired=true;console.warn('[闲鱼授权] 目标详情需要登录，停止本轮闲鱼检查，不切换身份绕过');
@@ -263,6 +273,9 @@ try{
     context.xianyuById.set(item.id,result);
   }
 }finally{await xBrowser?.close().catch(()=>{})}
+
+})();
+await Promise.all([yahooWork,rakumaWork,mercariWork,xianyuWork]);
 
 const accountResults=[];
 for(const context of contexts){
@@ -303,7 +316,7 @@ for(const context of contexts){
     base.staleListingSuggested=base.listingAge.eligible;
     const calculated=calculateManualFields(base,manual,settings);
     if(combinedMarket.underpriced&&recommendedPrice>ownPrice)calculated.advice=combinedMarket.singleVerified?'与下一家同款存在提价空间（仅1个核验样本）':'与下一家同款存在提价空间，建议提价';
-    if(comparisonIncomplete)calculated.advice='三平台比价待核验';
+    if(comparisonIncomplete)calculated.advice=decision.canRecommend?'已有核验同款低价，可参考降价；其他平台仍在更新':'三平台比价待核验';
     return {...base,...calculated};
   });
   const yahooValues=[...context.yahooById.values()];

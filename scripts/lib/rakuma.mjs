@@ -6,7 +6,7 @@ import {
   hasExplicitDefect,MATCHING_RULES_VERSION,listingSpecificationEquivalent,listingTextEquivalent,
   productFamily,semanticSameItem,titleScore,visualListingEquivalent
 } from './rules.mjs';
-import { queryFor } from './yahoo.mjs';
+import { exactQueryFor } from './yahoo.mjs';
 import { parseShopProfile } from '../../public/shop-profile.js';
 
 const UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140 Safari/537.36';
@@ -169,7 +169,7 @@ export function nextRakumaSearchPage(html,url){
 
 export async function rakumaCompare(item,settings={},dependencies={}){
   const getHtml=dependencies.fetchHtml||fetchHtml,fingerprint=dependencies.imageFingerprints||imageFingerprints;
-  const query=queryFor(item.title),searchUrl=`https://fril.jp/s?query=${encodeURIComponent(query)}&transaction=selling&sort=sell_price&order=asc`;
+  const query=exactQueryFor(item.title),searchUrl=`https://fril.jp/s?query=${encodeURIComponent(query)}&transaction=selling&sort=sell_price&order=asc`;
   const ownDescription=item.sourceDetail?.description||item.yahoo?.ownDescription||item.description||'';
   const ownCategory=item.sourceDetail?.category||item.yahoo?.ownCategory||item.category||'';
   const ownImages=[...(item.sourceDetail?.images||[]),...(item.yahoo?.ownImages||[]),...(item.images||[]),item.image].filter(Boolean);
@@ -192,6 +192,9 @@ export async function rakumaCompare(item,settings={},dependencies={}){
     const semantic=semanticSameItem({query:item.title,candidate:card.title,queryCategory:ownCategory,candidateCategory:card.category});
     const ownFamily=productFamily(item.title,ownCategory),cardFamily=productFamily(card.title,card.category);
     if(ownFamily&&cardFamily&&ownFamily!==cardFamily){rejected.push({...card,reason:'physical_product_type_unconfirmed'});continue}
+    const conflict=offerIdentityGuard({ownTitle:item.title,candidateTitle:card.title,ownCategory,candidateCategory:card.category,requireDescriptions:false,checkImages:false});
+    // Missing card condition/contents need details; explicit title conflicts do not.
+    if(!conflict.accepted&&['explicit_variant_mismatch','description_color_mismatch','defect'].includes(conflict.reason)){rejected.push({...card,reason:conflict.reason});continue}
     const score=titleScore(item.title,card.title),anchors=distinctiveCoverage(item.title,card.title);
     if(semantic.accepted||score>=.62||(score>=.45&&anchors.matchedCount>=2))screened.push({...card,titleScore:score,semantic});
     else rejected.push({...card,reason:semantic.reason||'weak_title',titleScore:score});
@@ -204,9 +207,10 @@ export async function rakumaCompare(item,settings={},dependencies={}){
       const detail=extractRakumaDetail(await getHtml(card.url,settings),card.url);
       if(ownSellerId&&detail.sellerId===ownSellerId){rejected.push({...card,reason:'own_seller'});continue}
       if(detail.status!=='OPEN'){rejected.push({...card,reason:detail.status==='SOLD'?'not_open':'availability_unconfirmed'});continue}
-      if(!detail.shippingKnown){rejected.push({...card,reason:'shipping_unconfirmed'});continue}
       if(!ownDescription.trim()||!detail.description.trim()){rejected.push({...card,reason:'sale_description_unavailable'});continue}
       if(hasExplicitDefect(detail.title,detail.description)){rejected.push({...card,reason:'defect'});continue}
+      const textIdentity=offerIdentityGuard({ownTitle:item.title,ownDescription,candidateTitle:detail.title,candidateDescription:detail.description,ownCategory,candidateCategory:detail.category,checkImages:false});
+      if(!textIdentity.accepted){rejected.push({...card,reason:textIdentity.reason});continue}
       const detailImages=[...detail.images,card.image].filter(Boolean);
       const detailEvidence=await Promise.all([...new Set(detailImages)].slice(0,8).map(fingerprint));
       const detailFingerprints=detailEvidence.filter(Boolean);
@@ -225,6 +229,7 @@ export async function rakumaCompare(item,settings={},dependencies={}){
       if(!semantic.accepted&&!specificationEquivalent&&!exactTitleEquivalent&&!textEquivalent&&!visualEquivalent){
         rejected.push({...card,reason:semantic.reason||'detail_mismatch',imageScore,primaryImageScore});continue
       }
+      if(!detail.shippingKnown){rejected.push({...card,reason:'shipping_unconfirmed'});continue}
       const queryFamily=productFamily(`${item.title}\n${ownDescription}`,ownCategory),candidateFamily=productFamily(`${detail.title}\n${detail.description}`,detail.category);
       competitors.push({...card,...detail,platform:'rakuma',image:detail.images[0]||card.image,imageScore,primaryImageScore,queryFamily,candidateFamily,matchMethod:visualEquivalent?'strong_visual_primary_product':'detail_type_quantity_equivalent_text'});
     }catch(error){rejected.push({...card,reason:'detail_error',error:String(error)})}
