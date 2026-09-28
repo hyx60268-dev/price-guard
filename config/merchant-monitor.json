@@ -1,0 +1,7 @@
+{
+  "merchants": [],
+  "maxPagesPerMerchant": 10,
+  "maxDetailsPerRun": 100,
+  "maxImageLookupsPerRun": 8,
+  "budgetMinutes": 12
+}

@@ -115,6 +115,18 @@ jobs:
       - uses: actions/deploy-pages@v4
         with:
           artifact_name: github-pages-prices-${{ github.run_attempt }}
+      # A due-check here makes daily monitoring survive GitHub replacing a
+      # pending standalone publication with a scheduled pricing run.
+      - name: 补执行到期的每日商家监控
+        run: node scripts/merchant-monitor.mjs
+        env:
+          MERCHANT_MONITOR_IF_DUE: '1'
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          XIANYU_AUTH_PART_1: ${{ secrets.XIANYU_AUTH_PART_1 }}
+          XIANYU_AUTH_PART_2: ${{ secrets.XIANYU_AUTH_PART_2 }}
+          XIANYU_AUTH_PART_3: ${{ secrets.XIANYU_AUTH_PART_3 }}
+          XIANYU_STORAGE_STATE_GZIP_B64: ${{ secrets.XIANYU_STORAGE_STATE_GZIP_B64 }}
+          XIANYU_STORAGE_STATE_B64: ${{ secrets.XIANYU_STORAGE_STATE_B64 }}
       - name: 准备手机以图搜索图片
         run: npm run prepare:share-images
         env:

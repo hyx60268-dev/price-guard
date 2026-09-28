@@ -1,3 +1,4 @@
+import { selectMerchantProducts, merchantCardsMarkup } from './merchant-view.js';
 import { pricingStatus, pricingSummary } from './pricing-status.js';
 import { pricingDecision, PLATFORM_LABELS } from './pricing-policy.js';
 import { mergeAccounts,resolveCostRecord } from './durable-state.js';
@@ -183,7 +184,20 @@ function discoverySelected(){
     (filter==='all'||filter===item.sourcePlatform||(item.sourcePlatforms||[]).includes(filter)));
 }
 function discoveryPlatform(value){return value==='mercari'?'メルカリ':value==='yahoo'?'Yahoo!フリマ':'メルカリ + Yahoo!フリマ'}
+function renderMerchantDiscovery(){
+ const value=discoveryData?.mode==='merchant_monitor'?discoveryData:{products:[],merchants:[],checkedAt:null};
+ const selected=selectMerchantProducts(value.products||[],{query:$('#discoverySearch').value,platform:$('#discoveryFilter').value,period:$('#merchantPeriod').value,event:$('#merchantEvent').value});
+ $('#discoveryStamp').textContent=value.checkedAt?'最近监控：'+new Date(value.checkedAt).toLocaleString('zh-CN')+' · 每日云端更新':'等待配置商家主页并建立监控基线';
+ const sources=value.merchants||[],partial=sources.filter(s=>s.status!=='ok').length;
+ $('#discoveryStats').textContent='商家 '+sources.length+' · 当前筛选 '+selected.length+' 件'+(partial?' · '+partial+' 个商家尚未完整读取':'');
+ $('#discoveryCards').innerHTML=merchantCardsMarkup(selected);$('#discoveryEmpty').hidden=selected.length>0;
+ $('#discoveryEmpty').textContent=sources.length?'当前筛选下没有已确认的商品记录。':'请提供要监控的商家主页链接。';
+ document.querySelectorAll('[data-copy-merchant]').forEach(button=>button.onclick=()=>copyDiscovery(button,button.parentElement.querySelector('textarea').value));
+}
 function renderDiscovery(){
+ return renderMerchantDiscovery();
+}
+function renderLegacyDiscovery(){
   const container=$('#discoveryCards');if(!container)return;
   if(!discoveryData){
     $('#discoveryStamp').textContent='等待首次云端选品扫描';$('#discoveryStats').innerHTML='<span>尚无数据</span>';container.innerHTML='';$('#discoveryEmpty').hidden=false;return;
@@ -406,6 +420,7 @@ $('#imageSearchDialog .close').onclick=()=>$('#imageSearchDialog').close();$('#i
 $('#saveSearchImage').onclick=saveSearchImage;$('#openXianyu').onclick=()=>openMarketplace('xianyu');$('#openXhs').onclick=()=>openMarketplace('xhs');
 $('#search').oninput=()=>{pricingPage=1;render()};$('#filter').onchange=()=>{pricingPage=1;render()};$('#accountSelect').onchange=event=>{currentAccountId=event.target.value;pricingPage=1;render()};
 $('#showPricing').onclick=()=>switchView('pricing');$('#showDiscovery').onclick=()=>switchView('discovery');
+$('#merchantPeriod').onchange=renderDiscovery;$('#merchantEvent').onchange=renderDiscovery;
 $('#discoverySearch').oninput=renderDiscovery;$('#discoveryFilter').onchange=renderDiscovery;
 $('#manageAccounts').onclick=()=>{
   renderLocalAccounts();renderPortalUsers();
