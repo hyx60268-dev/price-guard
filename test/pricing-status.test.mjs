@@ -17,7 +17,7 @@ test('actual failure, expired evidence, missing shipping and pending batches rem
 test('partial inventory reports verified advice separately from remaining inventory',()=>{
  const ready=item();ready.yahoo.candidates=[{price:19000,url:'https://example.test/item',matchMethod:'verified'}];
  const pending=item();delete pending.mercari;
- const s=pricingSummary([ready,pending],options);assert.equal(s.value,1);assert.equal(s.ready,1);assert.equal(s.remaining,1);assert.match(s.note,/降价参考可使用已核验同款/);
+ const s=pricingSummary([ready,pending],options);assert.equal(s.value,1);assert.equal(s.ready,1);assert.equal(s.remaining,1);assert.match(s.note,/部分平台已核验的降价参考/);
  assert.equal(pricingSummary([item()],options).value,0);assert.equal(pricingSummary([item()],options).label,'建议调价');
 });
 test('status counts use the selected account inventory without mixing accounts',()=>{

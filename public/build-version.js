@@ -1,1 +1,1 @@
-export const FRONTEND_VERSION = 39;
+export const FRONTEND_VERSION = 40;

@@ -1,7 +1,7 @@
 <!doctype html><html lang="zh-CN"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#13211b">
-<title>衡序</title><link rel="manifest" href="manifest.webmanifest?v=24"><link rel="icon" href="favicon.svg"><link rel="stylesheet" href="styles.css?v=28">
+<title>衡序</title><link rel="manifest" href="manifest.webmanifest?v=24"><link rel="icon" href="favicon.svg"><link rel="stylesheet" href="styles.css?v=29">
 </head><body>
 <header><div class="brand"><img class="brandmark" src="favicon.svg" alt=""><div><p class="eyebrow">EQUORA</p><h1>衡序</h1></div></div><div class="header-status"><p id="stamp">读取最近一次云端检查…</p></div><div class="headeractions"><button id="cloudSync" class="ghost" hidden>同步云端</button><button id="help" class="ghost">手机与通知</button><button id="install" class="ghost" hidden>安装到桌面</button></div></header>
 <main>
@@ -27,6 +27,11 @@
   <section id="discoveryView" hidden>
    <div class="discoveryhead"><div><p class="eyebrow dark">MERCARI × YAHOO!フリマ × 闲鱼</p><h2>指定商家追踪</h2><p id="discoveryStamp" class="muted">读取最近一次选品扫描…</p></div><div class="discoverystats" id="discoveryStats"></div></div>
    <section class="notice info"><strong>监控条件</strong><span>每天监控你指定的商家。标题或详情含“中国限定”或“海外限定”，且售价 > ¥4,999。分别查看今天和近30天的上架、已售记录。成交日期未知的商品单独列出；商品消失不会被当成售出。</span></section>
+   <section id="merchantSettings" class="merchant-settings">
+    <h3>监控商家</h3><p class="muted">粘贴商家主页，可一次添加多个，每行一个。保存后同步云端即可每天自动追踪。</p>
+    <form id="merchantForm"><label for="merchantUrls">Yahoo!フリマ / Rakuma / Mercari 商家主页</label><textarea id="merchantUrls" rows="3" placeholder="https://paypayfleamarket.yahoo.co.jp/user/…&#10;https://fril.jp/shop/…&#10;https://jp.mercari.com/user/profile/…" required></textarea><button type="submit">添加并同步云端</button></form>
+    <div id="merchantList"></div><button id="syncMerchants" class="soft" type="button">同步监控列表</button><p id="merchantSaveStatus" class="muted" role="status"></p>
+   </section>
    <div class="toolbar"><label class="search"><span>⌕</span><input id="discoverySearch" placeholder="搜索候选商品"></label><select id="discoveryFilter"><option value="all">全部候选</option><option value="mercari">メルカリ来源</option><option value="yahoo">Yahoo来源</option><option value="rakuma">Rakuma来源</option></select><select id="merchantPeriod" aria-label="时间范围"><option value="month">近30天</option><option value="today">今天</option></select><select id="merchantEvent" aria-label="商品动态"><option value="all">全部动态</option><option value="listed">上架记录</option><option value="sold">已售记录</option><option value="undated">已售 · 日期未知</option></select></div>
    <div id="discoveryCards" class="discoverycards"></div><p id="discoveryEmpty" hidden>暂时没有符合条件的热卖商品。</p>
   </section>
@@ -36,5 +41,5 @@
 <dialog id="detail"><button class="close" aria-label="关闭">×</button><div id="detailBody"></div></dialog>
 <dialog id="imageSearchDialog"><button class="close" aria-label="关闭">×</button><h2>手机以图搜索</h2><div class="imagehandoff"><img id="imageSearchPreview" alt="待搜索图片"><div><b id="imageSearchTitle"></b><p id="imageSearchStatus" class="muted">先把图片保存到手机，再打开 App 选择刚保存的图片。</p></div></div><div class="imagehandoffactions"><button id="saveSearchImage">① 保存图片到手机</button><button id="openXianyu" class="soft">② 打开闲鱼</button><button id="openXhs" class="soft">② 打开小红书</button></div><p class="muted">iPhone/Android 会先出现系统分享面板，请点“存储图像/保存图片”。网页受手机系统限制，不能代替你点击 App 内的相机按钮；打开 App 后选择相册里最新一张即可。</p></dialog>
 <dialog id="helpDialog"><button class="close" aria-label="关闭">×</button><h2>手机使用、同步与通知</h2><ol class="helpsteps"><li><b>打开仪表盘</b><span>手机 Safari 或 Chrome 打开当前网址，输入管理员给你的用户名和密码。</span></li><li><b>放到手机桌面</b><span>iPhone：Safari“分享 → 添加到主屏幕”；Android：浏览器菜单“安装应用/添加到主屏幕”。</span></li><li><b>绑定自己的店铺</b><span>在“账号管理”粘贴 Yahoo!フリマ 或 fril.jp/shop/ 卖家主页链接，点“同步云端”，再在打开的 GitHub 页面点绿色“Submit new issue”。首次提交会绑定你的 GitHub 身份。</span></li><li><b>接收提醒</b><span>价格、成本和选品变化统一创建 <a target="_blank" href="https://github.com/hyx60268-dev/price-guard/issues">GitHub Issue</a>，不再发送邮件或 Telegram。</span></li></ol></dialog>
-<footer>价格检查约每20分钟 · Yahoo＋Rakuma＋Mercari 三平台比价 · GitHub Actions 通知 · 可跨设备加密同步</footer><script type="module" src="app.js?v=39"></script>
+<footer>价格检查约每20分钟 · Yahoo＋Rakuma＋Mercari 三平台比价 · GitHub Actions 通知 · 可跨设备加密同步</footer><script type="module" src="app.js?v=40"></script>
 </body></html>

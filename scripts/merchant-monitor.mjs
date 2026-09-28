@@ -1,3 +1,4 @@
+import { mergeMerchantConfigs } from '../public/merchant-config.js';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -14,6 +15,8 @@ const settings=JSON.parse(await fs.readFile(path.join(root,'config/settings.json
 const password=process.env.DASHBOARD_PASSWORD;if(!password||password.length<8)throw Error('需要已配置的仪表盘密码');
 for(const p of ['state','public/data','.auth'])await fs.mkdir(path.join(root,p),{recursive:true});
 let previous={};try{previous=JSON.parse(decrypt(await fs.readFile(path.join(root,'state/discovery.json.enc')),password))}catch(e){if(e.code!=='ENOENT')throw e}
+let dashboard={};try{dashboard=JSON.parse(decrypt(await fs.readFile(path.join(root,'state/latest.json.enc')),password))}catch(e){if(e.code!=='ENOENT')throw e}
+cfg.merchants=mergeMerchantConfigs((cfg.merchants||[]).map(raw=>({...merchantProfile(raw),enabled:true})),dashboard.merchantMonitors||[]).filter(m=>m.enabled);
 const configDigest=crypto.createHash('sha256').update(JSON.stringify(cfg)).digest('hex');
 if(process.env.MERCHANT_MONITOR_IF_DUE==='1'&&previous.mode==='merchant_monitor'&&previous.configDigest===configDigest&&Date.now()-Date.parse(previous.checkedAt||'')<24*3600000){console.log('商家监控未到下次更新时间，保留已发布记录');process.exit(0)}
 const merchants=[...new Map((cfg.merchants||[]).map(raw=>{const m=merchantProfile(raw);return [m.key,m]})).values()];

@@ -1,3 +1,4 @@
+import { isOwnedOffer } from '../../public/owned-offers.js';
 import { imageFingerprints,imageSetSimilarity,primaryProductSimilarity } from './image.mjs';
 import { offerIdentityGuard } from './offer-identity.mjs';
 import { rejectedByMemory } from '../../public/match-memory.js';
@@ -21,6 +22,7 @@ export async function mercariCompare(page,item,settings={},dependencies={}){
   const search=await (dependencies.search||mercariSearch)(page,searchUrl),cards=search.cards;
   const screened=[];
   for(const card of cards){
+    if(isOwnedOffer(settings.ownedOffers,'mercari',card)){rejected.push({...card,reason:'managed_shop'});continue}
     if(card.itemStatus!=='OPEN'||item.platform==='mercari'&&(card.id===item.id||ownSellerId&&card.sellerId===ownSellerId)){rejected.push({...card,reason:'own_seller_or_not_open'});continue}
     if(rejectedByMemory(settings.matchCorrections,item,'mercari',card)){rejected.push({...card,reason:'saved_user_correction'});continue}
     const semantic=semanticSameItem({query:item.title,candidate:card.title,queryCategory:ownCategory,candidateCategory:card.category});
@@ -39,7 +41,7 @@ export async function mercariCompare(page,item,settings={},dependencies={}){
   for(const card of preliminary){
     try{
       const detail=await (dependencies.detail||mercariDetail)(page,card.url);
-      if(ownSellerId&&detail.sellerId===ownSellerId){rejected.push({...card,reason:'own_seller'});continue}
+      if(isOwnedOffer(settings.ownedOffers,'mercari',{...card,...detail})||ownSellerId&&detail.sellerId===ownSellerId){rejected.push({...card,reason:'own_seller'});continue}
       if(detail.status!=='OPEN'){rejected.push({...card,reason:detail.status==='SOLD'?'not_open':'availability_unconfirmed'});continue}
 
       if(!ownDescription.trim()||!detail.description.trim()){rejected.push({...card,reason:'sale_description_unavailable'});continue}
