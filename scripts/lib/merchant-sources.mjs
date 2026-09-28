@@ -1,12 +1,14 @@
 import { fetchYahooResult,fetchYahooItemBundle } from './yahoo.mjs';
 import { fetchRakumaHtml,extractRakumaSearchCards,fetchRakumaItem } from './rakuma.mjs';
 import { readMercariCards,mercariDetail } from './mercari-page.mjs';
+import { merchantNameFromTitle } from './merchant-names.mjs';
 
 export async function merchantCards(merchant,{settings={},page,maxPages=10,deadline=Infinity}={}){
  const cards=new Map();let complete=false,pages=0;
  if(merchant.platform==='yahoo'){
   for(let n=1;n<=maxPages&&Date.now()<deadline;n++){
    const result=await fetchYahooResult(`${merchant.url}?page=${n}&sort=openTime&order=desc`,settings);pages++;
+   if(result.profileName)merchant.name=result.profileName;
    for(const raw of result.items||[])cards.set(raw.id,{id:raw.id,title:raw.title,price:Number(raw.price),status:raw.itemStatus,
     url:`https://paypayfleamarket.yahoo.co.jp/item/${raw.id}`,image:raw.thumbnailImageUrl||'',listedAt:raw.openTime||null,soldAt:raw.itemStatus==='SOLD'?raw.endTime||null:null});
    if(cards.size>=Number(result.totalResultsAvailable??Infinity)||(result.items||[]).length===0){complete=true;break}
@@ -25,6 +27,7 @@ export async function merchantCards(merchant,{settings={},page,maxPages=10,deadl
   }
  }else{
   await page.goto(merchant.url,{waitUntil:'domcontentloaded',timeout:45000});
+  const profileName=merchantNameFromTitle('mercari',await page.title());if(profileName)merchant.name=profileName;
   await page.waitForFunction(()=>document.querySelector('main a[href^="/item/"]')||/出品した商品はありません/.test(document.querySelector('main')?.innerText||''),{},{timeout:20000});
   let prior=-1,stable=0;
   for(let n=0;n<maxPages&&Date.now()<deadline;n++){
