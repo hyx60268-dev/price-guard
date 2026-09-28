@@ -75,7 +75,7 @@ export function readMercariDetail(document){
   }catch{}
  }
  return {priceDiagnostic:price&&shippingJPY!==null?undefined:{publicShipping,headerText:header.map(n=>n.children.length?'':n.textContent).join(' ').slice(0,1200),shippingHeadings:headings.filter(n=>/送料|配送/.test(n.textContent)).map(n=>n.parentElement.outerHTML.slice(0,1500)),converted:converted?.outerHTML.slice(0,1000),targetPrices:targetPrices.map(n=>n.outerHTML.slice(0,700)),headerPrices:header.filter(n=>/[¥￥]|[0-9],[0-9]{3}/.test(n.textContent)).slice(-10).map(n=>n.outerHTML.slice(0,500))},title,description,condition,price,itemPrice:price,shippingJPY,shippingText,shippingKnown:shippingJPY!==null,
-  status:checkout?'OPEN':'UNKNOWN',sellerId:seller?.getAttribute('href')||'',images:[...new Set(images)]};
+  status:checkout?'OPEN':'UNKNOWN',sellerId:seller?.getAttribute('href')||'',sellerName:seller?.querySelector('h2,h3,[data-testid="seller-name"]')?.textContent?.trim()||seller?.querySelector('img')?.alt?.replace(/の(?:画像|アイコン).*$/,'').trim()||'',images:[...new Set(images)]};
 }
 export async function mercariSearch(page,url){
  await page.goto(url,{waitUntil:'domcontentloaded',timeout:60000});

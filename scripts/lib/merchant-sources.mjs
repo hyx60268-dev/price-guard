@@ -48,7 +48,7 @@ export async function merchantDetail(merchant,card,{settings={},page}={}){
  if(merchant.platform==='yahoo'){
   const detail=(await fetchYahooItemBundle(card.id,settings)).detail;
   if(String(detail.seller?.id||'')!==merchant.id)throw Error('商品卖家与监控主页不一致');
-  return {...card,title:detail.title,description:detail.description||'',price:Number(detail.price),status:detail.status,
+  return {...card,sellerName:detail.seller?.name||detail.seller?.nickname||detail.seller?.displayName||'',title:detail.title,description:detail.description||'',price:Number(detail.price),status:detail.status,
    condition:typeof detail.condition==='string'?detail.condition:detail.condition?.name||'',
    listedAt:detail.openDate||card.listedAt||null,images:(detail.images||[]).map(i=>typeof i==='string'?i:i.url).filter(Boolean)};
  }

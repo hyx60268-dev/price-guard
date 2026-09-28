@@ -203,7 +203,7 @@ function renderMerchantDiscovery(){
  const selected=selectMerchantProducts(value.products||[],{query:$('#discoverySearch').value,platform:$('#discoveryFilter').value,period:$('#merchantPeriod').value,event:$('#merchantEvent').value});
  $('#discoveryStamp').textContent=value.checkedAt?'最近监控：'+new Date(value.checkedAt).toLocaleString('zh-CN')+' · 每日云端更新':'等待配置商家主页并建立监控基线';
  const sources=value.merchants||[],partial=sources.filter(s=>s.status!=='ok').length;
- $('#discoveryStats').textContent='商家 '+sources.length+' · 当前筛选 '+selected.length+' 件'+(partial?' · '+partial+' 个商家尚未完整读取':'');
+ $('#discoveryStats').textContent='商家 '+sources.length+' · 当前筛选 '+selected.length+' 款 · 已合并 '+(value.stats?.mergedListings||0)+' 条重复记录 · 已隐藏店内已有 '+(value.stats?.excludedOwned||0)+' 件'+(partial?' · '+partial+' 个商家尚未完整读取':'');
  $('#discoveryCards').innerHTML=merchantCardsMarkup(selected);$('#discoveryEmpty').hidden=selected.length>0;
  $('#discoveryEmpty').textContent=sources.length?'当前筛选下没有已确认的商品记录。':'在上方添加商家主页并同步云端，系统会建立监控基线。';
  document.querySelectorAll('[data-copy-merchant]').forEach(button=>button.onclick=()=>copyDiscovery(button,button.parentElement.querySelector('textarea').value));
@@ -545,7 +545,7 @@ function getMerchantMonitors(){return mergeMerchantConfigs(data?.merchantMonitor
 function renderMerchantSettings(){
  $('#merchantSettings').hidden=currentUsername!=='admin';if(currentUsername!=='admin')return;
  const records=getMerchantMonitors(),cloud=new Map((data?.merchantMonitors||[]).map(m=>[m.key,m]));
- $('#merchantList').innerHTML=records.filter(m=>m.enabled).map(m=>{const saved=cloud.get(m.key);const synced=saved?.enabled&&Date.parse(saved.updatedAt)>=Date.parse(m.updatedAt);return '<div class="merchant-row"><div><a target="_blank" rel="noopener" href="'+escapeHtml(m.url)+'">'+escapeHtml(m.name)+' · '+escapeHtml(m.platform)+'</a><small>'+escapeHtml(m.url)+'</small><small>'+escapeHtml(merchantMonitorStatus(m,data?.merchantMonitors||[],discoveryData))+'</small></div><button type="button" class="soft" data-remove-merchant="'+escapeHtml(m.key)+'">移除</button></div>'}).join('')||'<p class="muted">还没有监控商家</p>';
+ $('#merchantList').innerHTML=records.filter(m=>m.enabled).map(m=>{const saved=cloud.get(m.key);const synced=saved?.enabled&&Date.parse(saved.updatedAt)>=Date.parse(m.updatedAt);return '<div class="merchant-row"><div><a target="_blank" rel="noopener" href="'+escapeHtml(m.url)+'">'+escapeHtml((discoveryData?.merchants||[]).find(source=>source.key===m.key)?.name!==m.id?(discoveryData?.merchants||[]).find(source=>source.key===m.key)?.name||'商家名称读取中':m.name!==m.id?m.name:'商家名称读取中')+' · '+escapeHtml(m.platform)+'</a><small>'+escapeHtml(m.url)+'</small><small>'+escapeHtml(merchantMonitorStatus(m,data?.merchantMonitors||[],discoveryData))+'</small></div><button type="button" class="soft" data-remove-merchant="'+escapeHtml(m.key)+'">移除</button></div>'}).join('')||'<p class="muted">还没有监控商家</p>';
  document.querySelectorAll('[data-remove-merchant]').forEach(button=>button.onclick=async()=>{
   const next=records.map(m=>m.key===button.dataset.removeMerchant?{...m,enabled:false,updatedAt:new Date().toISOString()}:m);
   localStorage.setItem(scopedKey(merchantKey),JSON.stringify(next));renderMerchantSettings();await startCloudSync($('#merchantSaveStatus'),'merchants');
