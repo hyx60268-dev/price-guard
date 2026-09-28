@@ -1,3 +1,4 @@
+import { syncHandoff,copySyncBody } from '../public/sync-handoff.js';
 import { buildOwnedOffers,excludeOwnedOffers } from '../public/owned-offers.js';
 import { merchantProfile,mergeMerchantConfigs } from '../public/merchant-config.js';
 import { selectMerchantProducts,merchantCardsMarkup } from '../public/merchant-view.js';
@@ -22,7 +23,7 @@ test('actual procurement wins over automatic reference; overview sorts and opens
  const source=await fs.readFile(new URL('../public/app.js',import.meta.url),'utf8');
  const dom=new JSDOM(html,{url:'https://example.test',runScripts:'outside-only'});
  try{
- Object.assign(dom.window,{buildOwnedOffers,excludeOwnedOffers,merchantProfile,mergeMerchantConfigs,selectMerchantProducts,merchantCardsMarkup,pricingStatus,pricingSummary,pricingDecision,PLATFORM_LABELS,mergeAccounts,resolveCostRecord,candidateId,correctionKey,mergeMatchCorrections,rejectedByMemory,invalidateCorrectedMatches,parseShopProfile,FRONTEND_VERSION,fetch:async()=>{throw Error('offline fixture')}});
+ Object.assign(dom.window,{syncHandoff,copySyncBody,buildOwnedOffers,excludeOwnedOffers,merchantProfile,mergeMerchantConfigs,selectMerchantProducts,merchantCardsMarkup,pricingStatus,pricingSummary,pricingDecision,PLATFORM_LABELS,mergeAccounts,resolveCostRecord,candidateId,correctionKey,mergeMatchCorrections,rejectedByMemory,invalidateCorrectedMatches,parseShopProfile,FRONTEND_VERSION,fetch:async()=>{throw Error('offline fixture')}});
  dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true};
  dom.window.eval(source.replace(/^import .*;\r?\n/gm,'')+`window.fixture={set(value,costs){data=value;manualCosts=costs;currentAccountId='__all__'},effective,selected,render,actionablePrice}`);
  const item={id:'same',accountId:'a',accountName:'A店',title:'商品 A',ownPrice:1000,recommendedPrice:900,averageCNY:90,yahoo:{status:'ok',rulesVersion:PRICING_RULES_VERSION,checkedAt:new Date().toISOString(),candidates:[{price:901,url:'https://example.com/a',id:'1',matchMethod:'verified'}]},rakuma:{status:'ok',rulesVersion:PRICING_RULES_VERSION,checkedAt:new Date().toISOString()},mercari:{status:'ok',rulesVersion:PRICING_RULES_VERSION,checkedAt:new Date().toISOString()}};
@@ -55,6 +56,10 @@ test('actual procurement wins over automatic reference; overview sorts and opens
  assert.match(dom.window.document.querySelector('#merchantSaveStatus').textContent,/商家主页/);
  await dom.window.document.querySelector('[data-remove-merchant]').onclick();
  assert.equal(dom.window.document.querySelectorAll('.merchant-row').length,1);
+ dom.window.document.querySelector('#syncBody').value='encrypted-test-body';
+ await dom.window.document.querySelector('#copySyncBody').onclick();
+ assert.match(dom.window.document.querySelector('#syncCopyStatus').textContent,/未允许复制/);
+ assert.equal(dom.window.document.querySelector('#syncBody').selectionEnd,19);
  await new Promise(resolve=>setImmediate(resolve));
  }finally{dom.window.close()}
 });
