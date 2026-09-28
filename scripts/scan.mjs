@@ -1,6 +1,6 @@
 import { buildOwnedOffers } from '../public/owned-offers.js';
 import { createOwnSourceLoader } from './lib/own-source.mjs';
-import { xianyuReviewPlan } from './lib/xianyu-review-plan.mjs';
+import { xianyuReviewPlan,mergeXianyuReview } from './lib/xianyu-review-plan.mjs';
 import { mercariCompare } from './lib/mercari.mjs';
 import { pricingDecision } from '../public/pricing-policy.js';
 import fs from 'node:fs/promises';
@@ -314,7 +314,7 @@ for(const context of contexts){
       marketMinPrice:combinedMarket.marketMinPrice??yc.marketMinPrice??null,marketMaxPrice:combinedMarket.marketMaxPrice??yc.marketMaxPrice??null,
       marketSourcePlatform:verifiedLowest?.platform||'yahoo',comparisonIncomplete,singleMarketSample:combinedMarket.singleVerified,
       averageCNY,confidence,yahooSource,costSource,needsXianyu,needsManualPurchase:needsXianyu&&!Number.isFinite(averageCNY)&&!Number.isFinite(manual?.purchaseCNY),
-      yahoo:yc,rakuma:rc,mercari:mc,xianyu:{...(prior.xianyu||{}),...xc,averageCNY,samples},
+      yahoo:yc,rakuma:rc,mercari:mc,xianyu:{...mergeXianyuReview(prior.xianyu,xc),averageCNY,samples},
       xianyuSearchUrl:xc.searchUrl||prior.xianyuSearchUrl||`https://www.goofish.com/search?q=${encodeURIComponent(item.xianyuQuery||item.title||'')}`};
     base.listingAge=listingAge(base,context.previousById.get(item.id)||{},context.profileStatus);
     base.staleListingSuggested=base.listingAge.eligible;
