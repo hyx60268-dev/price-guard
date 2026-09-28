@@ -1,0 +1,74 @@
+name: 每日指定商家监控
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '15 0 * * *'
+  push:
+    branches: [main]
+    paths:
+      - config/merchant-monitor.json
+      - scripts/merchant-monitor.mjs
+      - scripts/lib/merchant-*.mjs
+      - .github/workflows/merchant-monitor.yml
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+# Shares the publication/session lock: daily image lookups cannot overlap the
+# procurement session or overwrite a newer price/manual-cost publication.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+      PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            state
+            public/data/share-images
+          key: price-guard-state-${{ github.run_id }}
+          restore-keys: price-guard-state-
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: 恢复最新账号和成本，保留已发布商家历史
+        run: node scripts/restore-published-state.mjs
+      - name: 恢复价格看板
+        run: node scripts/repack-dashboard.mjs
+      - run: npx playwright install --with-deps chromium
+      - name: 记录上新和明确已售，检索闲鱼同款图片
+        run: node scripts/merchant-monitor.mjs
+        env:
+          XIANYU_AUTH_PART_1: ${{ secrets.XIANYU_AUTH_PART_1 }}
+          XIANYU_AUTH_PART_2: ${{ secrets.XIANYU_AUTH_PART_2 }}
+          XIANYU_AUTH_PART_3: ${{ secrets.XIANYU_AUTH_PART_3 }}
+          XIANYU_STORAGE_STATE_GZIP_B64: ${{ secrets.XIANYU_STORAGE_STATE_GZIP_B64 }}
+          XIANYU_STORAGE_STATE_B64: ${{ secrets.XIANYU_STORAGE_STATE_B64 }}
+      - uses: actions/cache/save@v4
+        with:
+          path: |
+            state
+            public/data/share-images
+          key: price-guard-state-${{ github.run_id }}
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+          name: merchant-pages-${{ github.run_attempt }}
+      - uses: actions/deploy-pages@v4
+        id: deploy
+        with:
+          artifact_name: merchant-pages-${{ github.run_attempt }}
