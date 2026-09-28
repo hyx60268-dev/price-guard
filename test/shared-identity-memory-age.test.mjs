@@ -99,6 +99,7 @@ test('encrypted correction sync publishes a safe price and retains fees and emai
     await fs.copyFile(path.join(root,'public/durable-state.js'),path.join(temp,'public/durable-state.js'));
     await fs.copyFile(path.join(root,'public/build-version.js'),path.join(temp,'public/build-version.js'));
     await fs.copyFile(path.join(root,'public/pricing-policy.js'),path.join(temp,'public/pricing-policy.js'));
+    for(const name of ['owned-offers.js','merchant-config.js'])await fs.copyFile(path.join(root,'public',name),path.join(temp,'public',name));
     await fs.writeFile(path.join(temp,'package.json'),' {"type":"module"}');
     await fs.symlink(await fs.realpath(path.join(root,'node_modules')),path.join(temp,'node_modules'),process.platform==='win32'?'junction':'dir');
     await fs.writeFile(path.join(temp,'config/accounts.json'),JSON.stringify({accounts:[{id:'melon',enabled:true}]}));
@@ -106,7 +107,7 @@ test('encrypted correction sync publishes a safe price and retains fees and emai
     const manualCosts={a:{accountId:'melon',itemId:'own',title:own.title,purchaseCNY:80,manualFeeCNY:10,shippingJPY:500,updatedAt:days(1)}};
     const previous={version:6,checkedAt:days(1),settings:{exchangeRate:20,costMultiplier:1,profitWarningJPY:1500},items:[own],accounts:[{id:'melon',items:[own]}],manualCosts,portalPreferences:{admin:{notificationEmail:'retained@example.test'}}};
     await fs.writeFile(path.join(temp,'state/latest.json.enc'),encrypt(Buffer.from(JSON.stringify(previous)),password));
-    const payload={version:1,matchCorrections:{a:record()}};
+    const payload={version:1,matchCorrections:{a:record()},merchantMonitors:[{url:'https://fril.jp/shop/monitor-test',enabled:true,updatedAt:new Date().toISOString()}]};
     const body=`<!-- PRICE_GUARD_SYNC_V1\n${encrypt(Buffer.from(JSON.stringify(payload)),password).toString('base64url')}\n-->`;
     const eventPath=path.join(temp,'event.json');await fs.writeFile(eventPath,JSON.stringify({repository:{owner:{login:'owner'}},issue:{title:'[Price Guard Sync:admin]',user:{login:'owner'},body}}));
     const fixtureEnv={DASHBOARD_PASSWORD:password,GITHUB_EVENT_PATH:eventPath,PORTAL_USERS_JSON:'',GITHUB_OUTPUT:''};
@@ -124,5 +125,7 @@ test('encrypted correction sync publishes a safe price and retains fees and emai
     assert.deepEqual(result.manualCosts,manualCosts);
     assert.equal(result.portalPreferences.admin.notificationEmail,'retained@example.test');
     assert.equal(Object.keys(result.matchCorrections).length,1);
+    assert.equal(result.merchantMonitors[0].url,'https://fril.jp/shop/monitor-test');
+    assert.equal(baseline.merchantMonitors[0].enabled,true);
   }finally{await fs.rm(temp,{recursive:true,force:true})}
 });

@@ -1,12 +1,6 @@
 import { canonicalSaleTitle } from './discovery.mjs';
 
-export function merchantProfile(raw){
- let u;try{u=new URL(typeof raw==='string'?raw:raw.url)}catch{throw Error('商家主页链接无效')}
- if(u.protocol!=='https:'||u.username||u.password)throw Error('商家主页必须是公开 HTTPS 链接');
- const platforms={'paypayfleamarket.yahoo.co.jp':['yahoo',/^\/user\/([A-Za-z0-9_-]+)\/?$/],'fril.jp':['rakuma',/^\/shop\/([A-Za-z0-9_-]+)\/?$/],'jp.mercari.com':['mercari',/^\/user\/profile\/(\d+)\/?$/]};
- const def=platforms[u.hostname],id=def&&u.pathname.match(def[1])?.[1];if(!id)throw Error('请使用 Yahoo!フリマ、Rakuma 或 Mercari 商家主页');
- return {platform:def[0],id,key:def[0]+':'+id,url:u.origin+u.pathname.replace(/\/$/,''),name:typeof raw==='string'?id:String(raw.name||id)};
-}
+export { merchantProfile } from '../../public/merchant-config.js';
 export function qualifiesMerchantItem(item={}){
  return Number.isFinite(item.price)&&item.price>4999&&/中国限定|海外限定/.test(`${item.title||''}\n${item.description||''}`);
 }

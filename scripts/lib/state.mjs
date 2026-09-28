@@ -1,3 +1,4 @@
+import { mergeMerchantConfigs } from '../../public/merchant-config.js';
 import { advice,calculateCost } from './rules.mjs';
 import { mergeMatchCorrections } from '../../public/match-memory.js';
 import { parseShopProfile } from '../../public/shop-profile.js';
@@ -108,6 +109,7 @@ export function reconcileDurableState(cache={},published={}){
   const base=revision(published)>=revision(cache)?published:cache;
   return {
     ...base,
+    merchantMonitors:mergeMerchantConfigs(cache.merchantMonitors||[],published.merchantMonitors||[]),
     manualCosts:mergeManualCosts(cache.manualCosts||{},published.manualCosts||{}),
     dismissedDiscoveries:mergeDismissedDiscoveries(cache.dismissedDiscoveries||{},published.dismissedDiscoveries||{}),
     discoveryReviews:mergeDiscoveryReviews(cache.discoveryReviews||{},published.discoveryReviews||{}),

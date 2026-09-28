@@ -1,3 +1,5 @@
+import { buildOwnedOffers,excludeOwnedOffers } from '../public/owned-offers.js';
+import { merchantProfile,mergeMerchantConfigs } from '../public/merchant-config.js';
 import { selectMerchantProducts,merchantCardsMarkup } from '../public/merchant-view.js';
 import { pricingDecision, PLATFORM_LABELS, PRICING_RULES_VERSION } from '../public/pricing-policy.js';
 import { pricingStatus, pricingSummary } from '../public/pricing-status.js';
@@ -20,7 +22,7 @@ test('actual procurement wins over automatic reference; overview sorts and opens
  const source=await fs.readFile(new URL('../public/app.js',import.meta.url),'utf8');
  const dom=new JSDOM(html,{url:'https://example.test',runScripts:'outside-only'});
  try{
- Object.assign(dom.window,{selectMerchantProducts,merchantCardsMarkup,pricingStatus,pricingSummary,pricingDecision,PLATFORM_LABELS,mergeAccounts,resolveCostRecord,candidateId,correctionKey,mergeMatchCorrections,rejectedByMemory,invalidateCorrectedMatches,parseShopProfile,FRONTEND_VERSION,fetch:async()=>{throw Error('offline fixture')}});
+ Object.assign(dom.window,{buildOwnedOffers,excludeOwnedOffers,merchantProfile,mergeMerchantConfigs,selectMerchantProducts,merchantCardsMarkup,pricingStatus,pricingSummary,pricingDecision,PLATFORM_LABELS,mergeAccounts,resolveCostRecord,candidateId,correctionKey,mergeMatchCorrections,rejectedByMemory,invalidateCorrectedMatches,parseShopProfile,FRONTEND_VERSION,fetch:async()=>{throw Error('offline fixture')}});
  dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true};
  dom.window.eval(source.replace(/^import .*;\r?\n/gm,'')+`window.fixture={set(value,costs){data=value;manualCosts=costs;currentAccountId='__all__'},effective,selected,render,actionablePrice}`);
  const item={id:'same',accountId:'a',accountName:'A店',title:'商品 A',ownPrice:1000,recommendedPrice:900,averageCNY:90,yahoo:{status:'ok',rulesVersion:PRICING_RULES_VERSION,checkedAt:new Date().toISOString(),candidates:[{price:901,url:'https://example.com/a',id:'1',matchMethod:'verified'}]},rakuma:{status:'ok',rulesVersion:PRICING_RULES_VERSION,checkedAt:new Date().toISOString()},mercari:{status:'ok',rulesVersion:PRICING_RULES_VERSION,checkedAt:new Date().toISOString()}};
@@ -31,7 +33,7 @@ test('actual procurement wins over automatic reference; overview sorts and opens
  assert.equal(dom.window.fixture.actionablePrice(other),true);
  assert.equal(dom.window.fixture.selected()[0].accountId,'a');
  dom.window.fixture.render();assert.equal(dom.window.document.querySelectorAll('.inventory-card').length,2);
- assert.match(dom.window.document.querySelector('#pricingProgress').textContent,/已核验 1\/2/);
+ assert.match(dom.window.document.querySelector('#pricingProgress').textContent,/三平台全部完成 1\/2/);
  assert.match(dom.window.document.querySelector('#cards').textContent,/建议降价/);
  dom.window.document.querySelector('#cards [data-account="b"]').click();
  assert.equal(dom.window.document.querySelector('#detailBody h2').textContent,'商品 B');
@@ -43,6 +45,16 @@ test('actual procurement wins over automatic reference; overview sorts and opens
  const text=dom.window.document.querySelector('#detailBody').textContent;
  assert.ok(text.includes('暂无可靠调价依据'));assert.ok(!text.includes('29,799'));assert.ok(!text.includes('与下一家同款存在提价空间'));
  assert.ok(!text.includes('Yahoo最低'));assert.ok(!text.includes('乐天Rakuma最低'));
+ dom.window.eval("startCloudSync=async()=>{};renderMerchantSettings();");
+ const input=dom.window.document.querySelector('#merchantUrls');input.value='https://fril.jp/shop/example\nhttps://jp.mercari.com/user/profile/123';
+ await dom.window.document.querySelector('#merchantForm').onsubmit({preventDefault(){}});
+ assert.equal(dom.window.document.querySelectorAll('.merchant-row').length,2);
+ assert.match(dom.window.document.querySelector('#merchantList').textContent,/本机已保存/);
+ input.value='https://not-a-marketplace.test/shop/bad';await dom.window.document.querySelector('#merchantForm').onsubmit({preventDefault(){}});
+ assert.equal(dom.window.document.querySelectorAll('.merchant-row').length,2);
+ assert.match(dom.window.document.querySelector('#merchantSaveStatus').textContent,/商家主页/);
+ await dom.window.document.querySelector('[data-remove-merchant]').onclick();
+ assert.equal(dom.window.document.querySelectorAll('.merchant-row').length,1);
  await new Promise(resolve=>setImmediate(resolve));
  }finally{dom.window.close()}
 });

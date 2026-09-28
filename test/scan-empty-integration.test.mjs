@@ -15,7 +15,7 @@ test('full scan publishes an empty inventory while retaining costs, aliases and 
   try{
     await fs.cp(path.join(source,'scripts'),path.join(root,'scripts'),{recursive:true});
     await fs.mkdir(path.join(root,'public'),{recursive:true});
-    for(const name of ['match-memory.js','shop-profile.js','durable-state.js','build-version.js','pricing-policy.js'])await fs.copyFile(path.join(source,'public',name),path.join(root,'public',name));
+    for(const name of ['match-memory.js','shop-profile.js','durable-state.js','build-version.js','pricing-policy.js','owned-offers.js','merchant-config.js'])await fs.copyFile(path.join(source,'public',name),path.join(root,'public',name));
     for(const name of ['state','config'])await fs.mkdir(path.join(root,name));
     await fs.writeFile(path.join(root,'package.json'),' {"type":"module"}');
     await fs.symlink(await fs.realpath(path.join(source,'node_modules')),path.join(root,'node_modules'),process.platform==='win32'?'junction':'dir');

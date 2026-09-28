@@ -1,3 +1,5 @@
+import { buildOwnedOffers,excludeOwnedOffers } from '../../public/owned-offers.js';
+import { pricingDecision } from '../../public/pricing-policy.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { compareSnapshots } from './changes.mjs';
@@ -16,7 +18,7 @@ function safeEmail(value=''){
 const compactCandidate=value=>value&&typeof value==='object'?{
   id:value.id||null,url:value.url||null,title:value.title||null,image:value.image||null,
   price:Number.isFinite(Number(value.price))?Number(value.price):null,platform:value.platform||null,
-  reason:value.reason||null,titleScore:value.titleScore??null,imageScore:value.imageScore??null,
+  isOwn:Boolean(value.isOwn),reason:value.reason||null,titleScore:value.titleScore??null,imageScore:value.imageScore??null,
   primaryImageScore:value.primaryImageScore??null,matchMethod:value.matchMethod||null,
   detailTitle:value.detailTitle||null,sellerId:value.sellerId||null,itemPrice:value.itemPrice??null,shippingJPY:value.shippingJPY??null,sellerKey:value.sellerKey||null,priceSource:value.priceSource||null,
   titleMatch:value.titleMatch??null,bodyMatch:value.bodyMatch??null
@@ -86,7 +88,7 @@ export function scopeResultForPortalUser(result,user){
   const notificationEmail=safeEmail(result.portalPreferences?.[user.username]?.notificationEmail||user.notificationEmail);
   const matchCorrections=Object.fromEntries(Object.entries(result.matchCorrections||{}).filter(([,record])=>allowed.has(record.accountId)));
   return {...result,pricingCoverage:pricingCoverage(items,accounts),matchCorrections,portalUsers:undefined,portalPreferences:undefined,portalUser:{username:user.username,displayName:user.displayName,role:'member',notificationEmail},accounts,items,manualCosts,managedAccounts,
-    listingHistory:undefined,appliedSyncIssues:undefined,dismissedDiscoveries:{},discoveryReviews:{},
+    merchantMonitors:undefined,listingHistory:undefined,appliedSyncIssues:undefined,dismissedDiscoveries:{},discoveryReviews:{},
     relistAliases:Object.fromEntries(Object.entries(result.relistAliases||{}).filter(([key])=>allowed.has(key.slice(0,key.lastIndexOf(':'))))),
     ownedTitleHistory:items.map(item=>item.title).filter(Boolean)};
 }
@@ -128,6 +130,16 @@ export function dashboardSummary(result,changeSummary){
 
 export async function writeOutputs({root,result,previous,password}){
   await Promise.all(['data','public/data','state'].map(directory=>fs.mkdir(path.join(root,directory),{recursive:true})));
+  const ownership=buildOwnedOffers([...(result.accounts||[]),...(result.managedAccounts||[])],result.items||[]);
+  result.items=(result.items||[]).map(item=>{
+    const clean=excludeOwnedOffers(item,ownership);if(clean.yahoo===item.yahoo&&clean.rakuma===item.rakuma&&clean.mercari===item.mercari)return item;
+    const decision=pricingDecision(clean);return {...clean,...decision,lowestPrice:decision.lowest?.price??clean.ownPrice,lowestUrl:decision.lowest?.url||clean.url,
+      afterProfitJPY:Number.isFinite(clean.costJPY)?decision.recommendedPrice-clean.costJPY:null,
+      afterUnder1500:Number.isFinite(clean.costJPY)&&decision.recommendedPrice-clean.costJPY<(result.settings?.profitWarningJPY??1500)};
+  });
+  for(const account of result.accounts||[])account.items=result.items.filter(i=>i.accountId===account.id);
+  // Runtime Sets belong to workers, never to persisted settings.
+  if(result.settings){result.settings={...result.settings};delete result.settings.ownedOffers}
   result.dataRevision=result.dataRevision||result.cloudSyncedAt||result.checkedAt||new Date().toISOString();
   result.portalUsers=portalUserRecordsForResult(result);
   const portalUsers=result.portalUsers.filter(user=>user.enabled!==false);

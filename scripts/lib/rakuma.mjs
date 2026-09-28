@@ -1,3 +1,4 @@
+import { isOwnedOffer } from '../../public/owned-offers.js';
 import { imageFingerprints,imageSetSimilarity,primaryProductSimilarity } from './image.mjs';
 import { offerIdentityGuard } from './offer-identity.mjs';
 import { rejectedByMemory } from '../../public/match-memory.js';
@@ -187,6 +188,7 @@ export async function rakumaCompare(item,settings={},dependencies={}){
   const cards=[...collected.values()],searchComplete=!nextPage;
   const screened=[];
   for(const card of cards){
+    if(isOwnedOffer(settings.ownedOffers,'rakuma',card)){rejected.push({...card,reason:'managed_shop'});continue}
     if(card.itemStatus!=='OPEN'||item.platform==='rakuma'&&(card.id===item.id||ownSellerId&&card.sellerId===ownSellerId)){rejected.push({...card,reason:'own_seller_or_not_open'});continue}
     if(rejectedByMemory(settings.matchCorrections,item,'rakuma',card)){rejected.push({...card,reason:'saved_user_correction'});continue}
     const semantic=semanticSameItem({query:item.title,candidate:card.title,queryCategory:ownCategory,candidateCategory:card.category});
@@ -205,7 +207,7 @@ export async function rakumaCompare(item,settings={},dependencies={}){
   for(const card of preliminary){
     try{
       const detail=extractRakumaDetail(await getHtml(card.url,settings),card.url);
-      if(ownSellerId&&detail.sellerId===ownSellerId){rejected.push({...card,reason:'own_seller'});continue}
+      if(isOwnedOffer(settings.ownedOffers,'rakuma',{...card,...detail})||ownSellerId&&detail.sellerId===ownSellerId){rejected.push({...card,reason:'own_seller'});continue}
       if(detail.status!=='OPEN'){rejected.push({...card,reason:detail.status==='SOLD'?'not_open':'availability_unconfirmed'});continue}
       if(!ownDescription.trim()||!detail.description.trim()){rejected.push({...card,reason:'sale_description_unavailable'});continue}
       if(hasExplicitDefect(detail.title,detail.description)){rejected.push({...card,reason:'defect'});continue}

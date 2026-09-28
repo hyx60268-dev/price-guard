@@ -29,11 +29,11 @@ export function pricingStatus(item={},options={}){
 }
 
 export function pricingSummary(items=[],options={}){
- const counts={ready:0,queued:0,stale:0,error:0,insufficient:0};let actionable=0;
- for(const item of items){const status=pricingStatus(item,options);counts[status.state]++;if(status.decision.canRecommend&&status.decision.priceSignal!=='hold')actionable++;}
+ const counts={ready:0,queued:0,stale:0,error:0,insufficient:0};let actionable=0,withEvidence=0;
+ for(const item of items){const status=pricingStatus(item,options);counts[status.state]++;if(status.decision.lowest||Object.values(status.decision.coverage).some(Boolean))withEvidence++;if(status.decision.canRecommend&&status.decision.priceSignal!=='hold')actionable++;}
  const total=items.length,remaining=total-counts.ready;
- return {total,...counts,remaining,actionable,
+ return {total,...counts,remaining,actionable,withEvidence,
   label:!actionable&&remaining?(counts.queued+counts.stale?'比价更新中':'比价未完成'):'建议调价',
   value:!actionable&&remaining?'—':actionable,
-  note:remaining?`已核验 ${counts.ready}/${total} 件，另有 ${remaining} 件未完成；降价参考可使用已核验同款；提价需三平台核验完成。`:`已核验 ${counts.ready}/${total} 件${total&&!actionable?'，暂无需要调价的商品。':'。'}`};
+  note:remaining?`三平台全部完成 ${counts.ready} 件，未全部完成 ${remaining} 件；可用调价建议 ${actionable} 条（含部分平台已核验的降价参考），两者不是同一项统计。`:`已核验 ${counts.ready}/${total} 件${total&&!actionable?'，暂无需要调价的商品。':'。'}`};
 }

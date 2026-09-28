@@ -1,3 +1,4 @@
+import { isOwnedOffer } from '../../public/owned-offers.js';
 import { imageFingerprints,imageSetSimilarity,primaryProductSimilarity } from './image.mjs';
 import { offerIdentityGuard } from './offer-identity.mjs';
 import { rejectedByMemory } from '../../public/match-memory.js';
@@ -270,7 +271,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
     for(const card of cards.sort((a,b)=>a.price-b.price)){
     if(card.id===item.id||!Number.isFinite(card.price))continue;
     if(rejectedByMemory(settings.matchCorrections,item,'yahoo',card)){rejected.push({id:card.id,price:card.price,reason:'saved_user_correction'});continue}
-    if(ownSellerId&&card.sellerId===ownSellerId){rejected.push({id:card.id,price:card.price,reason:'own_seller'});continue}
+    if(isOwnedOffer(settings.ownedOffers,'yahoo',card)||ownSellerId&&card.sellerId===ownSellerId){rejected.push({id:card.id,price:card.price,reason:'own_seller'});continue}
     if(isRejected(card.title)){rejected.push({id:card.id,price:card.price,reason:'title_rejected'});continue}
     const tScore=titleScore(exactQuery,card.title);
     const recallScore=titleScore(query,card.title);
@@ -327,7 +328,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   const visualRecallThreshold=Math.max(.80,Number(settings.yahooRecommendationVisualRecallThreshold)||.84);
   const visualRecallCards=cards.filter(card=>
     !acceptedIds.has(card.id)&&card.id!==item.id&&!rejectedByMemory(settings.matchCorrections,item,'yahoo',card)&&card.image&&
-    Number.isFinite(card.price)&&(!ownSellerId||card.sellerId!==ownSellerId)&&!isRejected(card.title)
+    !isOwnedOffer(settings.ownedOffers,'yahoo',card)&&Number.isFinite(card.price)&&(!ownSellerId||card.sellerId!==ownSellerId)&&!isRejected(card.title)
   ).sort((a,b)=>Number(ownImages.includes(b.image))-Number(ownImages.includes(a.image))||a.price-b.price).slice(0,visualRecallLimit);
   const visualFingerprints=await Promise.all(visualRecallCards.map(card=>fingerprint(card.image)));
   for(let index=0;index<visualRecallCards.length;index++){
@@ -362,7 +363,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
       }
       if(detail.status!=='OPEN'){rejected.push({id:card.id,price:card.price,reason:'not_open'});continue}
       const detailSellerId=String(detail.seller?.id||detail.sellerId||card.sellerId||'').trim();
-      if(ownSellerId&&detailSellerId===ownSellerId){rejected.push({id:card.id,price:Number(detail.price),reason:'own_seller'});continue}
+      if(isOwnedOffer(settings.ownedOffers,'yahoo',{...card,sellerId:detailSellerId})||ownSellerId&&detailSellerId===ownSellerId){rejected.push({id:card.id,price:Number(detail.price),reason:'own_seller'});continue}
       if(hasExplicitDefect(detail.title,detail.description)){rejected.push({id:card.id,price:Number(detail.price),reason:'defect'});continue}
       const candidateCondition=typeof detail.condition==='string'?detail.condition:
         detail.condition?.name||detail.condition?.text||detail.condition?.label||detail.condition?.key||'';
