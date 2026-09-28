@@ -1,3 +1,4 @@
+import { syncHandoff,copySyncBody } from './sync-handoff.js';
 import { merchantProfile,mergeMerchantConfigs } from './merchant-config.js';
 import { buildOwnedOffers,excludeOwnedOffers } from './owned-offers.js';
 import { selectMerchantProducts, merchantCardsMarkup } from './merchant-view.js';
@@ -475,22 +476,23 @@ function syncCosts(){
   for(const item of data.items||[]){const record=manualFor(item);if(record&&[record.purchaseCNY,record.manualFeeCNY,record.shippingJPY].some(value=>Number.isFinite(numberOrNull(value)))){const key=itemKey(item);output[key]=compact(key,fullRecord(item,record))}}
   return output;
 }
-async function startCloudSync(statusElement=$('#cloudSyncStatus')){
+async function startCloudSync(statusElement=$('#cloudSyncStatus'),scope='all'){
   const popup=window.open('about:blank','_blank');
   const report=message=>{if(statusElement)statusElement.textContent=message;$('#refreshNotice').hidden=false;$('#refreshText').textContent=message};
   try{
     report('正在本机加密成本、账号和已上传记录…');
     const deleted=new Set(getDeleted()),byProfile=new Map();
     for(const item of mergeAccounts(data.managedAccounts||[],getLocal()))if(item?.profileUrl&&!deleted.has(item.id))byProfile.set(item.profileUrl,item);
-    const payload={version:1,issuedAt:new Date().toISOString(),manualCosts:syncCosts(),matchCorrections,dismissedDiscoveries,discoveryReviews,managedAccounts:[...byProfile.values()],deletedAccountIds:[...deleted],deletedAccounts:getDeletedRecords(),
+    const payload=scope==='merchants'?{version:1,issuedAt:new Date().toISOString(),merchantMonitors:getMerchantMonitors()}:{version:1,issuedAt:new Date().toISOString(),manualCosts:syncCosts(),matchCorrections,dismissedDiscoveries,discoveryReviews,managedAccounts:[...byProfile.values()],deletedAccountIds:[...deleted],deletedAccounts:getDeletedRecords(),
       ...(currentUsername==='admin'?{portalUsers:data.portalUsers||[],merchantMonitors:getMerchantMonitors()}:{})};
     const ciphertext=await encryptPayload(payload),body=`<!-- PRICE_GUARD_SYNC_V1\n${ciphertext}\n-->\n\n这是一份由衡序生成的端到端加密同步数据。请勿修改上方密文。`;
-    const title=`[Price Guard Sync:${currentUsername}] ${new Date().toLocaleString('zh-CN')}`;
-    await navigator.clipboard?.writeText(body).catch(()=>{});
-    const prefilled=`https://github.com/${repo}/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
-    const target=prefilled.length<7000?prefilled:`https://github.com/${repo}/issues/new?title=${encodeURIComponent(title)}`;
-    if(popup)popup.location.href=target;else window.open(target,'_blank','noopener');
-    report(prefilled.length<7000?'已打开 GitHub；点绿色“Submit new issue”后，请等待 Issue 显示“已安全合并”，系统会优先发布登录数据。':'密文已复制；请粘贴后提交，并等待 Issue 显示“已安全合并”。');
+    const handoff=syncHandoff({repo,username:currentUsername,body});
+    $('#syncBody').value=body;$('#syncIssueLink').href=handoff.url;
+    $('#syncCopyStatus').textContent=handoff.prefilled?'GitHub 将自动填入内容，无需粘贴。':'内容较长，请先复制下方密文，再打开 GitHub 粘贴到 Description。';
+    $('#syncHandoff').showModal();
+    if(handoff.prefilled&&popup){popup.location.href=handoff.url;report('已打开带同步内容的 GitHub 页面，请确认 Description 有内容后提交。');}
+    else{popup?.close();report('同步内容已生成，请在弹窗中复制或打开 GitHub；尚未提交云端。');}
+
   }catch(error){popup?.close();report(`生成失败：${error.message||error}`)}
 }
 
@@ -545,13 +547,20 @@ function renderMerchantSettings(){
  $('#merchantList').innerHTML=records.filter(m=>m.enabled).map(m=>{const saved=cloud.get(m.key);const synced=saved?.enabled&&Date.parse(saved.updatedAt)>=Date.parse(m.updatedAt);return '<div class="merchant-row"><div><a target="_blank" rel="noopener" href="'+escapeHtml(m.url)+'">'+escapeHtml(m.name)+' · '+escapeHtml(m.platform)+'</a><small>'+escapeHtml(m.url)+'</small><small>'+(synced?'已同步 · 等待 / 执行每日监控':'本机已保存 · 待提交云端')+'</small></div><button type="button" class="soft" data-remove-merchant="'+escapeHtml(m.key)+'">移除</button></div>'}).join('')||'<p class="muted">还没有监控商家</p>';
  document.querySelectorAll('[data-remove-merchant]').forEach(button=>button.onclick=async()=>{
   const next=records.map(m=>m.key===button.dataset.removeMerchant?{...m,enabled:false,updatedAt:new Date().toISOString()}:m);
-  localStorage.setItem(scopedKey(merchantKey),JSON.stringify(next));renderMerchantSettings();await startCloudSync($('#merchantSaveStatus'));
+  localStorage.setItem(scopedKey(merchantKey),JSON.stringify(next));renderMerchantSettings();await startCloudSync($('#merchantSaveStatus'),'merchants');
  });
 }
 $('#merchantForm').onsubmit=async event=>{
  event.preventDefault();if(currentUsername!=='admin')return;
  try{const stamp=new Date().toISOString(),incoming=$('#merchantUrls').value.split(/\s+/).filter(Boolean).map(url=>({...merchantProfile(url),enabled:true,updatedAt:stamp}));
-  const next=mergeMerchantConfigs(getMerchantMonitors(),incoming);localStorage.setItem(scopedKey(merchantKey),JSON.stringify(next));$('#merchantUrls').value='';renderMerchantSettings();await startCloudSync($('#merchantSaveStatus'));
+  const next=mergeMerchantConfigs(getMerchantMonitors(),incoming);localStorage.setItem(scopedKey(merchantKey),JSON.stringify(next));$('#merchantUrls').value='';renderMerchantSettings();await startCloudSync($('#merchantSaveStatus'),'merchants');
  }catch(error){$('#merchantSaveStatus').textContent=error.message}
 };
-$('#syncMerchants').onclick=()=>startCloudSync($('#merchantSaveStatus'));
+$('#syncMerchants').onclick=()=>startCloudSync($('#merchantSaveStatus'),'merchants');
+
+$('#syncHandoff .close').onclick=()=>$('#syncHandoff').close();
+$('#copySyncBody').onclick=async()=>{
+ const copied=await copySyncBody($('#syncBody').value,navigator.clipboard);
+ $('#syncCopyStatus').textContent=copied?'已复制完整密文，请粘贴到 GitHub Description 后提交。':'浏览器未允许复制。内容已选中：电脑按 Ctrl+C，手机长按选择“复制”，再粘贴到 GitHub。';
+ if(!copied){$('#syncBody').focus();$('#syncBody').select();$('#syncBody').setSelectionRange(0,$('#syncBody').value.length)}
+};
