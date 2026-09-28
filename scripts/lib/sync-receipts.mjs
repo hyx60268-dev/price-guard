@@ -7,10 +7,11 @@ export function appliedSyncIssue(state,issue){
 
 // Acknowledgements are made only by a workflow step after successful deployment.
 // Keep the receipt in the encrypted baseline so cancellation/retry is idempotent.
-export async function acknowledgePublishedSync({state,listIssues,closeIssue,requestScan}){
+export async function acknowledgePublishedSync({state,listIssues,closeIssue,requestScan,requestMerchantScan}){
   const issues=await listIssues();
   const confirmed=issues.filter(issue=>appliedSyncIssue(state,issue));
   if(requestScan&&confirmed.some(issue=>state.appliedSyncIssues[issue.number].needsScan))await requestScan();
+  if(requestMerchantScan&&confirmed.some(issue=>state.appliedSyncIssues[issue.number].needsMerchantScan))await requestMerchantScan();
   for(const issue of confirmed)await closeIssue(issue.number);
   return confirmed.length;
 }

@@ -1,3 +1,4 @@
+import { merchantRetryDelay,merchantBudget } from './lib/merchant-scheduling.mjs';
 import { mergeMerchantConfigs } from '../public/merchant-config.js';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
@@ -18,26 +19,29 @@ let previous={};try{previous=JSON.parse(decrypt(await fs.readFile(path.join(root
 let dashboard={};try{dashboard=JSON.parse(decrypt(await fs.readFile(path.join(root,'state/latest.json.enc')),password))}catch(e){if(e.code!=='ENOENT')throw e}
 cfg.merchants=mergeMerchantConfigs((cfg.merchants||[]).map(raw=>({...merchantProfile(raw),enabled:true})),dashboard.merchantMonitors||[]).filter(m=>m.enabled);
 const configDigest=crypto.createHash('sha256').update(JSON.stringify(cfg)).digest('hex');
-if(process.env.MERCHANT_MONITOR_IF_DUE==='1'&&previous.mode==='merchant_monitor'&&previous.configDigest===configDigest&&Date.now()-Date.parse(previous.checkedAt||'')<24*3600000){console.log('商家监控未到下次更新时间，保留已发布记录');process.exit(0)}
+if(process.env.MERCHANT_MONITOR_IF_DUE==='1'&&previous.mode==='merchant_monitor'&&previous.configDigest===configDigest&&Date.now()-Date.parse(previous.checkedAt||'')<merchantRetryDelay(previous)){console.log('商家监控未到下次更新时间，保留已发布记录');process.exit(0)}
 const merchants=[...new Map((cfg.merchants||[]).map(raw=>{const m=merchantProfile(raw);return [m.key,m]})).values()];
 let records=previous.mode==='merchant_monitor'?previous.merchantListings||{}:{};
 const errors=[],sources=[],deadline=Date.now()+(Number(cfg.budgetMinutes)||12)*60000;
 let browser,context,page,details=0;
 async function publicPage(){if(!page){const opened=await openContext();browser=opened.browser;context=opened.context;page=await context.newPage()}return page}
 try{
- for(const merchant of merchants){
+ for(const [merchantIndex,merchant] of merchants.entries()){
   if(Date.now()>=deadline){sources.push({...merchant,status:'deferred'});continue}
+  const budget=merchantBudget({deadline,remainingMerchants:merchants.length-merchantIndex,remainingDetails:Number(cfg.maxDetailsPerRun||100)-details});let merchantDetails=0;
   try{
-   const options={settings,page:merchant.platform==='mercari'?await publicPage():null,maxPages:cfg.maxPagesPerMerchant||10,deadline};
+   const options={settings,page:merchant.platform==='mercari'?await publicPage():null,maxPages:cfg.maxPagesPerMerchant||10,deadline:budget.deadline};
+   console.log('[商家监控开始]',merchant.key);
    const result=await merchantCards(merchant,options);
+   console.log('[商家列表]',merchant.key,'cards='+result.cards.length,'pages='+result.pages,'complete='+result.complete);
    records=recordMerchantObservation(records,merchant,result.cards);
    const tasks=result.cards.filter(c=>c.price>4999).sort((a,b)=>(Date.parse(records[merchant.key+':'+a.id]?.lastDetailAt)||0)-(Date.parse(records[merchant.key+':'+b.id]?.lastDetailAt)||0));
    let pending=0;
    for(const card of tasks){
     const old=records[merchant.key+':'+card.id];
     if(old.description&&Date.now()-Date.parse(old.lastDetailAt||'')<24*3600000)continue;
-    if(Date.now()>=deadline||details>=Number(cfg.maxDetailsPerRun||100)){pending++;continue}
-    details++;
+    if(Date.now()>=budget.deadline||merchantDetails>=budget.detailLimit){pending++;continue}
+    details++;merchantDetails++;
     try{const detail=await merchantDetail(merchant,card,options);records=recordMerchantObservation(records,merchant,[{...detail,lastDetailAt:new Date().toISOString()}])}
     catch(e){errors.push(`${merchant.key}/${card.id}: ${String(e)}`);pending++}
    }

@@ -20,6 +20,7 @@ const count=await acknowledgePublishedSync({state,
     return issues;
   },
   closeIssue:number=>github(`/issues/${number}`,{method:'PATCH',body:JSON.stringify({state:'closed'})}),
+  requestMerchantScan:process.env.REQUEST_ACCOUNT_SCAN==='1'?()=>github('/actions/workflows/merchant-monitor.yml/dispatches',{method:'POST',body:JSON.stringify({ref:'main'})}):undefined,
   requestScan:process.env.REQUEST_ACCOUNT_SCAN==='1'?()=>github('/actions/workflows/price-guard.yml/dispatches',{method:'POST',body:JSON.stringify({ref:'main'})}):undefined
 });
 console.log(`已确认发布 ${count} 个同步请求`);
