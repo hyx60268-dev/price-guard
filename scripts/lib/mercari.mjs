@@ -6,12 +6,12 @@ import {
   hasExplicitDefect,MATCHING_RULES_VERSION,listingSpecificationEquivalent,listingTextEquivalent,
   productFamily,semanticSameItem,titleScore,visualListingEquivalent
 } from './rules.mjs';
-import { queryFor } from './yahoo.mjs';
+import { exactQueryFor } from './yahoo.mjs';
 import { mercariSearch,mercariDetail } from './mercari-page.mjs';
 
 export async function mercariCompare(page,item,settings={},dependencies={}){
   const fingerprint=dependencies.imageFingerprints||imageFingerprints;
-  const query=queryFor(item.title),searchUrl=`https://jp.mercari.com/search?keyword=${encodeURIComponent(query)}&status=on_sale&sort=price&order=asc`;
+  const query=exactQueryFor(item.title),searchUrl=`https://jp.mercari.com/search?keyword=${encodeURIComponent(query)}&status=on_sale&sort=price&order=asc`;
   const ownDescription=item.sourceDetail?.description||item.yahoo?.ownDescription||item.description||'';
   const ownCategory=item.sourceDetail?.category||item.yahoo?.ownCategory||item.category||'';
   const ownImages=[...(item.sourceDetail?.images||[]),...(item.yahoo?.ownImages||[]),...(item.images||[]),item.image].filter(Boolean);
@@ -26,6 +26,9 @@ export async function mercariCompare(page,item,settings={},dependencies={}){
     const semantic=semanticSameItem({query:item.title,candidate:card.title,queryCategory:ownCategory,candidateCategory:card.category});
     const ownFamily=productFamily(item.title,ownCategory),cardFamily=productFamily(card.title,card.category);
     if(ownFamily&&cardFamily&&ownFamily!==cardFamily){rejected.push({...card,reason:'physical_product_type_unconfirmed'});continue}
+    const conflict=offerIdentityGuard({ownTitle:item.title,candidateTitle:card.title,ownCategory,candidateCategory:card.category,requireDescriptions:false,checkImages:false});
+    // Missing card condition/contents need details; explicit title conflicts do not.
+    if(!conflict.accepted&&['explicit_variant_mismatch','description_color_mismatch','defect'].includes(conflict.reason)){rejected.push({...card,reason:conflict.reason});continue}
     const score=titleScore(item.title,card.title),anchors=distinctiveCoverage(item.title,card.title);
     if(semantic.accepted||score>=.62||(score>=.45&&anchors.matchedCount>=2))screened.push({...card,titleScore:score,semantic});
     else rejected.push({...card,reason:semantic.reason||'weak_title',titleScore:score});
@@ -41,6 +44,8 @@ export async function mercariCompare(page,item,settings={},dependencies={}){
 
       if(!ownDescription.trim()||!detail.description.trim()){rejected.push({...card,reason:'sale_description_unavailable'});continue}
       if(hasExplicitDefect(detail.title,detail.description)){rejected.push({...card,reason:'defect'});continue}
+      const textIdentity=offerIdentityGuard({ownTitle:item.title,ownDescription,candidateTitle:detail.title,candidateDescription:detail.description,ownCategory,candidateCategory:detail.category,checkImages:false});
+      if(!textIdentity.accepted){rejected.push({...card,reason:textIdentity.reason});continue}
       const detailImages=[...detail.images,card.image].filter(Boolean);
       const detailEvidence=await Promise.all([...new Set(detailImages)].slice(0,8).map(fingerprint));
       const detailFingerprints=detailEvidence.filter(Boolean);

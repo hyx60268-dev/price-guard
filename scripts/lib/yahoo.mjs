@@ -31,7 +31,7 @@ function applyYahooSettings(settings={}){
   rateLimitCooldownMs=Math.max(15000,Number(settings.yahooRateLimitCooldownMs)||DEFAULT_RATE_LIMIT_COOLDOWN_MS);
 }
 
-function exactQueryFor(title=''){
+export function exactQueryFor(title=''){
   return title.replace(/新品|未使用|未開封|正規品|中国限定|海外限定|匿名配送|送料無料/gi,' ')
     .replace(/[【】\[\]（）()<>《》/／]/g,' ').replace(/\s+/g,' ').trim();
 }

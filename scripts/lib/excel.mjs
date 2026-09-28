@@ -17,7 +17,7 @@ export async function makeWorkbook(result,path){
   ws.getRow(1).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF17365D'}};
   for(const source of result.items){
     const decision=pricingDecision(source);
-    const row=ws.addRow({...source,recommendedPrice:decision.complete?decision.recommendedPrice:null,lowestPrice:decision.lowest?.price??null,lowestUrl:decision.lowest?.url||'',marketSourcePlatform:PLATFORM_LABELS[decision.lowest?.platform]||'',coverageStatus:decision.complete?'本轮核验完成':'待核验',
+    const row=ws.addRow({...source,recommendedPrice:decision.canRecommend?decision.recommendedPrice:null,lowestPrice:decision.lowest?.price??null,lowestUrl:decision.lowest?.url||'',marketSourcePlatform:PLATFORM_LABELS[decision.lowest?.platform]||'',coverageStatus:decision.complete?'本轮核验完成':decision.canRecommend?'已有同款降价参考；部分平台待更新':'待核验',
       listingDays:source.listingAge?.days??null,listingAgeSource:source.listingAge?.source==='platform_open_date'?'平台上架日期':source.listingAge?.source==='first_observed'?'系统首次确认在售':'待确认',listingAgeAdvice:source.listingAge?.message||'',
       manualPurchaseCNY:source.manualPurchaseCNY??source.manualCost?.purchaseCNY??null,
       manualFeeCNY:source.manualFeeCNY??source.manualCost?.manualFeeCNY??null,
@@ -27,8 +27,8 @@ export async function makeWorkbook(result,path){
     const n=row.number;
     row.getCell('K').value={formula:`IF(OR(AND(G${n}="",H${n}=""),I${n}="",J${n}=""),"",ROUNDUP(((IF(H${n}="",G${n},H${n})+I${n})*参数!$B$2+J${n})*参数!$B$4,0))`,result:source.costJPY??undefined};
     row.getCell('L').value={formula:`IF(K${n}="","",D${n}-K${n})`,result:source.currentProfitJPY??undefined};
-    row.getCell('M').value={formula:`IF(OR(K${n}="",F${n}=""),"",F${n}-K${n})`,result:decision.complete?source.afterProfitJPY??undefined:undefined};
-    row.getCell('N').value={formula:`IF(F${n}="","三平台比价待核验",IF(K${n}="","待输入成本",IF(M${n}<0,"调价后亏损",IF(M${n}<参数!$B$3,"不建议按推荐价出售",IF(L${n}<参数!$B$3,"建议提价或控制成本","利润正常")))))`,result:decision.complete?source.advice??'待输入成本':'三平台比价待核验'};
+    row.getCell('M').value={formula:`IF(OR(K${n}="",F${n}=""),"",F${n}-K${n})`,result:decision.canRecommend?source.afterProfitJPY??undefined:undefined};
+    row.getCell('N').value={formula:`IF(F${n}="","三平台比价待核验",IF(K${n}="","待输入成本",IF(M${n}<0,"调价后亏损",IF(M${n}<参数!$B$3,"不建议按推荐价出售",IF(L${n}<参数!$B$3,"建议提价或控制成本","利润正常")))))`,result:decision.canRecommend?source.advice??'待输入成本':'三平台比价待核验'};
   }
   ws.autoFilter={from:'A1',to:'Y1'};
   for(const key of ['ownPrice','lowestPrice','recommendedPrice','costJPY','currentProfitJPY','afterProfitJPY'])ws.getColumn(key).numFmt='¥#,##0;[Red]-¥#,##0';

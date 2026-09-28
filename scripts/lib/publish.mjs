@@ -23,7 +23,7 @@ const compactCandidate=value=>value&&typeof value==='object'?{
 }:null;
 
 function compactComparison(value={}){
-  const keep=['status','evidenceStatus','raiseGuardMinPrice','plausibleMinPrice','checkedAt','cacheReason','rulesVersion','lowestPrice','lowestUrl','searchUrl','marketMedianPrice','marketMinPrice','marketMaxPrice','marketSampleCount','cardCount','detailCheckedCount','preliminaryCount','unresolvedCandidateCount','uncheckedLowerCandidateCount','unconfirmedLowerCandidateCount','unconfirmedLowerCount','matchLabel','matchConfidence','averageCNY','verifiedCount','sellerCount'];
+  const keep=['searchComplete','status','evidenceStatus','raiseGuardMinPrice','plausibleMinPrice','checkedAt','cacheReason','rulesVersion','lowestPrice','lowestUrl','searchUrl','marketMedianPrice','marketMinPrice','marketMaxPrice','marketSampleCount','cardCount','detailCheckedCount','preliminaryCount','unresolvedCandidateCount','uncheckedLowerCandidateCount','unconfirmedLowerCandidateCount','unconfirmedLowerCount','matchLabel','matchConfidence','averageCNY','verifiedCount','sellerCount'];
   const output={};
   for(const key of keep)if(value[key]!==undefined)output[key]=value[key];
   output.candidates=(value.candidates||[]).slice(0,5).map(compactCandidate).filter(Boolean);
