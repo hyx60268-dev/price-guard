@@ -9,6 +9,15 @@ import { compactDashboardResult } from '../scripts/lib/publish.mjs';
 import { yahooCompare } from '../scripts/lib/yahoo.mjs';
 import { mercariCompare } from '../scripts/lib/mercari.mjs';
 import { readMercariCards,readMercariDetail } from '../scripts/lib/mercari-page.mjs';
+test('merchant discovery retains overseas unpriced links but pricing never treats USD or missing prices as JPY',()=>{
+ const dom=new JSDOM('<main><a href="/item/m123"><img alt="中国限定 手办の画像">US$180.09</a><a href="/item/m124"><img alt="海外限定 玩具の画像"></a></main>');
+ try{
+  assert.equal(readMercariCards(dom.window.document).cards.length,0);
+  const cards=readMercariCards(dom.window.document,{includeUnpriced:true}).cards;
+  assert.equal(cards.length,2);assert.ok(cards.every(c=>c.price===null));
+  assert.deepEqual(cards.map(c=>c.id),['m123','m124']);
+ }finally{dom.window.close()}
+});
 import { acceptMatchCorrections } from '../scripts/lib/match-corrections.mjs';
 import { invalidateCorrectedMatches } from '../public/match-memory.js';
 

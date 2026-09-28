@@ -34,12 +34,12 @@ try{
    console.log('[商家监控开始]',merchant.key);
    const result=await merchantCards(merchant,options);
    console.log('[商家列表]',merchant.key,'cards='+result.cards.length,'pages='+result.pages,'complete='+result.complete);
-   records=recordMerchantObservation(records,merchant,result.cards);
-   const tasks=result.cards.filter(c=>c.price>4999).sort((a,b)=>(Date.parse(records[merchant.key+':'+a.id]?.lastDetailAt)||0)-(Date.parse(records[merchant.key+':'+b.id]?.lastDetailAt)||0));
+   records=recordMerchantObservation(records,merchant,result.cards.filter(c=>Number.isFinite(c.price)));
+   const tasks=result.cards.filter(c=>c.price===null||c.price>4999).sort((a,b)=>(Date.parse(records[merchant.key+':'+a.id]?.lastDetailAt)||0)-(Date.parse(records[merchant.key+':'+b.id]?.lastDetailAt)||0));
    let pending=0;
    for(const card of tasks){
     const old=records[merchant.key+':'+card.id];
-    if(old.description&&Date.now()-Date.parse(old.lastDetailAt||'')<24*3600000)continue;
+    if(old?.description&&Date.now()-Date.parse(old.lastDetailAt||'')<24*3600000)continue;
     if(Date.now()>=budget.deadline||merchantDetails>=budget.detailLimit){pending++;continue}
     details++;merchantDetails++;
     try{const detail=await merchantDetail(merchant,card,options);records=recordMerchantObservation(records,merchant,[{...detail,lastDetailAt:new Date().toISOString()}])}

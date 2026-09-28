@@ -28,7 +28,9 @@ export async function merchantCards(merchant,{settings={},page,maxPages=10,deadl
   await page.waitForFunction(()=>document.querySelector('main a[href^="/item/"]')||/出品した商品はありません/.test(document.querySelector('main')?.innerText||''),{},{timeout:20000});
   let prior=-1,stable=0;
   for(let n=0;n<maxPages&&Date.now()<deadline;n++){
-   const result=await page.evaluate('('+readMercariCards.toString()+')(document)');pages++;
+   // Overseas cards can omit JPY. Keep their links for target-detail lookup;
+   // neither a converted USD amount nor a missing price can pass the JPY filter.
+   const result=await page.evaluate('('+readMercariCards.toString()+')(document,{includeUnpriced:true})');pages++;
    for(const row of result.cards)cards.set(row.id,{...row,status:row.itemStatus});
    stable=cards.size===prior?stable+1:0;prior=cards.size;
    if(!result.hasMore){complete=true;break}if(stable>=2)break;
@@ -38,6 +40,7 @@ export async function merchantCards(merchant,{settings={},page,maxPages=10,deadl
    await page.waitForTimeout(1200);
   }
  }
+ if(!cards.size&&!complete)throw Error('商家列表存在商品但未能读取，不能当作空店铺');
  return {cards:[...cards.values()],complete,pages};
 }
 
