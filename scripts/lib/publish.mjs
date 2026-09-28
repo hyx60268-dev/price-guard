@@ -134,7 +134,8 @@ export async function writeOutputs({root,result,previous,password}){
   result.items=(result.items||[]).map(item=>{
     const clean=excludeOwnedOffers(item,ownership);if(clean.yahoo===item.yahoo&&clean.rakuma===item.rakuma&&clean.mercari===item.mercari)return item;
     const decision=pricingDecision(clean);return {...clean,...decision,lowestPrice:decision.lowest?.price??clean.ownPrice,lowestUrl:decision.lowest?.url||clean.url,
-      afterProfitJPY:Number.isFinite(clean.costJPY)?decision.recommendedPrice-clean.costJPY:null};
+      afterProfitJPY:Number.isFinite(clean.costJPY)?decision.recommendedPrice-clean.costJPY:null,
+      afterUnder1500:Number.isFinite(clean.costJPY)&&decision.recommendedPrice-clean.costJPY<(result.settings?.profitWarningJPY??1500)};
   });
   for(const account of result.accounts||[])account.items=result.items.filter(i=>i.accountId===account.id);
   // Runtime Sets belong to workers, never to persisted settings.

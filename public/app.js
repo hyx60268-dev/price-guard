@@ -144,8 +144,14 @@ function clientAdvice({ownPrice,recommendedPrice,costJPY}){
   const current=ownPrice-costJPY,after=recommendedPrice-costJPY,warning=data.settings.profitWarningJPY;
   if(after<0)return '调价后亏损';if(after<warning)return '不建议按推荐价出售';if(current<warning)return '建议提价或控制成本';return '利润正常';
 }
+let ownershipData,ownershipLocal,ownershipIndex;
+function currentOwnership(){
+ const local=getLocal(),signature=JSON.stringify(local);
+ if(ownershipData!==data||ownershipLocal!==signature){ownershipData=data;ownershipLocal=signature;ownershipIndex=buildOwnedOffers([...(data?.accounts||[]),...local],data?.items||[])}
+ return ownershipIndex;
+}
 function effective(item,temporary){
-  item=excludeOwnedOffers(item,buildOwnedOffers([...cloudAccounts(),...getLocal()],data?.items||[]));
+  item=excludeOwnedOffers(item,currentOwnership());
   item=invalidateCorrectedMatches(item,matchCorrections);
   const decision=pricingDecision(item);item={...item,...decision,comparisonIncomplete:!decision.complete};
   const saved=temporary||manualFor(item),manualPurchaseCNY=numberOrNull(saved.purchaseCNY),purchaseCNY=manualPurchaseCNY??numberOrNull(item.averageCNY);
