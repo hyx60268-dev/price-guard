@@ -101,3 +101,12 @@ test('Mercari public product metadata is bound to the exact target and JPY curre
  const dom=new JSDOM(`<head><link rel="canonical" href="${url}"><meta name="product:price:currency" content="JPY"><meta name="product:price:amount" content="27000"></head><main><article><h1>Myethos フィギュア</h1><button>購入手続きへ</button><h2>商品の説明</h2><p>未開封</p></article></main>`,{url});
  try{const d=dom.window.document;assert.equal(readMercariDetail(d).price,27000);assert.equal(readMercariDetail(d).shippingKnown,false);d.querySelector('meta[name="product:price:currency"]').content='USD';assert.equal(readMercariDetail(d).price,null);d.querySelector('meta[name="product:price:currency"]').content='JPY';d.querySelector('link').href='https://jp.mercari.com/item/m999';assert.equal(readMercariDetail(d).price,null)}finally{dom.window.close()}
 });
+
+test('Mercari dedicated condition field is used even when seller prose omits it',async()=>{
+ const own={...fixture.own,ownPrice:26989,image:'image'},c=fixture.competitors[0];
+ const title=c.title.replace(/新品|未開封/g,'');
+ const detail={...c,title,description:'Myethos アークナイツ 1/7 荒蕪ラップランド フィギュア',condition:'新品、未使用',itemPrice:25000,shippingJPY:0,shippingKnown:true,status:'OPEN',images:['image']};
+ const deps={search:async()=>({cards:[{...c,title,itemStatus:'OPEN'}]}),detail:async()=>({...detail}),imageFingerprints:async()=>fp};
+ const result=await mercariCompare(null,own,{},deps);assert.equal(result.lowestPrice,25000);
+ detail.condition='傷や汚れあり';assert.equal((await mercariCompare(null,own,{},deps)).candidates.length,0);
+});

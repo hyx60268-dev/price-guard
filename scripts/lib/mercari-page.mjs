@@ -58,7 +58,23 @@ export function readMercariDetail(document){
  const shippingJPY=shippingIncluded?0:fixedShipping;
  const seller=article.querySelector('a[href^="/user/profile/"],a[href^="/shops/profile/"]');
  const images=[...article.querySelectorAll('[aria-label^="商品画像"] img,[aria-label^="商品サムネイル"] img')].map(n=>n.currentSrc||n.src).filter(Boolean);
- return {priceDiagnostic:price&&shippingJPY!==null?undefined:{headerText:header.map(n=>n.children.length?'':n.textContent).join(' ').slice(0,1200),shippingHeadings:headings.filter(n=>/送料|配送/.test(n.textContent)).map(n=>n.parentElement.outerHTML.slice(0,1500)),converted:converted?.outerHTML.slice(0,1000),targetPrices:targetPrices.map(n=>n.outerHTML.slice(0,700)),headerPrices:header.filter(n=>/[¥￥]|[0-9],[0-9]{3}/.test(n.textContent)).slice(-10).map(n=>n.outerHTML.slice(0,500))},title,description,condition,price,itemPrice:price,shippingJPY,shippingText,shippingKnown:shippingJPY!==null,
+ const publicShipping=[];
+ // Diagnostics only: inspect publicly embedded target-product state, never
+ // cookies, credentials, or unrelated account state.
+ const targetId=document.location?.pathname?.split('/').at(-1);
+ for(const script of document.querySelectorAll('script[type="application/json"]')){
+  try{
+   const visit=(value,path='',depth=0)=>{
+    if(!value||typeof value!=='object'||depth>18||publicShipping.length>=8)return;
+    if([value.id,value.itemId,value.item_id].some(id=>id&&String(id)===targetId)){
+     const fields=Object.fromEntries(Object.entries(value).filter(([key])=>/^(?:shipping|delivery|condition|status|item_condition)/i.test(key)));
+     publicShipping.push({path,fields});
+    }
+    for(const [key,child] of Object.entries(value))visit(child,path+'.'+key,depth+1);
+   };visit(JSON.parse(script.textContent));
+  }catch{}
+ }
+ return {priceDiagnostic:price&&shippingJPY!==null?undefined:{publicShipping,headerText:header.map(n=>n.children.length?'':n.textContent).join(' ').slice(0,1200),shippingHeadings:headings.filter(n=>/送料|配送/.test(n.textContent)).map(n=>n.parentElement.outerHTML.slice(0,1500)),converted:converted?.outerHTML.slice(0,1000),targetPrices:targetPrices.map(n=>n.outerHTML.slice(0,700)),headerPrices:header.filter(n=>/[¥￥]|[0-9],[0-9]{3}/.test(n.textContent)).slice(-10).map(n=>n.outerHTML.slice(0,500))},title,description,condition,price,itemPrice:price,shippingJPY,shippingText,shippingKnown:shippingJPY!==null,
   status:checkout?'OPEN':'UNKNOWN',sellerId:seller?.getAttribute('href')||'',images:[...new Set(images)]};
 }
 export async function mercariSearch(page,url){

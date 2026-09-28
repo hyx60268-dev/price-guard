@@ -43,6 +43,9 @@ export async function mercariCompare(page,item,settings={},dependencies={}){
       if(detail.status!=='OPEN'){rejected.push({...card,reason:detail.status==='SOLD'?'not_open':'availability_unconfirmed'});continue}
 
       if(!ownDescription.trim()||!detail.description.trim()){rejected.push({...card,reason:'sale_description_unavailable'});continue}
+      // Condition is a dedicated marketplace field and may not be repeated in
+      // the seller's prose. Keep it alongside the actual sale description.
+      detail.description=[detail.description,detail.condition].filter(Boolean).join('\n');
       if(hasExplicitDefect(detail.title,detail.description)){rejected.push({...card,reason:'defect'});continue}
       const textIdentity=offerIdentityGuard({ownTitle:item.title,ownDescription,candidateTitle:detail.title,candidateDescription:detail.description,ownCategory,candidateCategory:detail.category,checkImages:false});
       if(!textIdentity.accepted){rejected.push({...card,reason:textIdentity.reason});continue}
