@@ -1,4 +1,5 @@
 import { isOwnedOffer } from '../../public/owned-offers.js';
+import { merchantNameFromTitle } from './merchant-names.mjs';
 import { imageFingerprints,imageSetSimilarity,primaryProductSimilarity } from './image.mjs';
 import { offerIdentityGuard } from './offer-identity.mjs';
 import { rejectedByMemory } from '../../public/match-memory.js';
@@ -118,7 +119,8 @@ async function fetchHtml(url,attempts=2){
 
 export async function fetchYahooResult(url,settings={}){
   applyYahooSettings(settings);
-  return searchResult(extractNextData(await fetchHtml(url)));
+  const html=await fetchHtml(url),result=searchResult(extractNextData(html));
+  return /^https:\/\/paypayfleamarket\.yahoo\.co\.jp\/user\//.test(url)?{...result,profileName:merchantNameFromTitle('yahoo',html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]||'')}:result;
 }
 
 export async function fetchYahooItemBundle(id,settings={}){
