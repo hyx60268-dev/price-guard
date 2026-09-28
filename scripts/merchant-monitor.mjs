@@ -52,8 +52,9 @@ try{
  }
 }finally{await browser?.close()}
 // Public same-item galleries remain available during an Xianyu cooldown.
+const imageLookupKeys=new Set(curateMerchantProducts(merchantProducts(Object.fromEntries(Object.entries(records).filter(([,r])=>merchants.some(m=>m.key===r.merchant.key)))),dashboard).products.map(p=>p.key));
 let publicImageLookups=0;
-for(const item of Object.values(records).filter(r=>merchants.some(m=>m.key===r.merchant.key)&&qualifiesMerchantItem(r)&&r.description&&!r.webImages?.length&&!r.xianyuImages?.length).sort((a,b)=>(Date.parse(a.webImageCheckedAt)||0)-(Date.parse(b.webImageCheckedAt)||0))){
+for(const item of Object.values(records).filter(r=>imageLookupKeys.has(r.key)&&qualifiesMerchantItem(r)&&r.description&&!r.webImages?.length&&!r.xianyuImages?.length).sort((a,b)=>(Date.parse(a.webImageCheckedAt)||0)-(Date.parse(b.webImageCheckedAt)||0))){
  if(Date.now()>=deadline||publicImageLookups>=3)break;
  if(item.webImageCheckedAt&&Date.now()-Date.parse(item.webImageCheckedAt)<24*3600000)continue;
  publicImageLookups++;item.webImageCheckedAt=new Date().toISOString();
@@ -65,7 +66,7 @@ let xBrowser,xContext,xPage,imageLookups=0;
 const session=await loadXianyuSession(root);
 try{
  const allowedKeys=new Set(merchants.map(m=>m.key));
- const pending=Object.values(records).filter(r=>allowedKeys.has(r.merchant.key)&&qualifiesMerchantItem(r)&&r.description&&!r.xianyuImages?.length)
+ const pending=Object.values(records).filter(r=>allowedKeys.has(r.merchant.key)&&imageLookupKeys.has(r.key)&&qualifiesMerchantItem(r)&&r.description&&!r.xianyuImages?.length&&!r.webImages?.length)
   .sort((a,b)=>(Date.parse(a.imageCheckedAt)||0)-(Date.parse(b.imageCheckedAt)||0));
  for(const item of pending){
   if(Date.now()>=deadline||imageLookups>=Number(cfg.maxImageLookupsPerRun||8)||!session.access().allowed)break;
