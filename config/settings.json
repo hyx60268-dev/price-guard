@@ -19,13 +19,12 @@
   "yahooStrongVisualMatchThreshold": 0.86,
   "yahooBroadSearchHours": 1,
   "maxYahooImages": 8,
-  "yahooConcurrency": 3,
+  "yahooConcurrency": 4,
   "profileConcurrency": 3,
   "yahooRequestIntervalMs": 5000,
   "yahooRateLimitCooldownMs": 60000,
-  "yahooFreshMinutes": 360,
-  "rakumaFreshHours": 6,
-  "maxRakumaItemsPerRun": 90,
+  "yahooFreshMinutes": 20,
+  "rakumaFreshHours": 0.3333333333333333,
   "maxRakumaDetailChecks": 6,
   "rakumaRequestIntervalMs": 1200,
   "scanBudgetMinutes": 12,
@@ -59,5 +58,8 @@
     "sellerFeeRate": 0.05,
     "minimumProfitJPY": 1500
   },
-  "xianyuRequestIntervalMs": 8000
+  "xianyuRequestIntervalMs": 8000,
+  "mercariFreshMinutes": 20,
+  "rakumaConcurrency": 3,
+  "mercariConcurrency": 3
 }

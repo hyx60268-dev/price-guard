@@ -1,3 +1,4 @@
+import { mapLimit } from './lib/worker-pool.mjs';
 import { buildOwnedOffers } from '../public/owned-offers.js';
 import { createOwnSourceLoader } from './lib/own-source.mjs';
 import { xianyuReviewPlan,mergeXianyuReview } from './lib/xianyu-review-plan.mjs';
@@ -34,11 +35,6 @@ const password=process.env.DASHBOARD_PASSWORD;
 if(!password||password.length<8)throw new Error('DASHBOARD_PASSWORD 至少需要 8 个字符');
 await Promise.all(['data','public/data','.auth','state'].map(directory=>fs.mkdir(path.join(root,directory),{recursive:true})));
 
-async function mapLimit(values,limit,worker){
-  const output=new Array(values.length);let cursor=0;
-  async function runner(){while(true){const index=cursor++;if(index>=values.length)return;output[index]=await worker(values[index],index)}}
-  await Promise.all(Array.from({length:Math.min(limit,values.length)},runner));return output;
-}
 
 async function xianyuStateFromEnv(){
   sessionManager=await loadXianyuSession(root);return sessionManager.file;
@@ -116,7 +112,7 @@ for(const context of contexts)for(const item of context.activeItems)if(item.reli
 // 否则每次都会在时间预算耗尽前反复检查前半段，后半段商品长期得不到核验。
 const fullPriceAudit=process.env.FULL_PRICE_AUDIT==='1';
 const forceYahoo=process.env.FORCE_FULL_SCAN==='1';
-const yahooFreshMinutes=Number(settings.yahooFreshMinutes)||360;
+const yahooFreshMinutes=Number(settings.yahooFreshMinutes)||20;
 const deadline=startedAt+(fullPriceAudit?280:(Number(settings.scanBudgetMinutes)||12))*60_000;
 const yahooBuckets=contexts.map(context=>context.activeItems.map((item,itemIndex)=>{
   const prior=priorFor(context,item),added=context.profileDelta.added.includes(item.id)||Boolean(item.relistedFrom);
@@ -160,10 +156,9 @@ const yahooWork=mapLimit(yahooTasks,yahooConcurrency,async(task,taskIndex)=>{
   }finally{await wait(550+Math.floor(Math.random()*350))}
 });
 
-// ラクマ也按三个店铺公平轮转。每次只刷新固定数量，其余保留上次严格核验结果，
-// 防止数百件商品同时请求令云端任务超时。
-const rakumaFreshHours=Math.max(1,Number(settings.rakumaFreshHours)||6);
-const rakumaLimit=fullPriceAudit?Number.POSITIVE_INFINITY:Math.max(0,Number(settings.maxRakumaItemsPerRun)||30);
+// Bounded product workers share the run deadline and the platform request gate.
+const rakumaFreshHours=Math.max(1/60,Number(settings.rakumaFreshHours)||1/3);
+const rakumaLimit=Number.POSITIVE_INFINITY; // The deadline bounds admission; no arbitrary per-run item cap.
 const rakumaBuckets=contexts.map(context=>context.activeItems.map((item,itemIndex)=>{
   // Failed attempts rotate to the tail too, without becoming accepted cache.
   const prior=priorFor(context,item),cached=cachedRakuma(prior),checked=Date.parse(prior.rakuma?.checkedAt||'');
@@ -173,10 +168,10 @@ const rakumaTasks=fairRoundRobin(rakumaBuckets);
 for(const context of contexts)for(const item of context.activeItems){
   const cached=cachedRakuma(priorFor(context,item));if(cached&&isFresh(cached.checkedAt,rakumaFreshHours))context.rakumaById.set(item.id,cached);
 }
-const rakumaWork=(async()=>{
-for(const [index,task] of rakumaTasks.entries()){
+const rakumaConcurrency=Math.max(1,Math.min(4,Number(settings.rakumaConcurrency)||3));
+const rakumaWork=mapLimit(rakumaTasks,rakumaConcurrency,async(task,index)=>{
   const {context,item,prior}=task;
-  if(index>=rakumaLimit||Date.now()>=deadline){context.rakumaById.set(item.id,cachedRakuma(prior,'rotation_limit')||{status:'deferred_limit',candidates:[],lowestPrice:null,checkedAt:null});continue}
+  if(index>=rakumaLimit||Date.now()>=deadline){context.rakumaById.set(item.id,cachedRakuma(prior,'rotation_limit')||{status:'deferred_limit',candidates:[],lowestPrice:null,checkedAt:null});return}
   try{
     const result=await rakumaCompare(await hydratedItem(item,prior),{...settings,matchCorrections});
     context.rakumaById.set(item.id,result);
@@ -185,28 +180,31 @@ for(const [index,task] of rakumaTasks.entries()){
     console.error(`[ラクマ ERROR][${context.account.id}:${item.id}]`,String(error));
     context.rakumaById.set(item.id,cachedRakuma(prior,'request_error')||{status:'error',error:String(error),rulesVersion:MATCHING_RULES_VERSION,candidates:[],lowestPrice:null,checkedAt:new Date().toISOString()});
   }
-}
-
-})();
+});
 
 // All accounts receive a fair turn. A failed source never becomes 'no offers'.
-const mercariLimit=fullPriceAudit?Infinity:Math.max(1,Number(settings.maxMercariItemsPerRun)||30);
+const mercariLimit=Number.POSITIVE_INFINITY;
 const mercariTasks=fairRoundRobin(contexts.map(context=>context.activeItems.map((item,itemIndex)=>{
  const prior=priorFor(context,item),cached=cachedComparison(prior.mercari),stamp=Date.parse(prior.mercari?.checkedAt||'');
- if(cached&&isFresh(cached.checkedAt,6)){context.mercariById.set(item.id,cached);return null}
+ if(cached&&isFreshMinutes(cached.checkedAt,Number(settings.mercariFreshMinutes)||20)){context.mercariById.set(item.id,cached);return null}
  return {context,item,prior,itemIndex,lastChecked:Number.isFinite(stamp)?stamp:0};
 }).filter(Boolean).sort((a,b)=>a.lastChecked-b.lastChecked||a.itemIndex-b.itemIndex)));
+const mercariConcurrency=Math.max(1,Math.min(4,Number(settings.mercariConcurrency)||3));
 const mercariWork=(async()=>{
-let mercariBrowser,mercariPage;
-try{for(const [index,{context,item,prior}] of mercariTasks.entries()){
- if(index>=mercariLimit||Date.now()>=deadline){context.mercariById.set(item.id,cachedComparison(prior.mercari,'rotation_limit')||{status:'deferred_limit',candidates:[],checkedAt:null});continue}
+ const pages=new Map();let opened;
  try{
-  if(!mercariPage){const opened=await openContext();mercariBrowser=opened.browser;mercariPage=await opened.context.newPage()}
-  const result=await mercariCompare(mercariPage,await hydratedItem(item,prior),{...settings,matchCorrections});context.mercariById.set(item.id,result);
-  console.log('[Mercari]',context.account.id,item.id,result.status,'matches='+result.competitorCount,'lowest='+result.lowestPrice);
- }catch(error){context.mercariById.set(item.id,{status:'error',error:String(error),rulesVersion:MATCHING_RULES_VERSION,checkedAt:new Date().toISOString(),candidates:[]});console.error('[Mercari ERROR]',item.id,String(error))}
-}}finally{await mercariBrowser?.close().catch(()=>{})}
-
+  await mapLimit(mercariTasks,mercariConcurrency,async({context,item,prior},index,slot)=>{
+   if(index>=mercariLimit||Date.now()>=deadline){context.mercariById.set(item.id,cachedComparison(prior.mercari,'rotation_limit')||{status:'deferred_limit',candidates:[],checkedAt:null});return}
+   try{
+    opened ||= openContext();
+    const session=await opened;
+    if(!pages.has(slot))pages.set(slot,await session.context.newPage());
+    const result=await mercariCompare(pages.get(slot),await hydratedItem(item,prior),{...settings,matchCorrections});
+    context.mercariById.set(item.id,result);
+    console.log('[Mercari]',context.account.id,item.id,result.status,'matches='+result.competitorCount,'lowest='+result.lowestPrice);
+   }catch(error){context.mercariById.set(item.id,{status:'error',error:String(error),rulesVersion:MATCHING_RULES_VERSION,checkedAt:new Date().toISOString(),candidates:[]});console.error('[Mercari ERROR]',item.id,String(error))}
+  });
+ }finally{if(opened){const session=await opened.catch(()=>null);await session?.browser?.close().catch(()=>{})}}
 })();
 
 const xianyuState=await xianyuStateFromEnv();
@@ -374,7 +372,7 @@ const result={
   version:6,checkedAt,dataRevision:checkedAt,settings,accounts:accountResults,managedAccounts,portalUsers,appliedSyncIssues:previous?.appliedSyncIssues||{},
   manualCosts,matchCorrections,portalPreferences,dismissedDiscoveries,discoveryReviews,ownedTitleHistory,relistAliases,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode,xianyuAccess:sessionManager.access()},items:allItems,
   scanMeta:{codeSha:process.env.GITHUB_SHA||null,trigger:process.env.SCAN_TRIGGER||'local',startedAt:new Date(startedAt).toISOString(),durationSeconds:Math.round((Date.now()-startedAt)/1000),
-    budgetMinutes:Number(settings.scanBudgetMinutes)||12,profileConcurrency,yahooConcurrency,rakumaLimit,xianyuLimit}
+    budgetMinutes:Number(settings.scanBudgetMinutes)||12,profileConcurrency,yahooConcurrency,rakumaConcurrency,mercariConcurrency,rakumaLimit:Number.isFinite(rakumaLimit)?rakumaLimit:null,mercariLimit:Number.isFinite(mercariLimit)?mercariLimit:null,xianyuLimit}
 };
 const {summary}=await writeOutputs({root,result,previous,password});
 console.log(summary);
