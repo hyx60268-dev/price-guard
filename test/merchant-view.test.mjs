@@ -1,8 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { selectMerchantProducts,merchantCardsMarkup } from '../public/merchant-view.js';
+import { selectMerchantProducts,merchantCardsMarkup,merchantImageMessage } from '../public/merchant-view.js';
 const now=Date.parse('2026-09-28T01:00:00Z'),base={sourceTitle:'中国限定 cup',sourcePlatform:'yahoo',eventAt:new Date(now-3600000).toISOString(),sourcePriceJPY:5000};
+test('missing images expose reason and retry timing without a false success label',()=>{
+ const text=merchantImageMessage({webImageStatus:'error',webImageReason:'detail_unavailable',webImageCheckedAt:'2026-10-01T13:00:00Z',webImageRetryAt:'2026-10-01T13:20:00Z'});
+ assert.match(text,/候选图片来源暂时无法读取/);assert.match(text,/最近检查/);assert.match(text,/下次复查不早于/);assert.doesNotMatch(text,/已核对|成功/);
+ assert.match(merchantImageMessage({webImageStatus:'error'}),/上次找图失败/);
+});
 test('group remains one card when filtering sold or listed and copy is visible without expanding',()=>{
  const p={...base,event:'listed',listingCount:2,observations:[{...base,event:'listed'},{...base,event:'sold'}]};
  assert.equal(selectMerchantProducts([p],{now,event:'sold'})[0].event,'sold');
