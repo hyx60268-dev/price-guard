@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decrypt,encrypt } from './lib/crypto.mjs';
 import { reconcileDurableState } from './lib/state.mjs';
+import { fetchPublishedBytes } from './lib/published-fetch.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url)),root=path.resolve(here,'..');
 const password=process.env.DASHBOARD_PASSWORD;
@@ -18,10 +19,7 @@ async function localJson(filename){
   catch(error){if(error.code==='ENOENT')return null;throw new Error('本地完整状态无法解密，停止恢复以免覆盖数据')}
 }
 async function remoteBytes(filename){
-  const response=await fetch(`${base}/${filename}?restore=${Date.now()}`,{headers:{'cache-control':'no-cache'},signal:AbortSignal.timeout(30000)});
-  if(response.status===404)return null;
-  if(!response.ok)throw new Error(`发布状态恢复失败 HTTP ${response.status}，停止发布以免使用过期基准`);
-  return Buffer.from(await response.arrayBuffer());
+  return fetchPublishedBytes(`${base}/${filename}?restore=${Date.now()}`,{label:filename});
 }
 
 const publishedBytes=await remoteBytes('state.json.enc')||await remoteBytes('latest.json.enc');
