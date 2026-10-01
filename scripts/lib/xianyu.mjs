@@ -5,7 +5,7 @@ import { offerIdentityGuard } from './offer-identity.mjs';
 import { rejectedByMemory } from '../../public/match-memory.js';
 import { coherentPrices,collectibleIdentityRequiresVisualProof,conditionCompatible,hasExplicitDefect,hasExplicitVariantMismatch,hasVariantMismatch,isLikelyVariantOffer,productFamily,saleUnitEquivalent,semanticQuantity,semanticSameItem,titleScore,yen } from './rules.mjs';
 import { xianyuQueryFor } from './discovery.mjs';
-import { xianyuSearchExclusion,collectXianyuDetails,detailStateFailure,readSettledXianyuDetail,xianyuResultStatus,verifiedCostEvidence,XIANYU_VERIFICATION } from './xianyu-evidence.mjs';
+import { xianyuSearchExclusion,collectXianyuDetails,detailStateFailure,readSettledXianyuDetail,readSettledXianyuSearch,xianyuResultStatus,verifiedCostEvidence,XIANYU_VERIFICATION } from './xianyu-evidence.mjs';
 
 async function mapLimit(values,limit,worker){
   const output=new Array(values.length);let cursor=0;
@@ -111,22 +111,16 @@ export async function xianyuCost(page,item,settings){
     usedQuery=candidateQuery;url=`https://www.goofish.com/search?q=${encodeURIComponent(candidateQuery)}`;
     await gotoWithRetry(page,url,{waitUntil:'domcontentloaded',timeout:35000},settings);await settle(page,Math.max(2500,settings.scanDelayMs||1200));
     await page.waitForSelector('a[href*="/item?id="], a[href*="/item/"]',{timeout:6000}).catch(()=>{});
+    pageState=await readSettledXianyuSearch(page);
     cards=await cardsFromPage(page,'xianyu');
-    pageState=await page.evaluate(()=>{
-    const visible=element=>{const style=getComputedStyle(element),rect=element.getBoundingClientRect();return style.display!=='none'&&style.visibility!=='hidden'&&rect.width>0&&rect.height>0};
-    const text=(document.body?.innerText||'').replace(/\s+/g,' ');
-    const loginVisible=[...document.querySelectorAll('iframe[src*="login"], [class*="login" i]')].some(visible);
-    const challenge=[...document.querySelectorAll('iframe')].some(frame=>visible(frame)&&/baxia|captcha|_____tmd_____|\/punish/i.test(`${frame.id} ${frame.getAttribute('src')||''}`));
-    return {loginVisible,noResults:/没有找到你想要的宝贝|减少筛选内容试试/.test(text),blocked:challenge||/访问频繁|安全验证|滑块|验证码|请稍后重试|被挤爆/.test(text),snippet:text.slice(0,180)};
-    }).catch(()=>({loginVisible:false,blocked:false,snippet:''}));
     // 闲鱼无搜索结果时仍会在“猜你喜欢”下返回约20个完全无关的链接。
     // 这些链接不能算搜索候选，否则系统会看似扫描成功却永远得不到成本。
     if(pageState.noResults)cards=[];
     if(cards.length||pageState.blocked||pageState.loginVisible)break;
   }
   const cardCount=cards.length;
-  if(pageState.blocked)return {query,searchUrl:url,status:'blocked',samples:[],averageCNY:null,cardCount,diagnostic:'搜索页安全验证，未采用推荐商品'};
-  if(!cardCount&&(pageState.loginVisible||/login|signin/i.test(page.url())))return {query,searchUrl:url,status:'login_required',samples:[],averageCNY:null,cardCount,diagnostic:pageState.snippet};
+  if(pageState.blocked)return {query,searchUrl:url,status:'blocked',samples:[],averageCNY:null,cardCount,searchDiagnostic:pageState.diagnostic,diagnostic:'搜索页安全验证，未采用推荐商品'};
+  if(pageState.loginVisible||/login|signin/i.test(page.url()))return {query,searchUrl:url,status:'login_required',samples:[],averageCNY:null,cardCount,searchDiagnostic:pageState.diagnostic,diagnostic:'搜索页有可见登录遮罩'};
 
   const ownUrls=[...(item.yahoo?.ownImages||[]),...(item.images||[]),item.image].filter(Boolean).slice(0,5);
   const ownImageEvidence=await mapLimit([...new Set(ownUrls)],3,imageFingerprints);
@@ -164,7 +158,7 @@ export async function xianyuCost(page,item,settings){
   const status=xianyuResultStatus(checks,{ready:evidence.ready,cardCount,searchLoginRequired:pageState.loginVisible});
   return {query,usedQuery,searchAttempts,searchUrl:url,status,samples:coherent,averageCNY:status==='ok'?referenceCNY:null,cardCount,
     detailCheckedCount:checks.length,diagnostic:status==='blocked'?'目标详情触发安全验证；已停止本轮闲鱼检查':status==='login_required'?'搜索页或多个独立详情要求登录；已停止本轮闲鱼检查':null,
-    loginVisible:pageState.loginVisible,preliminaryCount:preliminary.length,verifiedCount:verified.length,rejected:[...rejected,...prefilterRejected].slice(0,30),
+    searchDiagnostic:pageState.diagnostic,loginVisible:pageState.loginVisible,preliminaryCount:preliminary.length,verifiedCount:verified.length,rejected:[...rejected,...prefilterRejected].slice(0,30),
     pricedCardCount:priced.filter(card=>Number.isFinite(card.price)&&card.price>1).length,unpricedCardCount:priced.filter(card=>!Number.isFinite(card.price)||card.price<=1).length,prefilterRejectedCount:prefilterRejected.length,
     topCandidates:ranked.slice(0,5).map(card=>({title:card.title.slice(0,120),titleScore:Number(card.titleScore.toFixed(3)),imageScore:Number.isFinite(card.imageScore)?Number(card.imageScore.toFixed(3)):null,price:card.price})),
     sellerCount,priceSpread,accessibleDetailCount,
