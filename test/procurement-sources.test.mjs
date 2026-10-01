@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { parseImageSearchResults } from '../scripts/lib/external-images.mjs';
 import { PUBLIC_PROCUREMENT_VERIFICATION,procurementSource,canonicalProcurementUrl,embeddedPublicJSON,procurementSellerIdentity,chooseYouzanSku,youzanQuoteFromPublicState,parsePublicProcurementDetail,readYouzanPublicDOM,readPublicProcurementDetail,settleYouzanSelection,verifiedPublicCostEvidence,alternativeProcurementCost } from '../scripts/lib/procurement-sources.mjs';
 const url='https://detail.youzan.com/show/goods?alias=2osy35s5abbdhtd';
 const title='Anker AeroClip 2 张凌赫 联名 礼盒 白色';
@@ -167,4 +168,34 @@ test('Youzan selection observations stop on login or challenge without retrying 
   const result=await settleYouzanSelection(page,chooseYouzanSku(youzan.goodsData,item));
   assert.equal(result.ok,false);assert.equal(result.status,'unavailable');assert.equal(result.reason,blocked==='blocked'?'source_challenge':'source_login_required');assert.deepEqual(page.counts(),{reads:1,waits:0});
  }
+});
+
+
+const rssResults=rows=>'<rss><channel>'+rows.map(r=>'<item><title>'+r.title+'</title><link>'+r.url.replaceAll('&','&amp;')+'</link></item>').join('')+'</channel></rss>';
+test('procurement selects supported unique details before the shared five-result limit',async()=>{
+ const productTitle='Myethos 荒芜拉普兰德 手办 1/7',subject={...item,title:productTitle};
+ const rows=[...Array.from({length:5},(_,n)=>({title:productTitle,url:'https://www.hpoi.net/album/'+n})),{title:productTitle,url:'https://item.jd.com/123.html'},{title:productTitle,url:'https://item.jd.com/123.html?tracking=duplicate'}];
+ const html=rssResults(rows),reads=[],calls=[];
+ assert.deepEqual(parseImageSearchResults(html,'bing',productTitle).candidates.map(r=>r.url),rows.slice(0,5).map(r=>r.url),'ordinary image search must keep its existing default selection');
+ const result=await alternativeProcurementCost(subject,{fingerprint:async()=>fp,search:async(query,options)=>{calls.push(options.provider);return parseImageSearchResults(html,'bing',query,{candidateSelector:options.candidateSelector});},detail:async url=>{reads.push(url);return {status:'incomplete',reason:'sku_unconfirmed'}}});
+ assert.deepEqual(reads,['https://item.jd.com/123.html']);assert.deepEqual(calls,['duckduckgo','bing']);
+ assert.equal(result.detailCheckedCount,1);assert.equal(result.searched,2);assert.equal(result.unsupportedTargets,10);assert.equal(result.duplicateUrls,3);
+ assert.deepEqual(result.searchResults.map(r=>({returned:r.returned,rejected:r.rejected,accepted:r.accepted,unsupportedTargets:r.unsupportedTargets,duplicateUrls:r.duplicateUrls})),[{returned:7,rejected:0,accepted:1,unsupportedTargets:5,duplicateUrls:1},{returned:7,rejected:0,accepted:0,unsupportedTargets:5,duplicateUrls:2}]);
+ assert.equal(result.searchResults[0].rejectedExamples.length,3);assert.equal(result.diagnostics[0].reason,'sku_unconfirmed');
+});
+
+test('empty and unsupported search results expose their distinct counts without fabricating detail checks',async()=>{
+ const subject={...item,title:'Myethos 荒芜拉普兰德 手办 1/7'};
+ const clean=await alternativeProcurementCost(subject,{fingerprint:async()=>fp,search:async()=>({returned:10,rejected:10,candidates:[],rejectedExamples:[{url:'https://news.test/login?token=secret',title:'<b>无关内容</b> token=secret'}]}),detail:async()=>{throw Error('must not read detail')}});
+ assert.equal(clean.reason,'no_verified_detail');assert.equal(clean.detailCheckedCount,0);assert.equal(clean.searched,2);assert.equal(clean.searchResults[0].returned,10);assert.equal(clean.searchResults[0].rejected,10);assert.equal(clean.searchResults[0].accepted,0);
+ assert.equal(clean.searchResults[0].rejectedExamples[0].host,'news.test');assert.equal(JSON.stringify(clean.searchResults).includes('secret'),false);assert.equal(JSON.stringify(clean.searchResults).includes('/login'),false);
+ const unsupported=await alternativeProcurementCost(subject,{fingerprint:async()=>fp,search:async()=>[{url:'https://www.hpoi.net/hobby/115375',title:'手办'}]});assert.equal(unsupported.unsupportedTargets,2);assert.equal(unsupported.detailCheckedCount,0);assert.equal(unsupported.searchResults[0].rejectedExamples[0].reason,'unsupported_detail_target');
+});
+
+test('missing target and search barriers retain bounded diagnostics without raw HTML, credentials or login URLs',async()=>{
+ const missing=await alternativeProcurementCost({...item,accountId:''},{fingerprint:async()=>{throw Error('must not fetch')}});assert.equal(missing.reason,'target_identity_missing');assert.equal(missing.diagnostics[0].reason,'target_identity_missing');
+ const subject={...item,title:'Myethos 荒芜拉普兰德 手办 1/7'};
+ const result=await alternativeProcurementCost(subject,{fingerprint:async()=>fp,search:async()=>{throw Error('search_challenge https://example.test/login?token=secret <html>token=secret</html>')}});
+ assert.equal(result.status,'unavailable');assert.equal(result.reason,'source_unavailable');assert.equal(result.searched,2);assert.equal(result.searchResults.length,2);assert.equal(result.diagnostics.length,2);assert.ok(result.searchResults.every(r=>r.error.startsWith('search_challenge')));
+ const output=JSON.stringify(result.searchResults)+JSON.stringify(result.diagnostics);assert.equal(output.includes('secret'),false);assert.equal(output.includes('/login'),false);assert.equal(output.includes('<html>'),false);assert.ok(result.diagnostics.every(d=>d.reason.length<=160));
 });

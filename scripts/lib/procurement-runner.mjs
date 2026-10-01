@@ -1,6 +1,8 @@
 import { mapLimit } from './worker-pool.mjs';
 import { bindProcurementTarget,verifiedPublicProcurementCache,sameProcurementTarget } from './procurement-reference.mjs';
 
+const logText=value=>String(value??'').replace(/<[^>]*>/g,' ').replace(/https?:\/\/[^\s"'<>]+/gi,'[url omitted]').replace(/\b(?:set-cookie|cookie|authorization|token|password|session)\s*[:=][^,;\n]*/gi,'[sensitive omitted]').replace(/\s+/g,' ').trim().slice(0,160);
+
 // Each account supplies an already ordered bucket. Sources run independently of
 // Xianyu access state, with their own bounded admission and shared scan deadline.
 export async function runPublicProcurement(buckets,{lookup,hydrate=async item=>item,deadline,limit=8,concurrency=2,now=Date.now,log=()=>{}}={}){
@@ -18,10 +20,10 @@ export async function runPublicProcurement(buckets,{lookup,hydrate=async item=>i
   admitted++;
   let reference,observedItem=item;
   try{observedItem=await hydrate(item,prior);reference=await lookup(observedItem,{deadline:Math.min(deadline,now()+60000)});}
-  catch(error){reference={status:'error',averageCNY:null,samples:[],diagnostics:[{reason:'lookup_exception',message:String(error?.message||error).slice(0,160)}]};}
+  catch(error){reference={status:'error',reason:'lookup_exception',averageCNY:null,samples:[],diagnostics:[{reason:'lookup_exception',message:logText(error?.message||error)}]};}
   reference=bindProcurementTarget({...reference,attempted:true,checkedAt:reference.checkedAt||new Date(now()).toISOString()},observedItem);
   results.set(key,reference);
-  log({key,status:reference.status,sellers:reference.sellerCount||0,averageCNY:reference.averageCNY??null,diagnostics:reference.diagnostics||[]});
+  log({key,status:reference.status,reason:logText(reference.reason),sellers:reference.sellerCount||0,averageCNY:reference.averageCNY??null,searched:reference.searched||0,detailCheckedCount:reference.detailCheckedCount||0,unsupportedTargets:reference.unsupportedTargets||0,duplicateUrls:reference.duplicateUrls||0,searchResults:(reference.searchResults||[]).slice(0,4),diagnostics:(reference.diagnostics||[]).slice(0,16)});
  });
  return results;
 }

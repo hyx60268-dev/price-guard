@@ -25,3 +25,16 @@ test('public lookup binds the hydrated description rather than an unobserved lis
  assert.deepEqual(values.get('a:1').target,procurementTarget({...task.item,sourceDetail:detail}));
  assert.equal(values.get('a:1').target.description,detail.description);
 });
+
+
+test('public procurement cloud log includes top-level cause and bounded query/detail accounting',async()=>{
+ const logged=[];
+ const reference={status:'incomplete',reason:'no_verified_detail',samples:[],sellerCount:0,searched:2,detailCheckedCount:0,unsupportedTargets:9,duplicateUrls:3,searchResults:Array.from({length:8},()=>({provider:'bing',query:'商品 购买 现货',returned:10,rejected:2,accepted:0})),diagnostics:Array.from({length:30},()=>({reason:'fixture'}))};
+ await runPublicProcurement([[make('a','1')]],{now:()=>now,deadline:now+60000,lookup:async()=>reference,log:row=>logged.push(row)});
+ const row=logged[0];assert.equal(row.reason,'no_verified_detail');assert.equal(row.searched,2);assert.equal(row.detailCheckedCount,0);assert.equal(row.unsupportedTargets,9);assert.equal(row.duplicateUrls,3);assert.equal(row.searchResults.length,4);assert.equal(row.diagnostics.length,16);
+});
+
+test('public procurement logs target identity failures and sanitizes lookup exceptions',async()=>{
+ const logged=[];await runPublicProcurement([[make('a','1'),make('a','2')]],{now:()=>now,deadline:now+60000,lookup:async item=>{if(item.id==='1')return {status:'incomplete',reason:'target_identity_missing',samples:[]};throw Error('HTTP 503 https://example.test/login?token=secret <html>cookie=secret</html>');},log:row=>logged.push(row)});
+ assert.equal(logged[0].reason,'target_identity_missing');assert.equal(logged[1].reason,'lookup_exception');assert.ok(logged[1].diagnostics[0].message.startsWith('HTTP 503'));const output=JSON.stringify(logged);assert.equal(output.includes('secret'),false);assert.equal(output.includes('/login'),false);assert.equal(output.includes('<html>'),false);
+});

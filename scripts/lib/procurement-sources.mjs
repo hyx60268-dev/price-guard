@@ -152,17 +152,28 @@ export async function readPublicProcurementDetail(url,{item,context,getContext,d
  }finally{await page.close().catch(()=>{})}
 }
 function rejected(records,item,candidate){return Object.values(records||{}).some(r=>!r.deleted&&r.accountId===item.accountId&&(r.itemId===item.id||r.itemId===item.relistedFrom&&r.ownTitle===item.title&&r.ownImage===item.image)&&(r.candidateId===candidate.id||r.candidateId===candidate.skuId||r.candidateId===candidate.canonicalUrl||canonicalProcurementUrl(r.candidateUrl||r.url)===candidate.canonicalUrl));}
+function diagnosticText(value,limit=160){
+ return String(value??'').replace(/<[^>]*>/g,' ').replace(/https?:\/\/[^\s"'<>]+/gi,'[url omitted]').replace(/\b(?:set-cookie|cookie|authorization|token|password|session)\s*[:=][^,;\n]*/gi,'[sensitive omitted]').replace(/\s+/g,' ').trim().slice(0,limit);
+}
+function searchExample(row,reason){let host='';try{host=new URL(row.url).hostname.slice(0,100)}catch{}return {host,title:diagnosticText(row.title,100),reason};}
 export async function alternativeProcurementCost(item,{deadline=Date.now()+90000,maxDetails=8,search=searchExternalImages,detail=readPublicProcurementDetail,fingerprint=imageFingerprints,matchCorrections={},context,getContext}={}){
- const target=procurementTarget(item),checkedAt=new Date().toISOString(),report={status:'incomplete',averageCNY:null,samples:[],sellerCount:0,verification:PUBLIC_PROCUREMENT_VERIFICATION,checkedAt,target,diagnostics:[],searched:0,detailCheckedCount:0};
- if(['accountId','id','title','image'].some(key=>!target[key]))return {...report,reason:'target_identity_missing'};
+ const target=procurementTarget(item),checkedAt=new Date().toISOString(),report={status:'incomplete',averageCNY:null,samples:[],sellerCount:0,verification:PUBLIC_PROCUREMENT_VERIFICATION,checkedAt,target,diagnostics:[],searched:0,detailCheckedCount:0,searchResults:[],unsupportedTargets:0,duplicateUrls:0};
+ const diagnose=row=>{if(report.diagnostics.length<16)report.diagnostics.push({...row,source:row.source?diagnosticText(row.source,32):undefined,url:row.url&&row.url.length<=512?canonicalProcurementUrl(row.url)||undefined:undefined,reason:diagnosticText(row.reason)})};
+ if(['accountId','id','title','image'].some(key=>!target[key])){diagnose({stage:'target',reason:'target_identity_missing'});return {...report,reason:'target_identity_missing'};}
  if(Date.now()>=deadline)return {...report,status:'deferred',reason:'budget_exhausted'};
- const own=await fingerprint(item.image);if(!own)return {...report,status:'unavailable',reason:'target_image_unavailable'};
+ const own=await fingerprint(item.image);if(!own){diagnose({stage:'target',reason:'target_image_unavailable'});return {...report,status:'unavailable',reason:'target_image_unavailable'};}
  const seen=new Set();let sourcesCompleted=0,sourceFailure=false;
+ const selectCandidates=(rows,summary)=>{const unique=new Set(),accepted=[];for(const row of rows){const url=canonicalProcurementUrl(row.url);let reason;
+  if(!url){report.unsupportedTargets++;if(summary)summary.unsupportedTargets++;reason='unsupported_detail_target';}
+  else if(seen.has(url)||unique.has(url)){report.duplicateUrls++;if(summary)summary.duplicateUrls++;reason='duplicate_detail_url';}
+  else{unique.add(url);accepted.push(row);continue}
+  if(summary&&summary.rejectedExamples.length<3)summary.rejectedExamples.push(searchExample(row,reason));
+ }return accepted;};
  const consume=async rows=>{for(const row of rows){if(Date.now()>=deadline||seen.size>=maxDetails)return;
   const url=canonicalProcurementUrl(row.url);if(!url||seen.has(url))continue;seen.add(url);
   try{const quote=await detail(url,{item,context,getContext,deadline});report.detailCheckedCount++;
-   if(quote.status!=='quoted'){if(quote.status==='unavailable'||quote.status==='error')sourceFailure=true;report.diagnostics.push({source:procurementSource(url),reason:quote.reason,url});continue}
-   if(rejected(matchCorrections,item,quote)){report.diagnostics.push({source:quote.source,reason:'rejected_by_memory',url});continue}
+   if(quote.status!=='quoted'){if(quote.status==='unavailable'||quote.status==='error')sourceFailure=true;diagnose({source:procurementSource(url),reason:quote.reason,url});continue}
+   if(rejected(matchCorrections,item,quote)){diagnose({source:quote.source,reason:'rejected_by_memory',url});continue}
    const query=externalImageQueries(item.title)[0],candidate=colorText(quote.detailTitle+' '+quote.selectedVariant);
    const titleMatch=titleScore(query,candidate),fp=await fingerprint(quote.detailImages?.[0]),primaryImageScore=primaryProductSimilarity(own,fp);
    // Search queries deliberately strip descriptors and may truncate. Only the
@@ -179,18 +190,28 @@ export async function alternativeProcurementCost(item,{deadline=Date.now()+90000
    const sealed=/(?:未開封|未拆封|未开封|全新未拆)/;
    const candidateOriginal=[quote.detailTitle,quote.selectedVariant,quote.detailDescription].filter(Boolean).join('\n');
    const sealConflict=/(?:已[开拆]封|開封済|拆封验货|不是.{0,3}未[开拆]封|非.{0,3}未[开拆]封|不(?:保证|确定).{0,4}未[开拆]封)/;
-   if(sealed.test(ownTitle+'\n'+ownDescription)&&(!sealed.test(candidateOriginal)||sealConflict.test(candidateOriginal))){report.diagnostics.push({source:quote.source,reason:'sealed_condition_unconfirmed',url});continue}
+   if(sealed.test(ownTitle+'\n'+ownDescription)&&(!sealed.test(candidateOriginal)||sealConflict.test(candidateOriginal))){diagnose({source:quote.source,reason:'sealed_condition_unconfirmed',url});continue}
    const guard=offerIdentityGuard({ownTitle:identityText(ownTitle),ownDescription:identityText(ownDescription),candidateTitle:identityText([quote.detailTitle,quote.selectedVariant].filter(Boolean).join(' ')),candidateDescription:identityText(candidateDescription),primaryImageScore});
-   if(!guard.accepted||!(primaryImageScore>=.98)||titleMatch<.62){report.diagnostics.push({source:quote.source,reason:guard.accepted?'identity_unconfirmed':guard.reason,url,titleScore:titleMatch,primaryImageScore});continue}
+   if(!guard.accepted||!(primaryImageScore>=.98)||titleMatch<.62){diagnose({source:quote.source,reason:guard.accepted?'identity_unconfirmed':guard.reason,url,titleScore:titleMatch,primaryImageScore});continue}
    report.samples.push({...quote,sellerIdentityKey:procurementSellerIdentity(quote.sellerName),checkedAt:new Date().toISOString(),verification:PUBLIC_PROCUREMENT_VERIFICATION,target,identity:{accepted:true,titleScore:titleMatch,primaryImageScore}});
    if(verifiedPublicCostEvidence(report.samples,{target}).ready)return;
-  }catch(e){sourceFailure=true;report.diagnostics.push({source:procurementSource(url),reason:String(e?.message||e).slice(0,160),url})}
+  }catch(e){sourceFailure=true;diagnose({source:procurementSource(url),reason:String(e?.message||e).slice(0,160),url})}
  }};
  const known=/Anker/i.test(item.title)&&/AeroClip\s*2/i.test(item.title)&&/張凌赫|张凌赫/.test(item.title)?[{url:'https://detail.youzan.com/show/goods?alias=2osy35s5abbdhtd'}]:[];
- await consume([...known,...(item.procurementSource?.samples||[])]);
+ await consume(selectCandidates([...known,...(item.procurementSource?.samples||[])]));
  for(const query of externalImageQueries(item.title).slice(0,2))for(const provider of ['duckduckgo','bing']){
   if(Date.now()>=deadline||seen.size>=maxDetails||verifiedPublicCostEvidence(report.samples,{target}).ready)break;
-  try{report.searched++;const found=await search(query+' 购买 现货',{provider,deadline});sourcesCompleted++;await consume(Array.isArray(found)?found:found.candidates||[])}catch(e){sourceFailure=true;report.diagnostics.push({source:provider,reason:String(e?.message||e).slice(0,160)})}
+  const summary={provider,query:diagnosticText(query+' 购买 现货'),returned:0,rejected:0,accepted:0,unsupportedTargets:0,duplicateUrls:0,rejectedExamples:[]};
+  report.searchResults.push(summary);
+  try{report.searched++;let selectedBeforeLimit=false;
+   const found=await search(query+' 购买 现货',{provider,deadline,candidateSelector:rows=>{selectedBeforeLimit=true;return selectCandidates(rows,summary)}});sourcesCompleted++;
+   const candidates=Array.isArray(found)?found:found.candidates||[];
+   summary.returned=Number.isFinite(found.returned)?found.returned:candidates.length;
+   summary.rejected=Number.isFinite(found.rejected)?found.rejected:0;
+   for(const row of (found.rejectedExamples||[]).slice(0,3))if(summary.rejectedExamples.length<3)summary.rejectedExamples.push(searchExample(row,'search_relevance'));
+   const selected=(selectedBeforeLimit?candidates:selectCandidates(candidates,summary)).slice(0,5);summary.accepted=selected.length;
+   await consume(selected);
+  }catch(e){sourceFailure=true;summary.error=diagnosticText(e?.message||e);diagnose({stage:'search',source:provider,reason:summary.error})}
  }
  const evidence=verifiedPublicCostEvidence(report.samples,{target});Object.assign(report,{samples:evidence.samples,sellerCount:evidence.sellerCount,priceSpread:evidence.priceSpread});
  if(evidence.ready)return {...report,status:'ok',averageCNY:evidence.median,reviewedAt:new Date().toISOString(),reviewVersion:1};
