@@ -1,3 +1,4 @@
+import { xianyuAccessDiagnostic } from './lib/xianyu-evidence.mjs';
 import { mapLimit } from './lib/worker-pool.mjs';
 import { buildOwnedOffers } from '../public/owned-offers.js';
 import { createOwnSourceLoader } from './lib/own-source.mjs';
@@ -266,6 +267,7 @@ try{
     result.checkedAt=result.checkedAt||new Date().toISOString();
     if(completedXianyuReview(result)){result.reviewedAt=result.checkedAt;result.reviewVersion=XIANYU_VERIFICATION;}
     console.log(`[闲鱼结果] ${item.id} 状态=${result.status} 卡片=${result.cardCount??0} 初筛=${result.preliminaryCount??0} 核验=${result.verifiedCount??0} 卖家=${result.sellerCount??0} 参考=${result.averageCNY??'—'}`);
+    console.log('[闲鱼访问诊断]',item.id,JSON.stringify(xianyuAccessDiagnostic(result)));
     if(result.rejected?.length){
       const reasons=Object.entries(result.rejected.reduce((map,row)=>{map[row.reason||'unknown']=(map[row.reason||'unknown']||0)+1;return map},{})).map(([reason,count])=>`${reason}:${count}`).join(', ');
       console.log(`[闲鱼拒绝原因] ${item.id} ${reasons}`);

@@ -77,6 +77,34 @@ export function readXianyuDetailDOM() {
     diagnostic:{challengeFrame,challengeText,loginVisible,loginSurfaces,networkError,mainFound:Boolean(main),descriptionLength:text.length,galleryFound:Boolean(gallery),imageCount:images.length,priceCount:prices.length,priceRange,sellerFound:Boolean(sellerKey)}};
 }
 
+// Search navigation contains ordinary login buttons and readable notLogin*
+// containers. Only an active authentication surface makes search inaccessible.
+export function readXianyuSearchDOM(){
+ const visible=element=>{for(let node=element;node;node=node.parentElement){const style=getComputedStyle(node);if(style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse'||style.opacity==='0'||node.hidden)return false}const rect=element.getBoundingClientRect();return rect.width>0&&rect.height>0};
+ const text=(document.body?.innerText||'').replace(/\s+/g,' ');
+ const loginNodes=[...document.querySelectorAll('iframe[src*="login"],[role="dialog"][class*="login" i],[class*="notloginMask--"]')].filter(visible);
+ const loginSurfaces=loginNodes.map(n=>({tag:n.tagName,kind:n.tagName==='IFRAME'?'login_frame':n.getAttribute('role')==='dialog'?'login_dialog':'detail_mask'}));
+ const challengeFrame=[...document.querySelectorAll('iframe')].some(frame=>visible(frame)&&/baxia|captcha|_____tmd_____|\/punish/i.test(frame.id+' '+(frame.getAttribute('src')||'')));
+ const challengeText=(text.match(/访问频繁|安全验证|滑块|验证码|请稍后重试|被挤爆|drag the slider|verify you are human/i)||[])[0]||null;
+ const loginVisible=loginNodes.length>0,blocked=challengeFrame||Boolean(challengeText);
+ return {loginVisible,blocked,noResults:/没有找到你想要的宝贝|减少筛选内容试试/.test(text),diagnostic:{loginVisible,loginSurfaces,challengeFrame,challengeText}};
+}
+
+export async function readSettledXianyuSearch(page,{delay=2000}={}){
+ const state=await page.evaluate(readXianyuSearchDOM);
+ if(state.blocked||!state.loginVisible)return state;
+ await page.waitForTimeout(delay);
+ return page.evaluate(readXianyuSearchDOM);
+}
+
+// Logs contain structural access evidence, never cookies, HTML or login URLs.
+export function xianyuAccessDiagnostic(result={}){
+ const fields=['loginVisible','challengeFrame','networkError','mainFound','galleryFound','sellerFound','priceRange','imageCount','priceCount','descriptionLength'];
+ const diagnostic=value=>Object.fromEntries([...fields.filter(k=>['number','boolean'].includes(typeof value?.[k])).map(k=>[k,value[k]]),['loginSurfaces',(value?.loginSurfaces||[]).filter(s=>['login_frame','login_dialog','detail_mask'].includes(s.kind)).map(s=>({kind:s.kind}))]]);
+ return {status:result.status,cardCount:result.cardCount||0,detailCheckedCount:result.detailCheckedCount||0,accessibleDetailCount:result.accessibleDetailCount||0,
+  search:diagnostic(result.searchDiagnostic),details:(result.rejected||[]).filter(r=>/^detail_(blocked|login_required|network_error|error)$/.test(r.reason||'')).map(r=>({reason:r.reason,...diagnostic(r.diagnostic)}))};
+}
+
 // A restored session may hydrate after the initial login shell is rendered.
 // Wait for two consecutive login observations; never dismiss or modify it.
 // Challenges stop immediately. Acceptance still requires every target field.

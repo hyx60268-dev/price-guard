@@ -1,4 +1,5 @@
-import { merchantRetryDelay,merchantBudget } from './lib/merchant-scheduling.mjs';
+import { xianyuAccessDiagnostic } from './lib/xianyu-evidence.mjs';
+import { merchantRetryDelay,merchantBudget,merchantXianyuAccess } from './lib/merchant-scheduling.mjs';
 import { curateMerchantProducts,prepareMerchantVisuals } from './lib/merchant-curation.mjs';
 import { isMixedBundle,expandMerchantBundles } from './lib/merchant-bundles.mjs';
 import { allowedMerchantPhotoSource } from '../public/merchant-records.js';
@@ -69,17 +70,20 @@ const {attempted:publicImageLookups}=await runMerchantImageJobs(imageRecords.fil
 // cooldown as procurement. No search thumbnail is relabelled as a verified image.
 let xBrowser,xContext,xPage,imageLookups=0;
 const session=await loadXianyuSession(root);
+const imageAccess=merchantXianyuAccess(dashboard,session.access());
+if(!imageAccess.allowed)console.log('[闲鱼找图暂停]',imageAccess.reason);
 try{
  const allowedKeys=new Set(merchants.map(m=>m.key));
  const pending=imageRecords.filter(r=>allowedKeys.has(r.merchant.key)&&imageLookupKeys.has(r.key)&&qualifiesMerchantItem(r)&&r.description&&!r.xianyuImages?.length&&!r.webImages?.length)
   .sort((a,b)=>(Date.parse(a.imageCheckedAt)||0)-(Date.parse(b.imageCheckedAt)||0));
  for(const item of pending){
-  if(Date.now()>=deadline||imageLookups>=Number(cfg.maxImageLookupsPerRun||8)||!session.access().allowed)break;
+  if(Date.now()>=deadline||imageLookups>=Number(cfg.maxImageLookupsPerRun||8)||!imageAccess.allowed||!session.access().allowed)break;
   if(item.imageCheckedAt&&Date.now()-Date.parse(item.imageCheckedAt)<24*3600000)continue;
   if(!xPage){const opened=await openContext(session.file);xBrowser=opened.browser;xContext=opened.context;xPage=await xContext.newPage()}
   imageLookups++;
   try{
    const cost=await xianyuCost(xPage,{...item,yahoo:{ownDescription:item.description,ownImages:item.images||[item.image].filter(Boolean)}},settings);
+   console.log('[闲鱼找图访问]',item.key,JSON.stringify(xianyuAccessDiagnostic(cost)));
    await session.persist(xContext,cost);
    item.imageCheckedAt=new Date().toISOString();item.imageLookupStatus=cost.status;
    const images=(cost.samples||[]).flatMap(sample=>(sample.detailImages||[]).map(url=>({url,sourceUrl:sample.url,sellerKey:sample.sellerKey}))).filter(p=>p.url&&p.sourceUrl);
