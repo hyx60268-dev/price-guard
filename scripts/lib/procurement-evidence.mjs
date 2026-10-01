@@ -36,10 +36,26 @@ export function procurementTargetsEqual(a,b){
 const amount=value=>typeof value==='number'&&Number.isFinite(value)&&value>=0?value:null;
 export const safeProcurementUrl=url=>{try{const u=new URL(url);return u.protocol==='https:'&&!u.username&&!u.password&&!u.port&&u.hostname.includes('.')&&!/^(?:localhost|.*\.localhost|.*\.local|\d+(?:\.\d+){3}|\[)/i.test(u.hostname)}catch{return false}};
 const safe=safeProcurementUrl;
+// This observed JD mobile route is the same product, not a new source.
+// Reject ambiguous identity parameters before stripping tracking parameters.
+function jdProductId(u){
+ let id;
+ if(u.hostname==='item.jd.com')id=u.pathname.match(/^\/(\d+)\.html$/)?.[1];
+ else if(u.hostname==='item.m.jd.com'&&u.pathname==='/ware/view.action'){
+  const ids=u.searchParams.getAll('wareId');if(ids.length!==1)return null;id=ids[0];
+ }
+ if(!id||!/^\d+$/.test(id))return null;
+ const identities=new Set();
+ for(const [key,value]of u.searchParams){
+  if(!['wareid','id','sku','skuid','itemid'].includes(key.toLowerCase()))continue;
+  if(identities.has(key.toLowerCase())||value!==id)return null;identities.add(key.toLowerCase());
+ }
+ return id;
+}
 export function procurementSource(url){
  try{const u=new URL(url);if(!safe(url))return null;
   if(u.hostname==='detail.youzan.com'&&u.pathname==='/show/goods'&&/^[a-z0-9]+$/.test(u.searchParams.get('alias')||'')||/(?:^|\.)youzan\.com$/.test(u.hostname)&&/^\/(?:v2\/goods|wscgoods\/detail)\/[a-z0-9]+$/.test(u.pathname))return 'youzan';
-  if(u.hostname==='item.jd.com'&&/^\/\d+\.html$/.test(u.pathname))return 'jd';
+  if(jdProductId(u))return 'jd';
   if(['item.taobao.com','detail.tmall.com'].includes(u.hostname)&&u.pathname==='/item.htm'&&/^\d+$/.test(u.searchParams.get('id')||''))return u.hostname.includes('tmall')?'tmall':'taobao';
   if(u.hostname==='weidian.com'&&u.pathname==='/item.html'&&/^\d+$/.test(u.searchParams.get('itemID')||''))return 'weidian';
   if(u.hostname==='detail.1688.com'&&/^\/offer\/\d+\.html$/.test(u.pathname))return '1688';
@@ -48,7 +64,8 @@ export function procurementSource(url){
 export function canonicalProcurementUrl(value){
  try{const u=new URL(value);const source=procurementSource(value);if(!source)return null;
   if(source==='youzan'){const alias=u.searchParams.get('alias')||u.pathname.split('/').pop();return 'https://detail.youzan.com/show/goods?alias='+alias}
-  if(['jd','1688'].includes(source))return u.origin+u.pathname;
+  if(source==='jd')return 'https://item.jd.com/'+jdProductId(u)+'.html';
+  if(source==='1688')return u.origin+u.pathname;
   const key=source==='weidian'?'itemID':'id';return u.origin+u.pathname+'?'+key+'='+u.searchParams.get(key);
  }catch{return null}
 }

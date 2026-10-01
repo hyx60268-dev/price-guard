@@ -250,3 +250,33 @@ test('Youzan access barrier appearing before a spec click stops immediately with
   const result=await ensureYouzanSelection(page,chooseYouzanSku(youzan.goodsData,item));assert.equal(result.ok,false);assert.equal(result.status,'unavailable');assert.equal(result.reason,barrier==='blocked'?'source_challenge':'source_login_required');assert.equal(page.counts().reads,4);
  }
 });
+
+
+test('observed JD mobile ware route canonicalizes to the same desktop product without tracking',()=>{
+ const mobile='https://item.m.jd.com/ware/view.action?wareId=100407965098&from=search';
+ assert.equal(procurementSource(mobile),'jd');assert.equal(canonicalProcurementUrl(mobile),'https://item.jd.com/100407965098.html');
+ assert.equal(canonicalProcurementUrl('https://item.jd.com/100407965098.html?wareId=100407965098'),'https://item.jd.com/100407965098.html');
+});
+
+test('JD mobile aliases reject unobserved routes, missing numeric IDs and ambiguous identity parameters',()=>{
+ const base='https://item.m.jd.com/ware/view.action';
+ for(const bad of [base,base+'?wareId=',base+'?wareId=abc',base+'?wareId=123.0',base+'?wareId=-123',base+'?wareId=123%20456',base+'?wareId=123&wareId=456',base+'?wareId=123&wareId=123',base+'?wareId=123&id=456',base+'?wareId=123&skuId=456',base+'?wareId=123&WAREID=123',base.replace('item.m.jd.com','m.jd.com')+'?wareId=123',base.replace('item.m.jd.com','item.m.jd.com.evil.example')+'?wareId=123',base.replace('view.action','other.action')+'?wareId=123',base.replace('https:','http:')+'?wareId=123','https://item.jd.com/123.html?wareId=456']){
+  assert.equal(procurementSource(bad),null,bad);assert.equal(canonicalProcurementUrl(bad),null,bad);
+ }
+});
+
+test('JD mobile and desktop aliases reach one canonical detail and never count as independent sellers',async()=>{
+ const subject={...item,title:'Myethos 荒芜拉普兰德 手办 1/7'},reads=[];
+ const result=await alternativeProcurementCost(subject,{fingerprint:async()=>fp,search:async()=>[{url:'https://item.m.jd.com/ware/view.action?wareId=123'},{url:'https://item.jd.com/123.html'}],detail:async url=>{reads.push(url);return {status:'incomplete',reason:'sku_unconfirmed'}}});
+ assert.deepEqual(reads,['https://item.jd.com/123.html']);assert.equal(result.detailCheckedCount,1);assert.equal(result.sellerCount,0);
+ const a=sample(1),b=sample(2,{url:'https://item.m.jd.com/ware/view.action?wareId=1',canonicalUrl:a.canonicalUrl});
+ assert.equal(verifiedPublicCostEvidence([a,b],{now,target}).ready,false);assert.equal(verifiedPublicCostEvidence([a,b],{now,target}).sellerCount,1);
+});
+
+test('JD mobile product identities still require exact detail SKU and an identified source seller',()=>{
+ const canonical='https://item.jd.com/123.html',mobile='https://item.m.jd.com/ware/view.action?wareId=123';
+ assert.equal(parsePublicProcurementDetail(ld({url:mobile}),canonical).status,'quoted');
+ assert.equal(parsePublicProcurementDetail(ld({url:mobile.replace('123','456')}),canonical).reason,'target_product_unconfirmed');
+ const product=JSON.parse(ld().replace(/^.*?>/,'').replace(/<\/script>$/,''));
+ assert.equal(parsePublicProcurementDetail(ld({url:mobile,offers:{...product.offers,seller:{name:'unidentified'}}}),canonical).reason,'seller_unconfirmed');
+});
