@@ -1,4 +1,3 @@
-import { canonicalSaleTitle } from './discovery.mjs';
 import { expandMerchantBundles } from './merchant-bundles.mjs';
 import { merchantCopy } from './merchant-copy.mjs';
 
