@@ -1,4 +1,5 @@
-import { canonicalSaleTitle } from './discovery.mjs';
+import { expandMerchantBundles } from './merchant-bundles.mjs';
+import { merchantCopy } from './merchant-copy.mjs';
 
 export { merchantProfile } from '../../public/merchant-config.js';
 export function qualifiesMerchantItem(item={}){
@@ -24,7 +25,7 @@ export function recordMerchantObservation(previous={},merchant,items=[],now=Date
 }
 export function merchantProducts(records={},now=Date.now()){
  const since=now-30*86400000;
- return Object.values(records).filter(qualifiesMerchantItem).filter(r=>
+ return expandMerchantBundles(records).filter(qualifiesMerchantItem).filter(r=>
   [r.listedAt,r.firstSeenAt,r.soldAt,r.soldObservedAt,r.firstSeenSold].some(t=>Date.parse(t)>=since)
  ).map(r=>({
   ...r,id:r.key,sourceId:r.id,sourceTitle:r.title,sourceDescription:r.description||'',sourcePriceJPY:r.price,
@@ -34,14 +35,4 @@ export function merchantProducts(records={},now=Date.now()){
   ...merchantListingDraft(r)
  })).sort((a,b)=>Date.parse(b.eventAt)-Date.parse(a.eventAt));
 }
-// Use the user's 商品文案重写 sections. Unknown quantity/condition remains an
-// explicit draft field; never invent authenticity, exclusivity or shipping.
-export function merchantListingDraft(item={}){
- const name=canonicalSaleTitle(item.title||''),region=/中国限定/.test(`${item.title} ${item.description}`)?'中国限定':/海外限定/.test(`${item.title} ${item.description}`)?'海外限定':'';
- const title=Array.from([region,name].filter(Boolean).join(' ')).slice(0,40).join('');
- const contents=item.contents||'内容・数量は元の商品ページで確認してください。';
- const condition=typeof item.condition==='string'&&item.condition.trim()?item.condition.trim():'状態は元の商品ページで確認してください。';
- const jp=[`${name}です。`,'', '【商品内容】',contents,'','【状態】',condition,'','海外製品のため、塗装や印刷の個体差、輸送時の外箱のスレなどが見られる場合があります。掲載画像と商品内容をご確認ください。'].join('\n');
- const zh=['中文翻译：',`${name}。`,region?`限定信息：来源页面标注“${region}”。`:'','', '【商品内容】',item.contents||'请在原商品页面确认内容和数量。','','【状态】',/新品|未使用/.test(condition)?'来源页面标注新品／未使用；发布前请核对实际采购品状态。':'请在原商品页面确认状态。','','海外商品可能存在涂装、印刷个体差异，以及运输导致的外盒擦痕。请确认图片和商品内容。'].join('\n');
- return {proposedTitle:title,proposedDescription:jp,translatedDescription:zh,copyStatus:'draft',copyNote:'文案草稿：发布前需按实际采购商品确认数量、状态及包装。'};
-}
+export function merchantListingDraft(item={}){return merchantCopy(item)}

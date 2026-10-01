@@ -1,4 +1,5 @@
 import { isOwnedOffer } from '../../public/owned-offers.js';
+import { extractYahooBundleComponents } from './merchant-bundles.mjs';
 import { merchantNameFromTitle } from './merchant-names.mjs';
 import { imageFingerprints,imageSetSimilarity,primaryProductSimilarity } from './image.mjs';
 import { offerIdentityGuard } from './offer-identity.mjs';
@@ -125,8 +126,8 @@ export async function fetchYahooResult(url,settings={}){
 
 export async function fetchYahooItemBundle(id,settings={}){
   applyYahooSettings(settings);
-  const nextData=extractNextData(await fetchHtml(`https://paypayfleamarket.yahoo.co.jp/item/${id}`));
-  return {detail:extractItemData(nextData),recommendations:extractRecommendationCards(nextData)};
+  const html=await fetchHtml(`https://paypayfleamarket.yahoo.co.jp/item/${id}`),nextData=extractNextData(html);
+  return {detail:extractItemData(nextData),recommendations:extractRecommendationCards(nextData),components:extractYahooBundleComponents(html)};
 }
 
 function categoryText(detail,card={}){

@@ -1,5 +1,7 @@
 import { merchantRetryDelay,merchantBudget } from './lib/merchant-scheduling.mjs';
-import { curateMerchantProducts } from './lib/merchant-curation.mjs';
+import { curateMerchantProducts,prepareMerchantVisuals } from './lib/merchant-curation.mjs';
+import { isMixedBundle,expandMerchantBundles } from './lib/merchant-bundles.mjs';
+import { allowedMerchantPhotoSource } from '../public/merchant-records.js';
 import { findMerchantImages } from './lib/merchant-images.mjs';
 import { mergeMerchantConfigs } from '../public/merchant-config.js';
 import fs from 'node:fs/promises';
@@ -20,7 +22,8 @@ for(const p of ['state','public/data','.auth'])await fs.mkdir(path.join(root,p),
 let previous={};try{previous=JSON.parse(decrypt(await fs.readFile(path.join(root,'state/discovery.json.enc')),password))}catch(e){if(e.code!=='ENOENT')throw e}
 let dashboard={};try{dashboard=JSON.parse(decrypt(await fs.readFile(path.join(root,'state/latest.json.enc')),password))}catch(e){if(e.code!=='ENOENT')throw e}
 cfg.merchants=mergeMerchantConfigs((cfg.merchants||[]).map(raw=>({...merchantProfile(raw),enabled:true})),dashboard.merchantMonitors||[]).filter(m=>m.enabled);
-const configDigest=crypto.createHash('sha256').update(JSON.stringify(cfg)).digest('hex');
+const monitorVersion=14;
+const configDigest=crypto.createHash('sha256').update(JSON.stringify({cfg,monitorVersion})).digest('hex');
 if(process.env.MERCHANT_MONITOR_IF_DUE==='1'&&previous.mode==='merchant_monitor'&&previous.configDigest===configDigest&&Date.now()-Date.parse(previous.checkedAt||'')<merchantRetryDelay(previous)){console.log('商家监控未到下次更新时间，保留已发布记录');process.exit(0)}
 const merchants=[...new Map((cfg.merchants||[]).map(raw=>{const m=merchantProfile(raw);return [m.key,m]})).values()];
 let records=previous.mode==='merchant_monitor'?previous.merchantListings||{}:{};
@@ -37,27 +40,34 @@ try{
    const result=await merchantCards(merchant,options);
    console.log('[商家列表]',merchant.key,'cards='+result.cards.length,'pages='+result.pages,'complete='+result.complete);
    records=recordMerchantObservation(records,merchant,result.cards.filter(c=>Number.isFinite(c.price)));
-   const tasks=result.cards.filter(c=>c.price===null||c.price>4999).sort((a,b)=>(Date.parse(records[merchant.key+':'+a.id]?.lastDetailAt)||0)-(Date.parse(records[merchant.key+':'+b.id]?.lastDetailAt)||0));
+   const age=c=>{const old=records[merchant.key+':'+c.id];return isMixedBundle(old||c)&&!old?.bundleComplete?-1:(Date.parse(old?.lastDetailAt)||0)};
+   const tasks=result.cards.filter(c=>c.price===null||c.price>4999).sort((a,b)=>age(a)-age(b));
    let pending=0;
    for(const card of tasks){
     const old=records[merchant.key+':'+card.id];
-    if(merchant.name!==merchant.id&&old?.description&&Date.now()-Date.parse(old.lastDetailAt||'')<24*3600000)continue;
+    if((!isMixedBundle(old)||old.bundleComplete)&&merchant.name!==merchant.id&&old?.description&&Date.now()-Date.parse(old.lastDetailAt||'')<24*3600000)continue;
     if(Date.now()>=budget.deadline||merchantDetails>=budget.detailLimit){pending++;continue}
     details++;merchantDetails++;
-    try{const detail=await merchantDetail(merchant,card,options);if(detail.sellerName)merchant.name=detail.sellerName;records=recordMerchantObservation(records,merchant,[{...detail,lastDetailAt:new Date().toISOString()}])}
+    try{const detail=await merchantDetail(merchant,card,options);if(detail.sellerName)merchant.name=detail.sellerName;records=recordMerchantObservation(records,merchant,[{...detail,lastDetailAt:new Date().toISOString()}]);if(isMixedBundle(detail)&&!detail.bundleComplete)pending++}
     catch(e){errors.push(`${merchant.key}/${card.id}: ${String(e)}`);pending++}
    }
    sources.push({...merchant,status:result.complete&&!pending?'ok':'partial',cards:result.cards.length,pages:result.pages,pendingDetails:pending});
   }catch(e){sources.push({...merchant,status:'error'});errors.push(`${merchant.key}: ${String(e)}`)}
  }
 }finally{await browser?.close()}
+dashboard.merchantPrimaryImages=previous.merchantPrimaryImages||{};
+const visualProducts=merchantProducts(records);
+const merchantPrimaryImages=await prepareMerchantVisuals(visualProducts,dashboard,{deadline:Math.min(deadline-60000,Date.now()+60000)});
+dashboard.merchantPrimaryImages=merchantPrimaryImages;
+const imageRecords=expandMerchantBundles(records);
+for(const r of imageRecords)r.webImages=(r.webImages||[]).filter(p=>allowedMerchantPhotoSource(p.sourceUrl)&&allowedMerchantPhotoSource(p.url));
 // Public same-item galleries remain available during an Xianyu cooldown.
 const imageLookupKeys=new Set(curateMerchantProducts(merchantProducts(Object.fromEntries(Object.entries(records).filter(([,r])=>merchants.some(m=>m.key===r.merchant.key)))),dashboard).products.map(p=>p.key));
 let publicImageLookups=0;
-for(const item of Object.values(records).filter(r=>imageLookupKeys.has(r.key)&&qualifiesMerchantItem(r)&&r.description&&!r.webImages?.length&&!r.xianyuImages?.length).sort((a,b)=>(Date.parse(a.webImageCheckedAt)||0)-(Date.parse(b.webImageCheckedAt)||0))){
- if(Date.now()>=deadline||publicImageLookups>=3)break;
- if(item.webImageCheckedAt&&Date.now()-Date.parse(item.webImageCheckedAt)<24*3600000)continue;
- publicImageLookups++;item.webImageCheckedAt=new Date().toISOString();
+for(const item of imageRecords.filter(r=>imageLookupKeys.has(r.key)&&qualifiesMerchantItem(r)&&r.description&&!r.webImages?.length&&!r.xianyuImages?.length).sort((a,b)=>(Date.parse(a.webImageCheckedAt)||0)-(Date.parse(b.webImageCheckedAt)||0))){
+ if(Date.now()>=deadline||publicImageLookups>=8)break;
+ if(item.webImageVersion===2&&item.webImageCheckedAt&&Date.now()-Date.parse(item.webImageCheckedAt)<20*60000)continue;
+ publicImageLookups++;item.webImageVersion=2;item.webImageCheckedAt=new Date().toISOString();
  try{item.webImages=await findMerchantImages(item,{settings,deadline});item.webImageStatus=item.webImages.length?'verified':'not_found'}catch(e){item.webImageStatus='error';errors.push(`公开找图 ${item.key}: ${String(e)}`)}
 }
 // Image lookups use the same strict detail verifier and persistent challenge
@@ -66,7 +76,7 @@ let xBrowser,xContext,xPage,imageLookups=0;
 const session=await loadXianyuSession(root);
 try{
  const allowedKeys=new Set(merchants.map(m=>m.key));
- const pending=Object.values(records).filter(r=>allowedKeys.has(r.merchant.key)&&imageLookupKeys.has(r.key)&&qualifiesMerchantItem(r)&&r.description&&!r.xianyuImages?.length&&!r.webImages?.length)
+ const pending=imageRecords.filter(r=>allowedKeys.has(r.merchant.key)&&imageLookupKeys.has(r.key)&&qualifiesMerchantItem(r)&&r.description&&!r.xianyuImages?.length&&!r.webImages?.length)
   .sort((a,b)=>(Date.parse(a.imageCheckedAt)||0)-(Date.parse(b.imageCheckedAt)||0));
  for(const item of pending){
   if(Date.now()>=deadline||imageLookups>=Number(cfg.maxImageLookupsPerRun||8)||!session.access().allowed)break;
@@ -83,14 +93,19 @@ try{
   }catch(e){errors.push(`闲鱼找图 ${item.key}: ${String(e)}`);item.imageLookupStatus='error'}
  }
 }finally{await xBrowser?.close()}
+for(const item of imageRecords.filter(r=>r.bundleParentId)){
+ const target=records[item.merchant.key+':'+item.bundleParentId]?.components?.find(c=>c.id===item.id);
+ if(target)for(const key of ['webImages','xianyuImages','webImageVersion','webImageCheckedAt','webImageStatus','imageCheckedAt','imageLookupStatus'])if(key in item)target[key]=item[key];
+}
+for(const expanded of visualProducts){const target=expanded.bundleParentId?records[expanded.merchant.key+':'+expanded.bundleParentId]?.components?.find(c=>c.id===expanded.sourceId):records[expanded.key];if(target)target.primaryFingerprint=merchantPrimaryImages[(expanded.sourceImages||[])[0]]}
 const configured=new Set(merchants.map(m=>m.key));
 for(const r of Object.values(records)){const source=sources.find(m=>m.key===r.merchant.key);if(source?.name&&source.name!==source.id)r.merchant={...r.merchant,name:source.name}}
 const curated=curateMerchantProducts(merchantProducts(Object.fromEntries(Object.entries(records).filter(([,r])=>configured.has(r.merchant.key)))),dashboard);
 const products=curated.products;
 const checkedAt=new Date().toISOString();
-const result={version:13,mode:'merchant_monitor',configDigest,checkedAt,codeSha:process.env.GITHUB_SHA||null,merchantListings:records,merchants:sources,products,errors,
+const result={version:14,merchantPrimaryImages,mode:'merchant_monitor',configDigest,checkedAt,codeSha:process.env.GITHUB_SHA||null,merchantListings:records,merchants:sources,products,errors,
  stats:{merchants:merchants.length,total:products.length,details,imageLookups,publicImageLookups,excludedOwned:curated.excludedOwned,mergedListings:curated.mergedListings},login:{xianyuRequired:!session.access().allowed}};
-const status={version:13,mode:result.mode,checkedAt,total:products.length,sourceStats:result.stats,errors,merchants:sources};
+const status={version:14,mode:result.mode,checkedAt,total:products.length,sourceStats:result.stats,errors,merchants:sources};
 const sealed=encrypt(Buffer.from(JSON.stringify(result)),password);
 for(const p of ['state','public/data']){await fs.writeFile(path.join(root,p,'discovery.json.enc'),sealed);await fs.writeFile(path.join(root,p,'discovery-status.json'),JSON.stringify(status))}
 console.log(JSON.stringify(status));

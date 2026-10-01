@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { readXianyuDetailDOM,detailStateFailure,xianyuResultStatus } from '../scripts/lib/xianyu-evidence.mjs';
+import { readXianyuDetailDOM,readSettledXianyuDetail,detailStateFailure,xianyuResultStatus } from '../scripts/lib/xianyu-evidence.mjs';
 
 // Structural fixture from the public PC detail bundle 0.0.175. Deliberately no
 // h1, og:title, itemTitle or detailTitle: that is the real extraction regression.
@@ -34,6 +34,19 @@ test('visible login mask and security challenge override otherwise complete targ
   assert.equal(detailStateFailure(read(target+'<div class="notloginMask--new">请登录</div>')),'detail_login_required');
   assert.equal(detailStateFailure(read(target+'<iframe src="https://example.com/captcha"></iframe>')),'detail_blocked');
   assert.equal(detailStateFailure(read(target+'<div style="display:none" class="notloginMask--new">请登录</div>')),null);
+});
+test('hidden ancestors and transparent login shells cannot masquerade as an active login wall',()=>{
+ for(const style of ['display:none','visibility:hidden','opacity:0']){
+  assert.equal(detailStateFailure(read(target+`<div style="${style}"><iframe src="https://example.com/login"></iframe></div>`)),null);
+ }
+ const state=read(target+'<iframe src="https://example.com/login"></iframe>');assert.equal(detailStateFailure(state),'detail_login_required');assert.equal(state.diagnostic.loginSurfaces[0].kind,'login_frame');
+});
+test('session hydration can settle naturally, persistent login stays blocked and CAPTCHA stops immediately',async()=>{
+ const valid=read(target),login={...valid,loginVisible:true},challenge={...valid,blocked:true};
+ for(const [states,expected,waits] of [[[login,valid],null,1],[[login,login],'detail_login_required',1],[[challenge],'detail_blocked',0]]){
+  let n=0,w=0;const page={evaluate:async()=>states[Math.min(n++,states.length-1)],waitForTimeout:async()=>{w++}};
+  assert.equal(detailStateFailure(await readSettledXianyuDetail(page)),expected);assert.equal(w,waits);
+ }
 });
 test('network error and removed listing are not generic unreadable or substitute recommendation',()=>{
   assert.equal(detailStateFailure(read('<div class="error-container--new">网络不见了</div>'+recommendations)),'detail_network_error');

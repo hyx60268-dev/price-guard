@@ -1,3 +1,4 @@
+import { merchantProductKey,merchantDismissed,postedMerchantRecord } from '../public/merchant-records.js';
 import { merchantMonitorStatus } from '../public/merchant-status.js';
 import { syncHandoff,copySyncBody } from '../public/sync-handoff.js';
 import { buildOwnedOffers,excludeOwnedOffers } from '../public/owned-offers.js';
@@ -9,7 +10,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
-import { mergeAccounts,resolveCostRecord } from '../public/durable-state.js';
+import { mergeAccounts,resolveCostRecord,createCostResolver } from '../public/durable-state.js';
 import { candidateId,correctionKey,mergeMatchCorrections,rejectedByMemory,invalidateCorrectedMatches } from '../public/match-memory.js';
 import { parseShopProfile } from '../public/shop-profile.js';
 import { FRONTEND_VERSION } from '../public/build-version.js';
@@ -24,7 +25,7 @@ test('actual procurement wins over automatic reference; overview sorts and opens
  const source=await fs.readFile(new URL('../public/app.js',import.meta.url),'utf8');
  const dom=new JSDOM(html,{url:'https://example.test',runScripts:'outside-only'});
  try{
- Object.assign(dom.window,{merchantMonitorStatus,syncHandoff,copySyncBody,buildOwnedOffers,excludeOwnedOffers,merchantProfile,mergeMerchantConfigs,selectMerchantProducts,merchantCardsMarkup,pricingStatus,pricingSummary,pricingDecision,PLATFORM_LABELS,mergeAccounts,resolveCostRecord,candidateId,correctionKey,mergeMatchCorrections,rejectedByMemory,invalidateCorrectedMatches,parseShopProfile,FRONTEND_VERSION,fetch:async()=>{throw Error('offline fixture')}});
+ Object.assign(dom.window,{merchantProductKey,merchantDismissed,postedMerchantRecord,merchantMonitorStatus,syncHandoff,copySyncBody,buildOwnedOffers,excludeOwnedOffers,merchantProfile,mergeMerchantConfigs,selectMerchantProducts,merchantCardsMarkup,pricingStatus,pricingSummary,pricingDecision,PLATFORM_LABELS,mergeAccounts,resolveCostRecord,createCostResolver,candidateId,correctionKey,mergeMatchCorrections,rejectedByMemory,invalidateCorrectedMatches,parseShopProfile,FRONTEND_VERSION,fetch:async()=>{throw Error('offline fixture')}});
  dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true};
  dom.window.eval(source.replace(/^import .*;\r?\n/gm,'')+`window.fixture={set(value,costs){data=value;manualCosts=costs;currentAccountId='__all__'},effective,selected,render,actionablePrice}`);
  const item={id:'same',accountId:'a',accountName:'A店',title:'商品 A',ownPrice:1000,recommendedPrice:900,averageCNY:90,yahoo:{status:'ok',rulesVersion:PRICING_RULES_VERSION,checkedAt:new Date().toISOString(),candidates:[{price:901,url:'https://example.com/a',id:'1',matchMethod:'verified'}]},rakuma:{status:'ok',rulesVersion:PRICING_RULES_VERSION,checkedAt:new Date().toISOString()},mercari:{status:'ok',rulesVersion:PRICING_RULES_VERSION,checkedAt:new Date().toISOString()}};

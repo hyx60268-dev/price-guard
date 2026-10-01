@@ -2,6 +2,7 @@ import { fetchYahooResult,fetchYahooItemBundle } from './yahoo.mjs';
 import { fetchRakumaHtml,extractRakumaSearchCards,fetchRakumaItem } from './rakuma.mjs';
 import { readMercariCards,mercariDetail } from './mercari-page.mjs';
 import { merchantNameFromTitle } from './merchant-names.mjs';
+import { isMixedBundle } from './merchant-bundles.mjs';
 
 export async function merchantCards(merchant,{settings={},page,maxPages=10,deadline=Infinity}={}){
  const cards=new Map();let complete=false,pages=0;
@@ -47,13 +48,25 @@ export async function merchantCards(merchant,{settings={},page,maxPages=10,deadl
  return {cards:[...cards.values()],complete,pages};
 }
 
-export async function merchantDetail(merchant,card,{settings={},page}={}){
+export async function merchantDetail(merchant,card,{settings={},page,deadline=Infinity,bundleChild=false,fetchBundle=fetchYahooItemBundle}={}){
  if(merchant.platform==='yahoo'){
-  const detail=(await fetchYahooItemBundle(card.id,settings)).detail;
+  const bundle=await fetchBundle(card.id,settings),detail=bundle.detail;
   if(String(detail.seller?.id||'')!==merchant.id)throw Error('商品卖家与监控主页不一致');
-  return {...card,sellerName:detail.seller?.name||detail.seller?.nickname||detail.seller?.displayName||'',title:detail.title,description:detail.description||'',price:Number(detail.price),status:detail.status,
+  const result={...card,sellerName:detail.seller?.name||detail.seller?.nickname||detail.seller?.displayName||'',title:detail.title,description:detail.description||'',price:Number(detail.price),status:detail.status,
    condition:typeof detail.condition==='string'?detail.condition:detail.condition?.name||'',
    listedAt:detail.openDate||card.listedAt||null,images:(detail.images||[]).map(i=>typeof i==='string'?i:i.url).filter(Boolean)};
+  if(isMixedBundle(result)){
+   result.components=[];result.bundleComplete=false;
+   if(bundleChild)return result;
+   for(const child of bundle.components||[]){
+    if(Date.now()>=deadline)break;
+    try{const d=await merchantDetail(merchant,child,{settings,page,deadline,bundleChild:true,fetchBundle});
+     if(!isMixedBundle(d))result.components.push({...d,price:child.price,detailVerified:true});
+    }catch{/* Retain the incomplete parent for the next cloud retry. */}
+   }
+   result.bundleComplete=bundle.components?.length>1&&result.components.length===bundle.components.length;
+  }
+  return result;
  }
  if(merchant.platform==='rakuma')return {...card,...await fetchRakumaItem(card,settings)};
  const detail=await mercariDetail(page,card.url);
