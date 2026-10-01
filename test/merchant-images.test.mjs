@@ -32,6 +32,15 @@ test('reviewed PChome real photos bind only to the red Zhang Linghe full gift bo
  for(const title of [sourceTitle.replace('レッド','ホワイト'),sourceTitle.replace('張凌赫','別コラボ'),sourceTitle.replace('AeroClip2','AeroClip3'),sourceTitle+' 2セット',sourceTitle+' 単品'])assert.deepEqual(reviewedProductImages({title}),[]);
 });
 
+test('visually reviewed Dentist photograph requires the exact listing, initial costume and observed primary image',async()=>{
+ const title='中国限定 第五人格 歯医者 初期衣装 ぬいぐるみ';
+ const item={id:'m91581618076',title,images:['https://static.mercdn.net/item/detail/orig/photos/m91581618076_1.jpg?1790594913']};
+ const photos=reviewedProductImages(item);assert.equal(photos.length,1);assert.equal(photos[0].sourceUrl,'https://booth.pm/ja/items/8885115');assert.equal(photos[0].kind,'physical_photo');assert.equal(photos[0].price,undefined);
+ assert.deepEqual(reviewedProductImages({sourceId:item.id,sourceTitle:title,sourceImages:item.images}),photos);
+ for(const change of [{id:'m98929657142'},{images:[]},{images:['https://image.test/changed']},{title:title+' 2個セット'},{title:title.replace('歯医者','画家')},{title:title.replace('初期衣装','別衣装')}])assert.deepEqual(reviewedProductImages({...item,...change}),[]);
+ const result=await inspectExternalImages(item,{search:async()=>{throw Error('must use reviewed evidence without re-search')}});assert.equal(result.status,'verified');assert.equal(result.reason,'reviewed_source');
+});
+
 test('a failing search provider falls back and a failed page does not prevent the next verified source',async()=>{
  const providers=[];
  const r=await inspectExternalImages(item,{...dependencies,search:async(q,{provider})=>{
