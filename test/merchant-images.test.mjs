@@ -32,13 +32,14 @@ test('reviewed PChome real photos bind only to the red Zhang Linghe full gift bo
  for(const title of [sourceTitle.replace('レッド','ホワイト'),sourceTitle.replace('張凌赫','別コラボ'),sourceTitle.replace('AeroClip2','AeroClip3'),sourceTitle+' 2セット',sourceTitle+' 単品'])assert.deepEqual(reviewedProductImages({title}),[]);
 });
 
-test('visually reviewed Dentist photograph requires the exact listing, initial costume and observed primary image',async()=>{
+test('three visually reviewed Dentist photographs require the exact listing, initial costume and observed primary image',async()=>{
  const title='中国限定 第五人格 歯医者 初期衣装 ぬいぐるみ';
  const item={id:'m91581618076',title,images:['https://static.mercdn.net/item/detail/orig/photos/m91581618076_1.jpg?1790594913']};
- const photos=reviewedProductImages(item);assert.equal(photos.length,1);assert.equal(photos[0].sourceUrl,'https://booth.pm/ja/items/8885115');assert.equal(photos[0].kind,'physical_photo');assert.equal(photos[0].price,undefined);
+ const photos=reviewedProductImages(item);assert.equal(photos.length,3);assert.equal(new Set(photos.map(p=>p.url)).size,3);assert.equal(new Set(photos.map(p=>p.photoEvidence.angleId)).size,3);
+ for(const photo of photos){assert.equal(photo.sourceUrl,'https://booth.pm/ja/items/8885115');assert.equal(photo.kind,'physical_photo');assert.equal(photo.price,undefined);assert.equal(photo.provenance,undefined);assert.equal(photo.photoEvidence.sceneId,'vintage-newspaper-table');assert.equal(photo.photoEvidence.reviewedSameScene,true);}
  assert.deepEqual(reviewedProductImages({sourceId:item.id,sourceTitle:title,sourceImages:item.images}),photos);
  for(const change of [{id:'m98929657142'},{images:[]},{images:['https://image.test/changed']},{title:title+' 2個セット'},{title:title.replace('歯医者','画家')},{title:title.replace('初期衣装','別衣装')}])assert.deepEqual(reviewedProductImages({...item,...change}),[]);
- const result=await inspectExternalImages(item,{search:async()=>[],fingerprint:async()=>fp});assert.equal(result.status,'partial');assert.equal(result.reason,'image_set_incomplete');assert.equal(result.photos.length,1);
+ const result=await inspectExternalImages(item,{search:async()=>[],fingerprint:async()=>fp});assert.equal(result.status,'partial');assert.equal(result.reason,'image_set_incomplete');assert.equal(result.photos.length,3);
 });
 
 test('a failing search provider falls back and a failed page does not prevent the next verified source',async()=>{

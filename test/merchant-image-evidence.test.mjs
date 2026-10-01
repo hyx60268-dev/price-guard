@@ -42,7 +42,8 @@ test('the inspected red Anker gallery contains two official images plus three re
  const set=merchantImageSet({webImages:reviewedProductImages({title})});assert.equal(set.complete,true);assert.equal(set.officialCount,2);assert.equal(set.photoCount,3);assert.equal(set.groups.length,1);
  for(const wrong of [title.replace('レッド','ホワイト'),title+' 2セット',title+' 単品',title.replace('AeroClip2','AeroClip3')])assert.deepEqual(reviewedProductImages({title:wrong}),[]);
  const dentist={id:'m91581618076',title:'中国限定 第五人格 歯医者 初期衣装 ぬいぐるみ',images:['https://static.mercdn.net/item/detail/orig/photos/m91581618076_1.jpg?1790594913']};
- const partial=merchantImageSet({webImages:reviewedProductImages(dentist)});assert.equal(partial.complete,false);assert.equal(partial.other.length,1);
+ const partial=merchantImageSet({webImages:reviewedProductImages(dentist)});assert.equal(partial.complete,false);assert.equal(partial.status,'partial');assert.equal(partial.officialCount,0);assert.equal(partial.photoCount,3);assert.equal(partial.groups.length,1);assert.equal(partial.other.length,0);assert.deepEqual(partial.missing,['official_images']);assert.deepEqual(partial.reasons,['official_provenance_missing']);
+ assert.deepEqual(new Set(externalImagePlan({...dentist,webImages:reviewedProductImages(dentist)}).map(p=>p.purpose)),new Set(['official']));
 });
 
 test('incomplete image jobs preserve good evidence through network failure and remain eligible for repair',async()=>{
@@ -94,4 +95,29 @@ test('a historical wrong reviewed mapping is removed before complete-set skippin
  assert.equal(reconcileReviewedProductImages({title,description:'レッドの完全なギフトボックスです。'},photos).length,5);
  const dentist={id:'m91581618076',title:'中国限定 第五人格 歯医者 初期衣装 ぬいぐるみ',images:['https://static.mercdn.net/item/detail/orig/photos/m91581618076_1.jpg?1790594913']};
  assert.equal(reconcileReviewedProductImages({...dentist,images:['https://image.test/changed']},reviewedProductImages(dentist)).length,0);
+});
+
+
+test('the historical Dentist single-view record adopts the later explicit same-scene review without claiming official evidence',async()=>{
+ const item={id:'m91581618076',title:'中国限定 第五人格 歯医者 初期衣装 ぬいぐるみ',images:['https://static.mercdn.net/item/detail/orig/photos/m91581618076_1.jpg?1790594913']};
+ const reviewed=reviewedProductImages(item),old={...reviewed[0],reviewedAt:'2026-10-01T12:55:00Z',photoEvidence:{...reviewed[0].photoEvidence,sceneId:'white-background-single-observation',angleId:'front',reviewedSameScene:false,reviewedAt:'2026-10-01T12:55:00Z'}};
+ item.webImages=[old];
+ assert.deepEqual(reconcileReviewedProductImages(item),[reviewed[0]]);
+ const now=Date.parse('2026-10-01T18:00:00Z');
+ await runMerchantImageJobs([item],{now:()=>now,deadline:now+60000,inspect:async()=>({photos:reviewed,status:'partial',reason:'image_set_incomplete'})});
+ const set=merchantImageSet(item);assert.equal(item.webImages.length,3);assert.equal(set.photoCount,3);assert.equal(set.officialCount,0);assert.equal(set.complete,false);assert.deepEqual(set.missing,['official_images']);
+ assert.deepEqual(imageCoverage([item]),{total:1,verified:0,partial:1,pending:0,failed:0,unmatched:0,officialReady:0,photosReady:1});
+});
+
+
+test('reviewed Dentist photos reject explicit changed size, clothes-only or multiple-doll sale contents while retaining unstated size',()=>{
+ const item={id:'m91581618076',title:'中国限定 第五人格 歯医者 初期衣装 ぬいぐるみ',images:['https://static.mercdn.net/item/detail/orig/photos/m91581618076_1.jpg?1790594913']},known=reviewedProductImages(item);
+ for(const description of ['', '初期衣装のぬいぐるみです。','サイズ：約10cm。ぬいぐるみ1体です。','尺寸:100mm','梱包箱のサイズ20cm。白い绑带2条。','サイズ10cm。白いストラップ2本。'])assert.equal(reviewedProductImages({...item,description}).length,3,description);
+ for(const description of ['サイズは20cmです。','20cm','20cmのぬいぐるみです。','20cmタイプです。','ぬいぐるみ20cmです。','身長200mm','初期衣装のみです。ぬいぐるみは付属しません。','仅售娃衣，不含娃体','お洋服だけ販売します。','2件','ぬいぐるみ2体セットです。','商品内容は二件セット。','2只合售','2セットまとめて販売します。']){
+  for(const fields of [{description},{sourceDescription:description},{sourceDetail:{description}},{yahoo:{ownDescription:description}}]){
+   const changed={...item,...fields};assert.deepEqual(reviewedProductImages(changed),[],JSON.stringify(fields));assert.deepEqual(reconcileReviewedProductImages(changed,known),[],JSON.stringify(fields));
+  }
+ }
+ assert.deepEqual(reviewedProductImages({...item,description:'サイズ10cm',sourceDescription:'サイズ20cm'}),[]);
+ assert.deepEqual(reviewedProductImages({...item,sourceDetail:{condition:{name:'衣装のみ'}}}),[]);
 });

@@ -81,3 +81,40 @@ test('public source errors, unverified cards and changed display amounts cannot 
  const future=publicProcurementItem(now);future.procurementSource.checkedAt=new Date(now+3600000).toISOString();
  assert.equal(cloudCostStatus({items:[future]},now).accepted,false);
 });
+
+test('another procurement source failure cannot downgrade a fully accepted Xianyu reference',()=>{
+ const combined={...publicProcurementItem(now),...item(),referenceProvider:'xianyu'};combined.xianyu.averageCNY=95;
+ for(const status of ['unavailable','error']){
+  const result=cloudCostStatus({items:[combined],accounts:[{profileStatus:'live',scanStats:{procurementScanned:1,procurementStatuses:{[status]:1},procurementRejectedReasons:{source_timeout:1}}}]},now);
+  assert.equal(result.accepted,true);assert.equal(result.status,'verified');assert.equal(result.verifiedReferences,1);
+  assert.equal(result.coverage.complete,true);assert.equal(result.sources.xianyu.accepted,true);
+  assert.equal(result.sources.public_cn.accepted,false);assert.equal(result.sources.public_cn.status,'source_failed');
+  assert.equal(result.sources.public_cn.statuses[status],1);assert.equal(result.sources.public_cn.reasons.source_timeout,1);
+  assert.equal(result.sources.public_cn.attempted,1);
+ }
+});
+
+test('independent-source acceptance still requires complete coverage, valid evidence and matching displayed cost',()=>{
+ const combined={...publicProcurementItem(now),...item(),referenceProvider:'xianyu'};combined.xianyu.averageCNY=95;
+ const scenario=()=>({items:[structuredClone(combined)],accounts:[{profileStatus:'live',scanStats:{procurementScanned:1,procurementStatuses:{unavailable:1}}}]});
+ for(const change of [
+  result=>result.items.push({id:'unreviewed'}),
+  result=>result.accounts[0].profileStatus='error',
+  result=>result.items[0].xianyu.samples[1].sellerKey='a',
+  result=>result.items[0].xianyu.checkedAt='2026-09-01',
+  result=>result.items[0].averageCNY=1,
+  result=>result.accounts[0].scanStats.xianyuStatuses={blocked:1}]){
+  const result=scenario();change(result);assert.equal(cloudCostStatus(result,now).accepted,false);
+ }
+});
+
+test('Xianyu-only overall acceptance also checks the displayed amount when source evidence has its own amount',()=>{
+ for(const value of [1,null,undefined]){
+  const row=item();row.xianyu.averageCNY=95;row.referenceProvider='xianyu';row.averageCNY=value;
+  const result=cloudCostStatus({items:[row],accounts:[{profileStatus:'live'}]},now);
+  assert.equal(result.sources.xianyu.accepted,true,'independent source evidence is retained');
+  assert.equal(result.accepted,false);assert.equal(result.status,'no_verified_cost');assert.equal(result.verifiedReferences,0);
+ }
+ const row=item();row.xianyu.averageCNY=95;row.referenceProvider='xianyu';
+ assert.equal(cloudCostStatus({items:[row],accounts:[{profileStatus:'live'}]},now).accepted,true);
+});
