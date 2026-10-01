@@ -1,5 +1,6 @@
 import { expandMerchantBundles } from './merchant-bundles.mjs';
 import { merchantCopy } from './merchant-copy.mjs';
+import { reviewedProductImages } from './reviewed-product-images.mjs';
 
 export { merchantProfile } from '../../public/merchant-config.js';
 export function qualifiesMerchantItem(item={}){
@@ -32,7 +33,7 @@ export function merchantProducts(records={},now=Date.now()){
   sourcePlatform:r.merchant.platform,sourceUrl:r.url,seller:r.merchant,sourceImages:r.images||[r.image].filter(Boolean),
   event:r.status==='SOLD'?(r.soldAt?'sold':r.soldObservedAt?'observed_sold':'undated_sold'):(r.listedAt?'listed':'observed_listing'),
   eventAt:r.status==='SOLD'?(r.soldAt||r.soldObservedAt||r.firstSeenSold):(r.listedAt||r.firstSeenAt),
-  ...merchantListingDraft(r)
+  ...merchantListingDraft(r),webImages:[...reviewedProductImages(r),...(r.webImages||[])]
  })).sort((a,b)=>Date.parse(b.eventAt)-Date.parse(a.eventAt));
 }
 export function merchantListingDraft(item={}){return merchantCopy(item)}
