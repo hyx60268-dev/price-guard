@@ -1,7 +1,7 @@
 import { inspectExternalImages } from './external-images.mjs';
 import { mapLimit } from './worker-pool.mjs';
 import { allowedMerchantPhotoSource } from '../../public/merchant-records.js';
-export const IMAGE_LOOKUP_VERSION=3;
+export const IMAGE_LOOKUP_VERSION=4;
 const usable=p=>allowedMerchantPhotoSource(p.url)&&allowedMerchantPhotoSource(p.sourceUrl);
 export function imageCoverage(products=[]){
  const counts={total:products.length,verified:0,pending:0,failed:0,unmatched:0};
@@ -31,7 +31,7 @@ export async function runMerchantImageJobs(items,{deadline,inspect=inspectExtern
   item.webImages=photos;item.webImageVersion=IMAGE_LOOKUP_VERSION;item.webImageCheckedAt=new Date(stamp).toISOString();
   item.webImageStatus=status;item.webImageReason=result.reason;
   // A search miss is retried less often than a transport error. Successful
-// evidence is retained and never sent back through the unsuccessful queue.
+  // evidence is retained and never sent back through the unsuccessful queue.
   item.webImageRetryAt=photos.length?null:new Date(stamp+(status==='not_found'?6*3600000:20*60000)).toISOString();
   item.webImageDiagnostics={searches:result.searches||0,pagesRead:result.pagesRead||0,imagesChecked:result.imagesChecked||0,failures:(result.failures||[]).slice(0,12)};
   log({key:item.key,status,reason:item.webImageReason,photos:photos.length,...item.webImageDiagnostics});

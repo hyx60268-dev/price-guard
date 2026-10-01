@@ -1,11 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { findMerchantImages } from '../scripts/lib/merchant-images.mjs';
-import { externalPublicUrl,externalProductImages,inspectExternalImages,searchImageLinks,publicHtml } from '../scripts/lib/external-images.mjs';
+import { externalPublicUrl,externalProductImages,inspectExternalImages,searchImageLinks,publicHtml,externalImageQueries } from '../scripts/lib/external-images.mjs';
 import { reviewedProductImages } from '../scripts/lib/reviewed-product-images.mjs';
 const fp={dHash:'123456789abcdef0',aHash:'123456789abcdef0',centerHash:'123456789abcdef0',colorGrid:[1,80,150,60,180,240]};
 const title='中国限定 Anker AeroClip2 ワイヤレスイヤホン レッド ギフトボックス',item={title,description:'新品未開封 ギフトボックス',images:['https://image.test/source']};
 const dependencies={search:async()=>[{url:'https://official.test/product'}],detail:async()=>[{url:'https://image.test/a',title},{url:'https://image.test/b',title}],fingerprint:async()=>fp};
+test('reported Painter and Dentist image failures use Chinese costume queries without dropping quantities or returning another role',()=>{
+ const painter=externalImageQueries('中国限定 第五人格 画家 初期衣装 ぬいぐるみ');
+ const dentist=externalImageQueries('中国限定 第五人格 歯医者 初期衣装 ぬいぐるみ 2個セット');
+ assert.match(painter[0],/画家 初始服装/);assert.match(dentist[0],/牙医 初始服装/);assert.match(dentist[0],/2/);
+ assert.doesNotMatch(dentist[0],/画家|写真家/);assert.ok(dentist.some(q=>q.includes('歯医者')));
+});
 test('independent image lookup returns only verified external detail photos with provenance, never procurement',async()=>{
  const photos=await findMerchantImages(item,dependencies);assert.equal(photos.length,2);assert.equal(photos[0].sourceUrl,'https://official.test/product');assert.equal(photos[0].verification,'external_detail_image_match');assert.equal(photos[0].price,undefined);
 });

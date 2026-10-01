@@ -60,6 +60,11 @@ export function externalProductImages(html=''){
  return [...new Map(photos.filter(p=>externalPublicUrl(p.url)).map(p=>[p.url,p])).values()].slice(0,12);
 }
 export async function readExternalImages(url,options){return externalProductImages(await publicHtml(url,options))}
+export function externalImageQueries(title=''){
+ const original=xianyuQueryFor(title);
+ const localized=original.replace(/歯医者/g,'牙医').replace(/初期衣装/g,'初始服装').replace(/エドガー[・·\s]*ワルデン/g,'艾格 瓦尔登');
+ return [...new Set([localized,original])].filter(Boolean);
+}
 // Images and procurement are separate evidence paths. Each returned image is
 // checked against source artwork. Search thumbnails and prices are not costs.
 export async function inspectExternalImages(item,{deadline=Date.now()+60000,search=searchExternalImages,detail=readExternalImages,fingerprint=imageFingerprints}={}){
@@ -68,7 +73,7 @@ export async function inspectExternalImages(item,{deadline=Date.now()+60000,sear
  if(Date.now()>=deadline)return {...report,status:'deferred',reason:'deadline'};
  const reviewed=reviewedProductImages(item);if(reviewed.length)return {...report,photos:reviewed,status:'verified',reason:'reviewed_source'};
  const sources=(item.images||[item.image]).filter(Boolean).slice(0,3);if(!sources.length)return {...report,status:'unavailable',reason:'source_image_missing'};
- const own=(await Promise.all(sources.map(async url=>{try{return await fingerprint(url)}catch(e){fail('source_image',url,e);return null}}))).filter(Boolean),query=xianyuQueryFor(item.title);
+ const own=(await Promise.all(sources.map(async url=>{try{return await fingerprint(url)}catch(e){fail('source_image',url,e);return null}}))).filter(Boolean);
  if(!own.length)return {...report,status:'unavailable',reason:'source_image_unavailable'};
  const seed=/Anker/i.test(item.title)&&/AeroClip\s*2/i.test(item.title)&&/張凌赫/.test(item.title)?[{url:'https://detail.youzan.com/show/goods?alias=2osy35s5abbdhtd&from_source=gbox_seo'}]:[];
  const visited=new Set();let hadCandidates=false;
@@ -88,7 +93,7 @@ export async function inspectExternalImages(item,{deadline=Date.now()+60000,sear
   if(report.photos.length)break;
  }}
  await check(seed);
- for(const provider of ['bing','duckduckgo']){
+ for(const query of externalImageQueries(item.title))for(const provider of ['bing','duckduckgo']){
   if(report.photos.length||Date.now()>=deadline)break;
   report.searches++;let candidates=[];
   try{candidates=await search(query,{provider,deadline})}catch(e){fail('search',provider==='bing'?'https://www.bing.com':'https://duckduckgo.com',e)}
