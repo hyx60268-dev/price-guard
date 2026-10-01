@@ -40,7 +40,7 @@ export function verifiedCostEvidence(samples=[]) {
 // h1/itemTitle. Scope every field to the target components; recommendations,
 // site metadata and header prices must never complete a target offer.
 export function readXianyuDetailDOM() {
-  const visible=element=>{const style=getComputedStyle(element),rect=element.getBoundingClientRect();return style.display!=='none'&&style.visibility!=='hidden'&&rect.width>0&&rect.height>0};
+  const visible=element=>{for(let node=element;node;node=node.parentElement){const style=getComputedStyle(node);if(style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse'||style.opacity==='0'||node.hidden)return false}const rect=element.getBoundingClientRect();return rect.width>0&&rect.height>0};
   const first=selector=>[...document.querySelectorAll(selector)].find(visible);
   const main=first('[class*="item-main-info--"]');
   const gallery=first('[class*="item-main-window--"]');
@@ -52,7 +52,9 @@ export function readXianyuDetailDOM() {
   const challengeFrame=[...document.querySelectorAll('iframe')].some(frame=>visible(frame)&&/baxia|captcha|_____tmd_____|\/punish/i.test(`${frame.id} ${frame.getAttribute('src')||''}`));
   const challengeText=(pageText.match(/访问频繁|安全验证|滑块|验证码|请稍后重试|被挤爆|drag the slider|verify you are human/i)||[])[0]||null;
   const blocked=challengeFrame||Boolean(challengeText);
-  const loginVisible=Boolean(first('iframe[src*="login"],[role="dialog"][class*="login" i],[class*="notloginMask--"]'));
+  const loginNodes=[...document.querySelectorAll('iframe[src*="login"],[role="dialog"][class*="login" i],[class*="notloginMask--"]')].filter(visible);
+  const loginVisible=loginNodes.length>0;
+  const loginSurfaces=loginNodes.map(n=>({tag:n.tagName,kind:n.tagName==='IFRAME'?'login_frame':n.getAttribute('role')==='dialog'?'login_dialog':'detail_mask'}));
   const unavailable=Boolean(first('[class*="empty-container--"]'))&&/宝贝被删|已下架|不存在/.test(pageText);
   const networkError=Boolean(first('[class*="error-container--"]'));
   // The app sets document.title from itemDO.title. Only use it when the actual
@@ -72,7 +74,21 @@ export function readXianyuDetailDOM() {
   if(seller){const url=new URL(seller.href,location.href);const id=url.searchParams.get('userId');if(id&&/^\d+$/.test(id))sellerKey=`goofish:${id}`}
   const optionCount=main?[...main.querySelectorAll('[role="radio"],[class*="sku" i] button,[class*="spec" i] button')].filter(visible).length:0;
   return {text,titles,priceRange,images:[...new Set(images)].slice(0,16),price:prices.length===1?prices[0]:null,sellerKey,optionCount,blocked,loginVisible,unavailable,networkError,
-    diagnostic:{challengeFrame,challengeText,loginVisible,networkError,mainFound:Boolean(main),descriptionLength:text.length,galleryFound:Boolean(gallery),imageCount:images.length,priceCount:prices.length,priceRange,sellerFound:Boolean(sellerKey)}};
+    diagnostic:{challengeFrame,challengeText,loginVisible,loginSurfaces,networkError,mainFound:Boolean(main),descriptionLength:text.length,galleryFound:Boolean(gallery),imageCount:images.length,priceCount:prices.length,priceRange,sellerFound:Boolean(sellerKey)}};
+}
+
+// A restored session may hydrate after the initial login shell is rendered.
+// Wait for two consecutive login observations; never dismiss or modify it.
+// Challenges stop immediately. Acceptance still requires every target field.
+export async function readSettledXianyuDetail(page,{attempts=5,delay=2000}={}){
+ let state={},loginObservations=0;
+ for(let attempt=0;attempt<attempts;attempt++){
+  state=await page.evaluate(readXianyuDetailDOM);
+  loginObservations=state.loginVisible?loginObservations+1:0;
+  if(state.blocked||state.unavailable||state.networkError||loginObservations>=2||!detailStateFailure(state))break;
+  if(attempt<attempts-1)await page.waitForTimeout(delay);
+ }
+ return state;
 }
 
 // A technical failure is retryable, not a completed negative identity review.

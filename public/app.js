@@ -1,3 +1,4 @@
+import { merchantProductKey,merchantDismissed,postedMerchantRecord } from './merchant-records.js';
 import { merchantMonitorStatus } from './merchant-status.js';
 import { syncHandoff,copySyncBody } from './sync-handoff.js';
 import { merchantProfile,mergeMerchantConfigs } from './merchant-config.js';
@@ -5,7 +6,7 @@ import { buildOwnedOffers,excludeOwnedOffers } from './owned-offers.js';
 import { selectMerchantProducts, merchantCardsMarkup } from './merchant-view.js';
 import { pricingStatus, pricingSummary } from './pricing-status.js';
 import { pricingDecision, PLATFORM_LABELS } from './pricing-policy.js';
-import { mergeAccounts,resolveCostRecord } from './durable-state.js';
+import { mergeAccounts,resolveCostRecord,createCostResolver } from './durable-state.js';
 import { FRONTEND_VERSION } from './build-version.js';
 import { candidateId, correctionKey, mergeMatchCorrections, rejectedByMemory, invalidateCorrectedMatches } from './match-memory.js';
 import { parseShopProfile } from './shop-profile.js';
@@ -37,8 +38,10 @@ const saveDeleted=value=>{
   localStorage.setItem(scopedKey(`${deletedAccountKey}.records`),JSON.stringify(Object.fromEntries(value.map(id=>[id,old[id]||{updatedAt:now}]))));
 };
 let manualCosts={},dismissedDiscoveries={},discoveryReviews={},matchCorrections={};
+let costResolver,costResolverData,costResolverSource;
+function currentCostResolver(){if(!costResolver||costResolverData!==data||costResolverSource!==manualCosts){costResolverData=data;costResolverSource=manualCosts;costResolver=createCostResolver(manualCosts,data?.relistAliases||{},data?.items||[])}return costResolver}
 const saveMatchCorrections=()=>localStorage.setItem(scopedKey(matchCorrectionKey),JSON.stringify(matchCorrections));
-const saveManualCosts=()=>localStorage.setItem(scopedKey(costKey),JSON.stringify(manualCosts));
+const saveManualCosts=()=>{costResolver=null;localStorage.setItem(scopedKey(costKey),JSON.stringify(manualCosts))};
 const saveDismissedDiscoveries=()=>localStorage.setItem(scopedKey(dismissedDiscoveryKey),JSON.stringify(dismissedDiscoveries));
 const saveDiscoveryReviews=()=>localStorage.setItem(scopedKey(discoveryReviewKey),JSON.stringify(discoveryReviews));
 function loadLocalState(){
@@ -76,12 +79,12 @@ function fullRecord(item,values={}){
 
 async function decryptFile(url,pwd){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);
-  let response;
-  try{response=await fetch(`${url}?t=${Date.now()}`,{cache:'no-store',signal:controller.signal})}
+  let response,buffer;
+  try{response=await fetch(`${url}?t=${Date.now()}`,{cache:'no-store',signal:controller.signal});buffer=await response.arrayBuffer()}
   catch(error){throw error?.name==='AbortError'?Error('云端数据下载超时，请刷新后重试'):error}
   finally{clearTimeout(timer)}
   if(!response.ok)throw Error('尚无检查结果');
-  const bytes=new Uint8Array(await response.arrayBuffer());
+  const bytes=new Uint8Array(buffer);
   if(new TextDecoder().decode(bytes.slice(0,4))!=='PG01')throw Error('数据格式错误');
   const salt=bytes.slice(4,20),iv=bytes.slice(20,32),tag=bytes.slice(32,48),body=bytes.slice(48);
   const joined=new Uint8Array(body.length+tag.length);joined.set(body);joined.set(tag,body.length);
@@ -91,8 +94,9 @@ async function decryptFile(url,pwd){
 }
 
 function migrateLocalData(){
+  const resolve=createCostResolver(manualCosts,data.relistAliases||{},data.items||[]);
   for(const item of data.items||[]){
-    const best=resolveCostRecord(manualCosts,item,data.relistAliases||{},data.items)||item.manualCost;
+    const best=resolve(item)||item.manualCost;
     if(best)manualCosts[itemKey(item)]=fullRecord(item,best);
   }
   saveManualCosts();
@@ -106,7 +110,6 @@ async function loadDashboard(){
   data=JSON.parse(new TextDecoder().decode(plain));
   matchCorrections=mergeMatchCorrections(matchCorrections,data.matchCorrections||{});saveMatchCorrections();
   if(currentUsername==='admin')localStorage.setItem(scopedKey(merchantKey),JSON.stringify(mergeMerchantConfigs(data.merchantMonitors||[],getJson(scopedKey(merchantKey),[]))));
-  await loadDiscovery();
   if(!data.accounts)data.accounts=[{id:'default',name:data.seller||'默认账号',profileUrl:data.profile||'',profileStatus:'cached',items:data.items||[]}];
   manualCosts=mergeCosts(manualCosts,data.manualCosts||{});dismissedDiscoveries=mergeCosts(dismissedDiscoveries,data.dismissedDiscoveries||{});saveDismissedDiscoveries();
   discoveryReviews=mergeCosts(discoveryReviews,data.discoveryReviews||{});saveDiscoveryReviews();migrateLocalData();
@@ -114,9 +117,15 @@ async function loadDashboard(){
   if(!currentAccountId||currentAccountId!=='__all__'&&![...visible,...localOnlyAccounts()].some(item=>item.id===currentAccountId))currentAccountId=visible[0]?.id||localOnlyAccounts()[0]?.id||'__all__';
 }
 
+let discoveryLoad;
 async function loadDiscovery(){
+  if(discoveryLoad)return discoveryLoad;
+  discoveryLoad=loadDiscoveryFile();
+  try{return await discoveryLoad}finally{discoveryLoad=null}
+}
+async function loadDiscoveryFile(){
   if(currentUsername!=='admin'){discoveryData=null;return}
-  try{const discoveryPlain=await decryptFile('data/discovery.json.enc',password);discoveryData=JSON.parse(new TextDecoder().decode(discoveryPlain))}catch{discoveryData=null}
+  const user=currentUsername,key=password;try{const discoveryPlain=await decryptFile('data/discovery.json.enc',key);if(currentUsername===user&&password===key)discoveryData=JSON.parse(new TextDecoder().decode(discoveryPlain))}catch{if(currentUsername===user&&password===key)discoveryData=null}
 }
 
 $('#unlockForm').addEventListener('submit',async event=>{
@@ -124,9 +133,9 @@ $('#unlockForm').addEventListener('submit',async event=>{
   try{
     currentUsername=String($('#username').value||'admin').trim().toLowerCase().replace(/[^a-z0-9_-]/g,'')||'admin';loadLocalState();
     dataPrefix=currentUsername==='admin'?'data':`data/users/${currentUsername}`;
-    password=$('#password').value;await loadDashboard();$('#unlock').hidden=true;$('#dashboard').hidden=false;$('#cloudSync').hidden=false;
+    password=$('#password').value;discoveryData=null;await loadDashboard();$('#unlock').hidden=true;$('#dashboard').hidden=false;$('#cloudSync').hidden=false;
     $('#userAdminSection').hidden=currentUsername!=='admin';
-    renderAccountOptions();render();await checkCloudStatus(false);
+    renderAccountOptions();render();void checkCloudStatus(false);
   }catch(error){$('#unlockError').textContent=String(error?.message||'').includes('超时')?error.message:'密码不正确，或云端尚未生成数据。'}
   finally{button.disabled=false}
 });
@@ -137,7 +146,7 @@ function account(){return cloudAccounts().find(item=>item.id===currentAccountId)
 function allAccountsSelected(){return currentAccountId==='__all__'}
 function rawItems(){return allAccountsSelected()?(data?.items||[]):(data?.items||[]).filter(item=>item.accountId===account()?.id)}
 function manualFor(item){
-  const best=resolveCostRecord(manualCosts,item,data?.relistAliases||{},data?.items||[])||item.manualCost;
+  const best=currentCostResolver()(item)||item.manualCost;
   return best&&!best.deleted?best:{};
 }
 
@@ -200,12 +209,13 @@ function discoveryPlatform(value){return value==='mercari'?'メルカリ':value=
 function renderMerchantDiscovery(){
  renderMerchantSettings();
  const value=discoveryData?.mode==='merchant_monitor'?discoveryData:{products:[],merchants:[],checkedAt:null};
- const selected=selectMerchantProducts(value.products||[],{query:$('#discoverySearch').value,platform:$('#discoveryFilter').value,period:$('#merchantPeriod').value,event:$('#merchantEvent').value});
+ const selected=selectMerchantProducts((value.products||[]).filter(p=>!merchantDismissed(p,dismissedDiscoveries)),{query:$('#discoverySearch').value,platform:$('#discoveryFilter').value,period:$('#merchantPeriod').value,event:$('#merchantEvent').value});
  $('#discoveryStamp').textContent=value.checkedAt?'最近监控：'+new Date(value.checkedAt).toLocaleString('zh-CN')+' · 每日云端更新':'等待配置商家主页并建立监控基线';
  const sources=value.merchants||[],partial=sources.filter(s=>s.status!=='ok').length;
  $('#discoveryStats').textContent='商家 '+sources.length+' · 当前筛选 '+selected.length+' 款 · 已合并 '+(value.stats?.mergedListings||0)+' 条重复记录 · 已隐藏店内已有 '+(value.stats?.excludedOwned||0)+' 件'+(partial?' · '+partial+' 个商家尚未完整读取':'');
  $('#discoveryCards').innerHTML=merchantCardsMarkup(selected);$('#discoveryEmpty').hidden=selected.length>0;
  $('#discoveryEmpty').textContent=sources.length?'当前筛选下没有已确认的商品记录。':'在上方添加商家主页并同步云端，系统会建立监控基线。';
+ document.querySelectorAll('[data-posted-merchant]').forEach(button=>button.onclick=()=>markDiscoveryUploaded(selected.find(p=>p.id===button.dataset.postedMerchant)));
  document.querySelectorAll('[data-copy-merchant]').forEach(button=>button.onclick=()=>copyDiscovery(button,button.parentElement.querySelector('textarea').value));
 }
 function renderDiscovery(){
@@ -250,9 +260,9 @@ function renderLegacyDiscovery(){
   });
 }
 function markDiscoveryUploaded(item){
-  if(!item||!confirm(`确认“${item.proposedTitle||item.sourceTitle}”已经上传？\n\n确认后会隐藏该同款；同步云端后所有设备和以后扫描都不再显示。`))return;const key=discoveryProductKey(item);
-  dismissedDiscoveries[key]={productKey:key,title:item.sourceTitle||item.proposedTitle||'',description:item.sourceDescription||'',images:(item.sourceImages||[]).slice(0,8),updatedAt:new Date().toISOString()};
-  saveDismissedDiscoveries();renderDiscovery();$('#refreshNotice').hidden=false;$('#refreshText').textContent='已从本机永久隐藏；点“同步云端”后手机和电脑都会排除该同款。';
+  if(!item)return;const key=merchantProductKey(item);
+  dismissedDiscoveries[key]=postedMerchantRecord(item);
+  saveDismissedDiscoveries();renderDiscovery();$('#refreshNotice').hidden=false;$('#refreshText').textContent='已从本机隐藏，正在准备云端同步。';void startCloudSync($('#refreshText'),'posted');
 }
 async function copyDiscovery(button,value){try{await navigator.clipboard.writeText(value||'');const old=button.textContent;button.textContent='已复制';setTimeout(()=>button.textContent=old,1500)}catch{alert('复制失败，请长按文字复制')}}
 function safeImageKey(value=''){return String(value||'').replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,120)||'image'}
@@ -300,7 +310,7 @@ async function saveSearchImage(){
 }
 function switchView(view){
   const discovery=view==='discovery';$('#pricingView').hidden=discovery;$('#discoveryView').hidden=!discovery;
-  $('#showPricing').classList.toggle('active',!discovery);$('#showDiscovery').classList.toggle('active',discovery);if(discovery)renderDiscovery();
+  $('#showPricing').classList.toggle('active',!discovery);$('#showDiscovery').classList.toggle('active',discovery);if(discovery){renderDiscovery();if(!discoveryData)void loadDiscovery().then(()=>{if(!$('#discoveryView').hidden)renderDiscovery()})}
 }
 
 function renderAccountOptions(){
@@ -484,7 +494,7 @@ async function startCloudSync(statusElement=$('#cloudSyncStatus'),scope='all'){
     report('正在本机加密成本、账号和已上传记录…');
     const deleted=new Set(getDeleted()),byProfile=new Map();
     for(const item of mergeAccounts(data.managedAccounts||[],getLocal()))if(item?.profileUrl&&!deleted.has(item.id))byProfile.set(item.profileUrl,item);
-    const payload=scope==='merchants'?{version:1,issuedAt:new Date().toISOString(),merchantMonitors:getMerchantMonitors()}:{version:1,issuedAt:new Date().toISOString(),manualCosts:syncCosts(),matchCorrections,dismissedDiscoveries,discoveryReviews,managedAccounts:[...byProfile.values()],deletedAccountIds:[...deleted],deletedAccounts:getDeletedRecords(),
+    const payload=scope==='posted'?{version:1,issuedAt:new Date().toISOString(),dismissedDiscoveries}:scope==='merchants'?{version:1,issuedAt:new Date().toISOString(),merchantMonitors:getMerchantMonitors()}:{version:1,issuedAt:new Date().toISOString(),manualCosts:syncCosts(),matchCorrections,dismissedDiscoveries,discoveryReviews,managedAccounts:[...byProfile.values()],deletedAccountIds:[...deleted],deletedAccounts:getDeletedRecords(),
       ...(currentUsername==='admin'?{portalUsers:data.portalUsers||[],merchantMonitors:getMerchantMonitors()}:{})};
     const ciphertext=await encryptPayload(payload),body=`<!-- PRICE_GUARD_SYNC_V1\n${ciphertext}\n-->\n\n这是一份由衡序生成的端到端加密同步数据。请勿修改上方密文。`;
     const handoff=syncHandoff({repo,username:currentUsername,body});
@@ -520,7 +530,7 @@ async function checkCloudStatus(reload=true){
     }
     if(!data){const date=new Date(status.checkedAt);$('#stamp').textContent=`云端检查：${Number.isNaN(date.valueOf())?'等待首次检查':date.toLocaleString('zh-CN')} · 约每 20 分钟`;return}
     if(reload&&status.dataRevision&&status.dataRevision!==data.dataRevision){
-      refreshingData=true;await loadDashboard();renderAccountOptions();render();if(!$('#discoveryView').hidden)renderDiscovery();$('#refreshNotice').hidden=false;$('#refreshText').textContent='云端数据已自动更新，无需重新打开页面。';setTimeout(()=>$('#refreshNotice').hidden=true,8000);
+      refreshingData=true;await loadDashboard();renderAccountOptions();render();if(!$('#discoveryView').hidden){await loadDiscovery();renderDiscovery()}$('#refreshNotice').hidden=false;$('#refreshText').textContent='云端数据已自动更新，无需重新打开页面。';setTimeout(()=>$('#refreshNotice').hidden=true,8000);
     }else if(reload&&nextDiscoveryStatus?.checkedAt&&nextDiscoveryStatus.checkedAt!==discoveryCloudStatus?.checkedAt){
       refreshingData=true;await loadDiscovery();if(!$('#discoveryView').hidden)renderDiscovery();$('#refreshNotice').hidden=false;$('#refreshText').textContent='云端选品数据已自动更新。';setTimeout(()=>$('#refreshNotice').hidden=true,8000);
     }

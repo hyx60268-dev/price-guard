@@ -5,7 +5,7 @@ import { offerIdentityGuard } from './offer-identity.mjs';
 import { rejectedByMemory } from '../../public/match-memory.js';
 import { coherentPrices,collectibleIdentityRequiresVisualProof,conditionCompatible,hasExplicitDefect,hasExplicitVariantMismatch,hasVariantMismatch,isLikelyVariantOffer,productFamily,saleUnitEquivalent,semanticQuantity,semanticSameItem,titleScore,yen } from './rules.mjs';
 import { xianyuQueryFor } from './discovery.mjs';
-import { xianyuSearchExclusion,collectXianyuDetails,detailStateFailure,readXianyuDetailDOM,xianyuResultStatus,verifiedCostEvidence,XIANYU_VERIFICATION } from './xianyu-evidence.mjs';
+import { xianyuSearchExclusion,collectXianyuDetails,detailStateFailure,readSettledXianyuDetail,xianyuResultStatus,verifiedCostEvidence,XIANYU_VERIFICATION } from './xianyu-evidence.mjs';
 
 async function mapLimit(values,limit,worker){
   const output=new Array(values.length);let cursor=0;
@@ -43,12 +43,7 @@ async function verifyDetail(context,candidate,item,settings,ownFingerprints,ownP
   try{
     await gotoWithRetry(detail,candidate.url,{waitUntil:'domcontentloaded',timeout:25000},settings);
     await settle(detail,Math.max(900,Math.min(1600,settings.scanDelayMs||1200)));
-    let state={};
-    for(let attempt=0;attempt<5;attempt++){
-      state=await detail.evaluate(readXianyuDetailDOM);
-      if(state.blocked||state.loginVisible||state.unavailable||state.networkError||!detailStateFailure(state))break;
-      if(attempt<4)await detail.waitForTimeout(2000);
-    }
+    const state=await readSettledXianyuDetail(detail);
     const failure=detailStateFailure(state);
     if(failure)return {accepted:false,reason:failure,diagnostic:state.diagnostic};
     onAccessible();
