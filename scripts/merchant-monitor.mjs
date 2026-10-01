@@ -2,7 +2,7 @@ import { merchantRetryDelay,merchantBudget } from './lib/merchant-scheduling.mjs
 import { curateMerchantProducts,prepareMerchantVisuals } from './lib/merchant-curation.mjs';
 import { isMixedBundle,expandMerchantBundles } from './lib/merchant-bundles.mjs';
 import { allowedMerchantPhotoSource } from '../public/merchant-records.js';
-import { findMerchantImages } from './lib/merchant-images.mjs';
+import { runMerchantImageJobs,imageCoverage } from './lib/merchant-image-jobs.mjs';
 import { mergeMerchantConfigs } from '../public/merchant-config.js';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
@@ -22,7 +22,7 @@ for(const p of ['state','public/data','.auth'])await fs.mkdir(path.join(root,p),
 let previous={};try{previous=JSON.parse(decrypt(await fs.readFile(path.join(root,'state/discovery.json.enc')),password))}catch(e){if(e.code!=='ENOENT')throw e}
 let dashboard={};try{dashboard=JSON.parse(decrypt(await fs.readFile(path.join(root,'state/latest.json.enc')),password))}catch(e){if(e.code!=='ENOENT')throw e}
 cfg.merchants=mergeMerchantConfigs((cfg.merchants||[]).map(raw=>({...merchantProfile(raw),enabled:true})),dashboard.merchantMonitors||[]).filter(m=>m.enabled);
-const monitorVersion=14;
+const monitorVersion=15;
 const configDigest=crypto.createHash('sha256').update(JSON.stringify({cfg,monitorVersion})).digest('hex');
 if(process.env.MERCHANT_MONITOR_IF_DUE==='1'&&previous.mode==='merchant_monitor'&&previous.configDigest===configDigest&&Date.now()-Date.parse(previous.checkedAt||'')<merchantRetryDelay(previous)){console.log('商家监控未到下次更新时间，保留已发布记录');process.exit(0)}
 const merchants=[...new Map((cfg.merchants||[]).map(raw=>{const m=merchantProfile(raw);return [m.key,m]})).values()];
@@ -63,13 +63,8 @@ const imageRecords=expandMerchantBundles(records);
 for(const r of imageRecords)r.webImages=(r.webImages||[]).filter(p=>allowedMerchantPhotoSource(p.sourceUrl)&&allowedMerchantPhotoSource(p.url));
 // Public same-item galleries remain available during an Xianyu cooldown.
 const imageLookupKeys=new Set(curateMerchantProducts(merchantProducts(Object.fromEntries(Object.entries(records).filter(([,r])=>merchants.some(m=>m.key===r.merchant.key)))),dashboard).products.map(p=>p.key));
-let publicImageLookups=0;
-for(const item of imageRecords.filter(r=>imageLookupKeys.has(r.key)&&qualifiesMerchantItem(r)&&r.description&&!r.webImages?.length&&!r.xianyuImages?.length).sort((a,b)=>(Date.parse(a.webImageCheckedAt)||0)-(Date.parse(b.webImageCheckedAt)||0))){
- if(Date.now()>=deadline||publicImageLookups>=8)break;
- if(item.webImageVersion===2&&item.webImageCheckedAt&&Date.now()-Date.parse(item.webImageCheckedAt)<20*60000)continue;
- publicImageLookups++;item.webImageVersion=2;item.webImageCheckedAt=new Date().toISOString();
- try{item.webImages=await findMerchantImages(item,{settings,deadline});item.webImageStatus=item.webImages.length?'verified':'not_found'}catch(e){item.webImageStatus='error';errors.push(`公开找图 ${item.key}: ${String(e)}`)}
-}
+const {attempted:publicImageLookups}=await runMerchantImageJobs(imageRecords.filter(r=>imageLookupKeys.has(r.key)&&qualifiesMerchantItem(r)&&r.description),
+ {deadline,log:result=>console.log('[站外找图]',JSON.stringify(result))});
 // Image lookups use the same strict detail verifier and persistent challenge
 // cooldown as procurement. No search thumbnail is relabelled as a verified image.
 let xBrowser,xContext,xPage,imageLookups=0;
@@ -95,7 +90,7 @@ try{
 }finally{await xBrowser?.close()}
 for(const item of imageRecords.filter(r=>r.bundleParentId)){
  const target=records[item.merchant.key+':'+item.bundleParentId]?.components?.find(c=>c.id===item.id);
- if(target)for(const key of ['webImages','xianyuImages','webImageVersion','webImageCheckedAt','webImageStatus','imageCheckedAt','imageLookupStatus'])if(key in item)target[key]=item[key];
+ if(target)for(const key of ['webImages','xianyuImages','webImageVersion','webImageCheckedAt','webImageStatus','webImageReason','webImageRetryAt','webImageDiagnostics','imageCheckedAt','imageLookupStatus'])if(key in item)target[key]=item[key];
 }
 for(const expanded of visualProducts){const target=expanded.bundleParentId?records[expanded.merchant.key+':'+expanded.bundleParentId]?.components?.find(c=>c.id===expanded.sourceId):records[expanded.key];if(target)target.primaryFingerprint=merchantPrimaryImages[(expanded.sourceImages||[])[0]]}
 const configured=new Set(merchants.map(m=>m.key));
@@ -103,9 +98,9 @@ for(const r of Object.values(records)){const source=sources.find(m=>m.key===r.me
 const curated=curateMerchantProducts(merchantProducts(Object.fromEntries(Object.entries(records).filter(([,r])=>configured.has(r.merchant.key)))),dashboard);
 const products=curated.products;
 const checkedAt=new Date().toISOString();
-const result={version:14,merchantPrimaryImages,mode:'merchant_monitor',configDigest,checkedAt,codeSha:process.env.GITHUB_SHA||null,merchantListings:records,merchants:sources,products,errors,
- stats:{merchants:merchants.length,total:products.length,details,imageLookups,publicImageLookups,excludedOwned:curated.excludedOwned,mergedListings:curated.mergedListings},login:{xianyuRequired:!session.access().allowed}};
-const status={version:14,mode:result.mode,checkedAt,total:products.length,sourceStats:result.stats,errors,merchants:sources};
+const result={version:monitorVersion,merchantPrimaryImages,mode:'merchant_monitor',configDigest,checkedAt,codeSha:process.env.GITHUB_SHA||null,merchantListings:records,merchants:sources,products,errors,
+ stats:{merchants:merchants.length,total:products.length,details,imageLookups,publicImageLookups,images:imageCoverage(products),excludedOwned:curated.excludedOwned,mergedListings:curated.mergedListings},login:{xianyuRequired:!session.access().allowed}};
+const status={version:monitorVersion,mode:result.mode,checkedAt,codeSha:result.codeSha,total:products.length,sourceStats:result.stats,errors,merchants:sources};
 const sealed=encrypt(Buffer.from(JSON.stringify(result)),password);
 for(const p of ['state','public/data']){await fs.writeFile(path.join(root,p,'discovery.json.enc'),sealed);await fs.writeFile(path.join(root,p,'discovery-status.json'),JSON.stringify(status))}
 console.log(JSON.stringify(status));
