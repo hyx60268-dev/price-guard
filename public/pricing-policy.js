@@ -1,3 +1,4 @@
+import { isSelfOffer } from './owned-offers.js';
 // Shared by cloud publication and every client view. Old snapshots are evidence, not actions.
 export const PRICING_RULES_VERSION=20;
 export const PRICING_PLATFORMS=['yahoo','rakuma','mercari'];
@@ -10,7 +11,7 @@ export function pricingDecision(item={}, {now=Date.now(),maxAgeHours=6,minimumRa
   const fresh=Number.isFinite(stamp)&&stamp<=now+60000&&now-stamp<=maxAgeHours*3600000;
   coverage[platform]=source.rulesVersion===PRICING_RULES_VERSION&&fresh&&['ok','cached'].includes(source.status)&&(source.evidenceStatus||source.status)!=='incomplete'&&source.cacheReason!=='request_error';
   if(source.rulesVersion!==PRICING_RULES_VERSION||!fresh||source.cacheReason==='request_error'||!['ok','incomplete'].includes(source.evidenceStatus||source.status))continue;
-  for(const value of source.candidates||[])if(amount(value.price)&&value.matchMethod&&value.url&&!value.isOwn)candidates.push({...value,platform});
+  for(const value of source.candidates||[])if(amount(value.price)&&value.matchMethod&&value.url&&!value.isOwn&&!isSelfOffer(item,platform,value))candidates.push({...value,platform});
   for(const value of [source.raiseGuardMinPrice,source.plausibleMinPrice])if(amount(value))guards.push(value);
  }
  candidates.sort((a,b)=>a.price-b.price);
