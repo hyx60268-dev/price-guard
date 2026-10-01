@@ -24,3 +24,21 @@ test('configured homepages exclude arbitrary hosts and preserve template without
  assert.throws(()=>merchantProfile('https://evil.test/user/example'));assert.throws(()=>merchantProfile('https://jp.mercari.com/item/m123'));
  const copy=merchantListingDraft({title:'中国限定 HIRONO マグカップ'});assert.match(copy.proposedDescription,/【商品内容】[\s\S]*【状態】/);assert.match(copy.translatedDescription,/中文翻译/);assert.doesNotMatch(copy.proposedDescription,/正規品|匿名配送|即購入OK/);
 });
+
+test('observed product content changes revoke prior image evidence without erasing sale history',()=>{
+ const original={id:'cache',status:'OPEN',title:'中国限定 Red complete gift box',description:'single complete set',image:'https://img.test/first.jpg',price:6000,condition:'new'};
+ const key=merchant.key+':cache';const saved=recordMerchantObservation({},merchant,[original],now);
+ Object.assign(saved[key],{webImages:[{url:'https://img.test/reviewed.jpg'}],xianyuImages:[{url:'https://img.test/physical.jpg'}],webImageStatus:'verified',webImageRetryAt:new Date(now+86400000).toISOString(),webImageVersion:6,webImageDiagnostics:{candidates:[{}]},lastDetailAt:new Date(now).toISOString()});
+ for(const patch of [{description:'box only'},{title:'中国限定 White unit only'},{image:'https://img.test/changed.jpg'},{condition:'used'},{description:''}]){
+  const changed=recordMerchantObservation(saved,merchant,[{id:'cache',status:'SOLD',...patch}],now+1000)[key];
+  assert.equal(changed.webImages,undefined);assert.equal(changed.xianyuImages,undefined);assert.equal(changed.webImageRetryAt,undefined);assert.equal(changed.webImageStatus,'pending');assert.equal(changed.lastDetailAt,null);assert.equal(changed.firstSeenAt,saved[key].firstSeenAt);assert.equal(changed.soldObservedAt,new Date(now+1000).toISOString());
+ }
+ const cardOnly=recordMerchantObservation(saved,merchant,[{id:'cache',status:'SOLD',price:6500}],now+1000)[key];assert.equal(cardOnly.webImageStatus,'verified');assert.equal(cardOnly.webImages.length,1);assert.equal(cardOnly.description,original.description);
+});
+
+test('unchanged profile thumbnails do not revoke a reviewed full-size detail gallery',()=>{
+ const item={id:'thumb',status:'OPEN',title:'中国限定 set',description:'one complete set',image:'https://img.test/thumb.jpg',images:['https://img.test/full.jpg'],price:6000};const key=merchant.key+':thumb';
+ const saved=recordMerchantObservation({},merchant,[item],now);saved[key].webImages=[{url:'https://outside.test/photo.jpg'}];saved[key].webImageStatus='verified';
+ const unchanged=recordMerchantObservation(saved,merchant,[{id:'thumb',status:'OPEN',image:item.image}],now+1000)[key];assert.equal(unchanged.webImages.length,1);assert.deepEqual(unchanged.images,item.images);
+ const changed=recordMerchantObservation(saved,merchant,[{id:'thumb',status:'OPEN',image:'https://img.test/another-thumb.jpg'}],now+1000)[key];assert.equal(changed.webImages,undefined);assert.deepEqual(changed.images,['https://img.test/another-thumb.jpg']);
+});

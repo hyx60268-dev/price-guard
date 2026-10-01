@@ -1,3 +1,4 @@
+import { verifyLoginAccess,captureVerifiedSession } from './lib/login-verification.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline/promises';
@@ -15,7 +16,8 @@ try{
   await page.goto('https://www.goofish.com/');
   console.log('\n只需要登录闲鱼。Yahoo 主页与比价默认使用公开页面，不保存 Yahoo 登录状态。');
   await rl.question('请在浏览器完成闲鱼登录，并确认能搜索到商品与价格，然后回到这里按回车：');
-  await context.storageState({path:path.join(authDir,'xianyu.json')});
+  const session=await captureVerifiedSession(context,()=>verifyLoginAccess(context,{root}));
+  await fs.writeFile(path.join(authDir,'xianyu.json'),JSON.stringify(session));
   const raw=await fs.readFile(path.join(authDir,'xianyu.json'));
   const b64=zlib.gzipSync(raw,{level:9}).toString('base64');
   const n=Math.ceil(b64.length/3);

@@ -1,3 +1,6 @@
+import { alternativeProcurementCost } from './lib/procurement-sources.mjs';
+import { chooseProcurementReference,mergeXianyuCostEvidence } from './lib/procurement-reference.mjs';
+import { runPublicProcurement } from './lib/procurement-runner.mjs';
 import { xianyuAccessDiagnostic } from './lib/xianyu-evidence.mjs';
 import { mapLimit } from './lib/worker-pool.mjs';
 import { buildOwnedOffers } from '../public/owned-offers.js';
@@ -279,15 +282,25 @@ try{
 }finally{await xBrowser?.close().catch(()=>{})}
 
 })();
-await Promise.all([yahooWork,rakumaWork,mercariWork,xianyuWork]);
+let procurementBrowser,procurementContextPromise;
+const getProcurementContext=()=>procurementContextPromise||=(async()=>{const opened=await openContext();procurementBrowser=opened.browser;return opened.context})();
+const procurementBuckets=contexts.map(context=>context.activeItems.map(item=>({item,prior:priorFor(context,item)})).sort((a,b)=>(Date.parse(a.prior.procurementSource?.checkedAt)||0)-(Date.parse(b.prior.procurementSource?.checkedAt)||0)));
+const procurementWork=runPublicProcurement(procurementBuckets,{
+ deadline:Math.min(deadline,Date.now()+180000),limit:Math.max(1,Math.min(12,Number(settings.maxPublicProcurementItemsPerRun)||8)),concurrency:2,
+ hydrate:hydratedItem,lookup:(item,options)=>alternativeProcurementCost(item,{...options,getContext:getProcurementContext,matchCorrections}),
+ log:row=>console.log('[多渠道采购]',JSON.stringify(row))
+}).finally(async()=>{await procurementBrowser?.close().catch(()=>{})});
+const [,,,,procurementResults]=await Promise.all([yahooWork,rakumaWork,mercariWork,xianyuWork,procurementWork]);
 
 const accountResults=[];
 for(const context of contexts){
   const rows=context.activeItems.map(item=>{
     const prior=priorFor(context,item),yc=context.yahooById.get(item.id)||{},rc=context.rakumaById.get(item.id)||{status:'not_requested',candidates:[],lowestPrice:null},mc=context.mercariById.get(item.id)||{status:'not_requested',candidates:[]},xc=context.xianyuById.get(item.id)||{status:'not_requested',samples:[],averageCNY:null};
     const priorVerified=verifiedXianyuCache(prior);
-    const cachedAverage=priorVerified?.averageCNY??null;
-    const averageCNY=Number.isFinite(xc.averageCNY)?xc.averageCNY:cachedAverage;
+    const procurementSource=procurementResults.get(item.accountId+':'+item.id)||prior.procurementSource;
+    const xianyuEvidence=mergeXianyuCostEvidence(prior,xc,{xianyuFreshHours});
+    const reference=chooseProcurementReference({...item,xianyu:xianyuEvidence,procurementSource},{xianyuFreshHours});
+    const averageCNY=reference?.averageCNY??null;
     const ownPrice=item.ownPrice;
     const yahooCompetitors=(yc.candidates||[]).map(value=>({...value,platform:'yahoo'}));
     const rakumaCompetitors=(rc.candidates||[]).map(value=>({...value,platform:'rakuma'}));
@@ -305,8 +318,7 @@ for(const context of contexts){
     const needsXianyu=Number.isFinite(lowestPrice)&&lowestPrice<ownPrice;
     const manual=manualCostFor(manualCosts,{...item,accountId:context.account.id},relistAliases,context.activeItems);
     const yahooSource=['ok','incomplete'].includes(yc.status)?'live':yc.status==='cached'?'cached':Number.isFinite(prior.lowestPrice)?'cached':'own_baseline';
-    const costSource=Number.isFinite(manual?.purchaseCNY)?'manual':xc.status==='ok'&&Number.isFinite(xc.averageCNY)?'live':Number.isFinite(averageCNY)?'cached':'missing';
-    const samples=xc.samples?.length?xc.samples:(priorVerified?.samples||[]);
+    const costSource=Number.isFinite(manual?.purchaseCNY)?'manual':reference?.referenceProvider==='public_cn'?'public_cn':xc.status==='ok'&&Number.isFinite(xc.averageCNY)?'live':Number.isFinite(averageCNY)?'cached':'missing';
     const confidence=yc.status==='ok'&&rakumaCovered&&!comparisonIncomplete&&(!needsXianyu||xc.status==='ok'||Number.isFinite(manual?.purchaseCNY))?'高':(yahooSource==='cached'||rc.status==='cached'||costSource==='cached')?'参考缓存':'需人工';
     const priceSignal=recommendedPrice>ownPrice?'raise':recommendedPrice<ownPrice?'lower':'hold';
     const base={...item,accountId:context.account.id,accountName:context.account.name,ownUrl:item.url,lowestPrice,lowestUrl,recommendedPrice,priceSignal,difference:ownPrice-lowestPrice,
@@ -314,7 +326,8 @@ for(const context of contexts){
       marketMinPrice:combinedMarket.marketMinPrice??yc.marketMinPrice??null,marketMaxPrice:combinedMarket.marketMaxPrice??yc.marketMaxPrice??null,
       marketSourcePlatform:verifiedLowest?.platform||'yahoo',comparisonIncomplete,singleMarketSample:combinedMarket.singleVerified,
       averageCNY,confidence,yahooSource,costSource,needsXianyu,needsManualPurchase:needsXianyu&&!Number.isFinite(averageCNY)&&!Number.isFinite(manual?.purchaseCNY),
-      yahoo:yc,rakuma:rc,mercari:mc,xianyu:{...mergeXianyuReview(prior.xianyu,xc),averageCNY,samples},
+      yahoo:yc,rakuma:rc,mercari:mc,xianyu:xianyuEvidence,procurementSource,
+      referenceProvider:reference?.referenceProvider||null,referenceSourceLabel:reference?.sourceLabel||null,referenceCheckedAt:reference?.checkedAt||null,
       xianyuSearchUrl:xc.searchUrl||prior.xianyuSearchUrl||`https://www.goofish.com/search?q=${encodeURIComponent(item.xianyuQuery||item.title||'')}`};
     base.listingAge=listingAge(base,context.previousById.get(item.id)||{},context.profileStatus);
     base.staleListingSuggested=base.listingAge.eligible;
@@ -331,7 +344,11 @@ for(const context of contexts){
     const current=context.xianyuById.get(item.id),prior=priorFor(context,item);
     return current?.status==='ok'&&Number.isFinite(current.averageCNY)&&!Number.isFinite(verifiedXianyuCache(prior)?.averageCNY);
   }).length;
+  const procurementValues=context.activeItems.map(item=>procurementResults.get(item.accountId+':'+item.id)).filter(Boolean);
   const scanStats={
+    procurementScanned:procurementValues.filter(value=>value.attempted).length,
+    procurementVerifiedNew:procurementValues.filter(value=>value.attempted&&value.status==='ok').length,
+    procurementStatuses:procurementValues.filter(value=>value.attempted).reduce((counts,value)=>{counts[value.status]=(counts[value.status]||0)+1;return counts},{}),
     yahoo:rows.length,yahooLive:yahooValues.filter(value=>['ok','incomplete'].includes(value.status)).length,
     yahooCached:yahooValues.filter(value=>value.status==='cached').length,
     yahooDeferred:yahooValues.filter(value=>value.status==='deferred_budget'||value.cacheReason==='scan_budget').length,

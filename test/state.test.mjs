@@ -28,11 +28,11 @@ test('server calculation exposes current and repriced profit',()=>{
   assert.equal(fields.afterProfitJPY,3313);
 });
 
-test('verified automatic purchase reference takes priority over old manual purchase price',()=>{
+test('actual paid purchase cost stays authoritative when an automatic market reference changes',()=>{
   const fields=calculateManualFields(item,{purchaseCNY:30,manualFeeCNY:10,shippingJPY:210},{exchangeRate:22.99,costMultiplier:1.05,profitWarningJPY:1500});
-  assert.equal(fields.purchaseCNY,20);
+  assert.equal(fields.purchaseCNY,30);
   assert.equal(fields.manualPurchaseCNY,30);
-  assert.equal(fields.costJPY,945);
+  assert.equal(fields.costJPY,1187);
 });
 
 test('managed account config is merged with static accounts',()=>{

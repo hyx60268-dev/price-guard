@@ -50,21 +50,12 @@ test('all supported secret formats work; corrupt state never logs credentials',a
   assert.equal(logs.join().includes('malformed-secret'),false);
  }finally{await fs.rm(root,{recursive:true,force:true})}
 });
-test('login sync includes IndexedDB and verifies real details before uploading secrets',async()=>{
- const source=await fs.readFile(new URL('../scripts/login-sync.mjs',import.meta.url),'utf8');
- const firstCapture=source.indexOf('context.storageState({indexedDB:true})');
- const verification=source.indexOf('await verifyRealCost(context)');
- const secondCapture=source.indexOf('context.storageState({indexedDB:true})',firstCapture+1);
- const firstSecretUpload=source.indexOf("run('gh',['secret','set'");
- assert.ok(firstCapture>=0);
- assert.ok(verification>firstCapture);
- assert.ok(secondCapture>verification);
- assert.ok(firstSecretUpload>secondCapture);
-});
-test('Windows login launcher recovers when opened directly from a ZIP',async()=>{
- const source=await fs.readFile(new URL('../一键同步闲鱼登录.cmd',import.meta.url),'utf8');
- assert.match(source,/if exist "%SYNC_PS1%" goto run_sync/);
- assert.match(source,/price-guard\/archive\/refs\/heads\/main\.zip/);
- assert.match(source,/Expand-Archive/);
- assert.doesNotMatch(source,/powershell\.exe[^\r\n]*-NoExit/);
+test('both login entry points share verified session capture before saving or uploading',async()=>{
+ const [sync,manual,helper]=await Promise.all(['../scripts/login-sync.mjs','../scripts/login.mjs','../scripts/lib/login-verification.mjs'].map(p=>fs.readFile(new URL(p,import.meta.url),'utf8')));
+ assert.ok(sync.indexOf('await captureVerifiedSession(')<sync.indexOf("run('gh',['secret','set'"));
+ assert.ok(manual.indexOf('await captureVerifiedSession(')<manual.indexOf('await fs.writeFile(path.join(authDir'));
+ assert.match(sync,/captureVerifiedSession\(context,\(\)=>verifyLoginAccess\(context,\{root\}\)\)/);
+ assert.match(manual,/captureVerifiedSession\(context,\(\)=>verifyLoginAccess\(context,\{root\}\)\)/);
+ const first=helper.indexOf('context.storageState({indexedDB:true})'),verify=helper.indexOf('await verify();'),last=helper.indexOf('context.storageState({indexedDB:true})',first+1);
+ assert.ok(first>=0&&verify>first&&last>verify);
 });

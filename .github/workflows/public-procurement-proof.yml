@@ -1,0 +1,25 @@
+name: 公开采购来源读取实测
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/lib/procurement-sources.mjs
+      - scripts/lib/procurement-evidence.mjs
+      - scripts/prove-public-procurement.mjs
+      - .github/workflows/public-procurement-proof.yml
+permissions:
+  contents: read
+jobs:
+  public-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: 核对选定规格的真实价格及库存
+        run: node scripts/prove-public-procurement.mjs
