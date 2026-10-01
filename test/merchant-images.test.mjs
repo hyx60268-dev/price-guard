@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { findMerchantImages } from '../scripts/lib/merchant-images.mjs';
 import { externalPublicUrl,externalProductImages } from '../scripts/lib/external-images.mjs';
+import { reviewedProductImages } from '../scripts/lib/reviewed-product-images.mjs';
 const fp={dHash:'123456789abcdef0',aHash:'123456789abcdef0',centerHash:'123456789abcdef0',colorGrid:[1,80,150,60,180,240]};
 const title='中国限定 Anker AeroClip2 ワイヤレスイヤホン レッド ギフトボックス',item={title,description:'新品未開封 ギフトボックス',images:['https://image.test/source']};
 const dependencies={search:async()=>[{url:'https://official.test/product'}],detail:async()=>[{url:'https://image.test/a',title},{url:'https://image.test/b',title}],fingerprint:async()=>fp};
@@ -18,4 +19,9 @@ test('external images exclude all three comparison marketplaces, mismatched colo
 test('official gallery parser excludes recommendation images and parses Product JSON-LD',()=>{
  const html='<img src="https://img.test/a.jpg" alt="Anker AeroClip2 商品图0"><img src="https://img.test/advert.jpg" alt="热门商品"><script type="application/ld+json">'+JSON.stringify({'@type':'Product',name:title,image:['https://img.test/b.jpg']})+'</script>';
  assert.deepEqual(externalProductImages(html).map(p=>p.url).sort(),['https://img.test/a.jpg','https://img.test/b.jpg']);
+});
+test('reviewed PChome real photos bind only to the red Zhang Linghe full gift box',()=>{
+ const sourceTitle='【中国限定】Anker ワイヤレスイヤホン 張凌赫 コラボ ギフトボックスセット AeroClip2 レッドイヤホン';
+ const photos=reviewedProductImages({sourceTitle});assert.equal(photos.length,2);assert.ok(photos.every(p=>p.kind==='physical_photo'&&p.sourceUrl.startsWith('https://article.pchome.net/')));
+ for(const title of [sourceTitle.replace('レッド','ホワイト'),sourceTitle.replace('張凌赫','別コラボ'),sourceTitle.replace('AeroClip2','AeroClip3'),sourceTitle+' 2セット',sourceTitle+' 単品'])assert.deepEqual(reviewedProductImages({title}),[]);
 });

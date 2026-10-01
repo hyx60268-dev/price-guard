@@ -2,6 +2,7 @@ import { imageFingerprints,primaryProductSimilarity } from './image.mjs';
 import { xianyuQueryFor } from './discovery.mjs';
 import { allowedMerchantPhotoSource } from '../../public/merchant-records.js';
 import { hasExplicitVariantMismatch } from './rules.mjs';
+import { reviewedProductImages } from './reviewed-product-images.mjs';
 const decode=s=>String(s||'').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>');
 export function externalPublicUrl(value){
  try{const u=new URL(value);return allowedMerchantPhotoSource(value)&&!u.username&&!u.password&&!u.port&&!/^(?:localhost|.*\.localhost|.*\.local|\d+(?:\.\d+){3}|\[)/i.test(u.hostname)&&u.hostname.includes('.')}catch{return false}
@@ -43,6 +44,7 @@ export async function readExternalImages(url){return externalProductImages(await
 // checked against source artwork. Search thumbnails and prices are not costs.
 export async function findExternalImages(item,{deadline=Infinity,search=searchExternalImages,detail=readExternalImages,fingerprint=imageFingerprints}={}){
  if(Date.now()>=deadline)return [];
+ const reviewed=reviewedProductImages(item);if(reviewed.length)return reviewed;
  const sources=(item.images||[item.image]).filter(Boolean).slice(0,3);if(!sources.length)return [];
  const own=await Promise.all(sources.map(fingerprint)),query=xianyuQueryFor(item.title);
  const seed=/Anker/i.test(item.title)&&/AeroClip\s*2/i.test(item.title)&&/張凌赫/.test(item.title)?[{url:'https://detail.youzan.com/show/goods?alias=2osy35s5abbdhtd&from_source=gbox_seo'}]:[];
