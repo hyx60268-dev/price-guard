@@ -81,3 +81,89 @@ test('public source errors, unverified cards and changed display amounts cannot 
  const future=publicProcurementItem(now);future.procurementSource.checkedAt=new Date(now+3600000).toISOString();
  assert.equal(cloudCostStatus({items:[future]},now).accepted,false);
 });
+
+test('another procurement source failure cannot downgrade a fully accepted Xianyu reference',()=>{
+ const combined={...publicProcurementItem(now),...item(),referenceProvider:'xianyu'};combined.xianyu.averageCNY=95;
+ for(const status of ['unavailable','error']){
+  const result=cloudCostStatus({items:[combined],accounts:[{profileStatus:'live',scanStats:{procurementScanned:1,procurementStatuses:{[status]:1},procurementRejectedReasons:{source_timeout:1}}}]},now);
+  assert.equal(result.accepted,true);assert.equal(result.status,'verified');assert.equal(result.verifiedReferences,1);
+  assert.equal(result.coverage.complete,true);assert.equal(result.sources.xianyu.accepted,true);
+  assert.equal(result.sources.public_cn.accepted,false);assert.equal(result.sources.public_cn.status,'source_failed');
+  assert.equal(result.sources.public_cn.statuses[status],1);assert.equal(result.sources.public_cn.reasons.source_timeout,1);
+  assert.equal(result.sources.public_cn.attempted,1);
+ }
+});
+
+test('independent-source acceptance still requires complete coverage, valid evidence and matching displayed cost',()=>{
+ const combined={...publicProcurementItem(now),...item(),referenceProvider:'xianyu'};combined.xianyu.averageCNY=95;
+ const scenario=()=>({items:[structuredClone(combined)],accounts:[{profileStatus:'live',scanStats:{procurementScanned:1,procurementStatuses:{unavailable:1}}}]});
+ for(const change of [
+  result=>result.items.push({id:'unreviewed'}),
+  result=>result.accounts[0].profileStatus='error',
+  result=>result.items[0].xianyu.samples[1].sellerKey='a',
+  result=>result.items[0].xianyu.checkedAt='2026-09-01',
+  result=>result.items[0].averageCNY=1,
+  result=>result.accounts[0].scanStats.xianyuStatuses={blocked:1}]){
+  const result=scenario();change(result);assert.equal(cloudCostStatus(result,now).accepted,false);
+ }
+});
+
+test('Xianyu-only overall acceptance also checks the displayed amount when source evidence has its own amount',()=>{
+ for(const value of [1,null,undefined]){
+  const row=item();row.xianyu.averageCNY=95;row.referenceProvider='xianyu';row.averageCNY=value;
+  const result=cloudCostStatus({items:[row],accounts:[{profileStatus:'live'}]},now);
+  assert.equal(result.sources.xianyu.accepted,true,'independent source evidence is retained');
+  assert.equal(result.accepted,false);assert.equal(result.status,'no_verified_cost');assert.equal(result.verifiedReferences,0);
+ }
+ const row=item();row.xianyu.averageCNY=95;row.referenceProvider='xianyu';
+ assert.equal(cloudCostStatus({items:[row],accounts:[{profileStatus:'live'}]},now).accepted,true);
+});
+
+
+test('one correct Xianyu amount cannot hide another selected reference with a wrong amount',()=>{
+ const good={...item(),id:'good',referenceProvider:'xianyu'};good.xianyu.averageCNY=95;
+ for(const value of [1,null,undefined]){
+  const wrong={...item(),id:'wrong',referenceProvider:'xianyu',averageCNY:value};wrong.xianyu.averageCNY=95;
+  const result=cloudCostStatus({items:[good,wrong],accounts:[{profileStatus:'live'}]},now);
+  assert.equal(result.coverage.complete,true);assert.equal(result.sources.xianyu.accepted,true);
+  assert.equal(result.sources.xianyu.verifiedReferences,2);
+  assert.equal(result.accepted,false);assert.equal(result.status,'partial');
+  assert.equal(result.verifiedReferences,1);assert.equal(result.displayMismatches,1);
+  assert.match(result.message,/展示金额与核验证据不一致/);
+ }
+});
+
+test('combined procurement acceptance rejects any mismatched selected amount across two items',()=>{
+ for(const firstProvider of ['xianyu','public_cn'])for(const wrongProvider of ['xianyu','public_cn']){
+  if(firstProvider==='xianyu'&&wrongProvider==='xianyu')continue;
+  const makeRow=(provider,id)=>{
+   if(provider==='xianyu'){
+    const row={...item(),id,referenceProvider:provider};row.xianyu.averageCNY=95;return row;
+   }
+   const row=publicProcurementItem(now);row.id=id;row.procurementSource.target.id=id;
+   for(const sample of row.procurementSource.samples)sample.target.id=id;
+   return row;
+  };
+  const good=makeRow(firstProvider,'good');
+  for(const value of [1,null,undefined]){
+   const wrong=makeRow(wrongProvider,'wrong');wrong.averageCNY=value;
+   const result=cloudCostStatus({items:[good,wrong],accounts:[{profileStatus:'live'}]},now);
+   assert.equal(result.coverage.complete,true);
+   assert.equal(result.sources.xianyu.verifiedReferences,Number(firstProvider==='xianyu')+Number(wrongProvider==='xianyu'));
+   assert.equal(result.sources.public_cn.verifiedReferences,Number(firstProvider==='public_cn')+Number(wrongProvider==='public_cn'));
+   assert.equal(result.accepted,false);assert.equal(result.status,'partial');
+   assert.equal(result.verifiedReferences,1);assert.equal(result.displayMismatches,1);
+   assert.match(result.message,/展示金额与核验证据不一致/);
+  }
+ }
+});
+
+test('reviewed items without valid reference evidence are not display mismatches',()=>{
+ const noReference={id:'no-reference',averageCNY:1,xianyu:{reviewedAt:new Date(now).toISOString(),reviewVersion:XIANYU_VERIFICATION}};
+ const xianyu=item();xianyu.xianyu.averageCNY=95;
+ for(const good of [xianyu,publicProcurementItem(now)]){
+  const result=cloudCostStatus({items:[good,noReference],accounts:[{profileStatus:'live'}]},now);
+  assert.equal(result.coverage.complete,true);assert.equal(result.accepted,true);
+  assert.equal(result.verifiedReferences,1);assert.equal(result.displayMismatches,0);
+ }
+});
