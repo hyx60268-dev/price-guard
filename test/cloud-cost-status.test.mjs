@@ -118,3 +118,52 @@ test('Xianyu-only overall acceptance also checks the displayed amount when sourc
  const row=item();row.xianyu.averageCNY=95;row.referenceProvider='xianyu';
  assert.equal(cloudCostStatus({items:[row],accounts:[{profileStatus:'live'}]},now).accepted,true);
 });
+
+
+test('one correct Xianyu amount cannot hide another selected reference with a wrong amount',()=>{
+ const good={...item(),id:'good',referenceProvider:'xianyu'};good.xianyu.averageCNY=95;
+ for(const value of [1,null,undefined]){
+  const wrong={...item(),id:'wrong',referenceProvider:'xianyu',averageCNY:value};wrong.xianyu.averageCNY=95;
+  const result=cloudCostStatus({items:[good,wrong],accounts:[{profileStatus:'live'}]},now);
+  assert.equal(result.coverage.complete,true);assert.equal(result.sources.xianyu.accepted,true);
+  assert.equal(result.sources.xianyu.verifiedReferences,2);
+  assert.equal(result.accepted,false);assert.equal(result.status,'partial');
+  assert.equal(result.verifiedReferences,1);assert.equal(result.displayMismatches,1);
+  assert.match(result.message,/展示金额与核验证据不一致/);
+ }
+});
+
+test('combined procurement acceptance rejects any mismatched selected amount across two items',()=>{
+ for(const firstProvider of ['xianyu','public_cn'])for(const wrongProvider of ['xianyu','public_cn']){
+  if(firstProvider==='xianyu'&&wrongProvider==='xianyu')continue;
+  const makeRow=(provider,id)=>{
+   if(provider==='xianyu'){
+    const row={...item(),id,referenceProvider:provider};row.xianyu.averageCNY=95;return row;
+   }
+   const row=publicProcurementItem(now);row.id=id;row.procurementSource.target.id=id;
+   for(const sample of row.procurementSource.samples)sample.target.id=id;
+   return row;
+  };
+  const good=makeRow(firstProvider,'good');
+  for(const value of [1,null,undefined]){
+   const wrong=makeRow(wrongProvider,'wrong');wrong.averageCNY=value;
+   const result=cloudCostStatus({items:[good,wrong],accounts:[{profileStatus:'live'}]},now);
+   assert.equal(result.coverage.complete,true);
+   assert.equal(result.sources.xianyu.verifiedReferences,Number(firstProvider==='xianyu')+Number(wrongProvider==='xianyu'));
+   assert.equal(result.sources.public_cn.verifiedReferences,Number(firstProvider==='public_cn')+Number(wrongProvider==='public_cn'));
+   assert.equal(result.accepted,false);assert.equal(result.status,'partial');
+   assert.equal(result.verifiedReferences,1);assert.equal(result.displayMismatches,1);
+   assert.match(result.message,/展示金额与核验证据不一致/);
+  }
+ }
+});
+
+test('reviewed items without valid reference evidence are not display mismatches',()=>{
+ const noReference={id:'no-reference',averageCNY:1,xianyu:{reviewedAt:new Date(now).toISOString(),reviewVersion:XIANYU_VERIFICATION}};
+ const xianyu=item();xianyu.xianyu.averageCNY=95;
+ for(const good of [xianyu,publicProcurementItem(now)]){
+  const result=cloudCostStatus({items:[good,noReference],accounts:[{profileStatus:'live'}]},now);
+  assert.equal(result.coverage.complete,true);assert.equal(result.accepted,true);
+  assert.equal(result.verifiedReferences,1);assert.equal(result.displayMismatches,0);
+ }
+});

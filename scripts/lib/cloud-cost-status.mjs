@@ -65,20 +65,23 @@ export function cloudCostStatus(result={},now=Date.now()){
   verifiedReferences:verified.length,coverage,statuses,reasons,
   message:failed?'国内采购渠道本轮访问未完成':verified.length?'已取得国内采购渠道同款、运费与独立卖家证据':attempted?'已检查国内采购渠道，尚无合格参考':'国内采购渠道尚无已核验参考'};
  const sources={xianyu,public_cn:publicSource};
+ const hours=Number(result.settings?.xianyuFreshHours)||168;
+ // Check each selected reference, not just whether at least one amount matches.
+ // Items without valid evidence remain covered by the review/coverage checks.
+ let references=0,displayMismatches=0;
+ for(const item of inventory){
+  const selected=chooseProcurementReference(item,{now,xianyuFreshHours:hours});
+  if(!selected)continue;
+  if(Number.isFinite(item.averageCNY)&&Math.abs(selected.averageCNY-item.averageCNY)<.01)references++;
+  else displayMismatches++;
+ }
  if(!verified.length){
-  // Source evidence can be sound while a stale/malformed published amount is
-  // different. Overall acceptance also checks the amount the user would use.
-  const displayedReferences=inventory.filter(item=>{
-   const reference=verifiedXianyuReference(item,{now,xianyuFreshHours:Number(result.settings?.xianyuFreshHours)||168});
-   return reference&&Number.isFinite(item.averageCNY)&&Math.abs(reference.averageCNY-item.averageCNY)<.01;
-  }).length;
-  const mismatch=xianyu.verifiedReferences>0&&!displayedReferences;
-  return {...xianyu,status:mismatch&&['verified','partial'].includes(xianyu.status)?'no_verified_cost':xianyu.status,
-   accepted:xianyu.accepted&&displayedReferences>0,verifiedReferences:displayedReferences,
+  const mismatch=displayMismatches>0;
+  return {...xianyu,status:mismatch&&['verified','partial'].includes(xianyu.status)?(references?'partial':'no_verified_cost'):xianyu.status,
+   accepted:xianyu.accepted&&references>0&&!mismatch,verifiedReferences:references,displayMismatches,
    attempted:xianyu.attempted+attempted,newlyVerified:xianyu.newlyVerified+newlyVerified,sources,
    message:mismatch?'展示金额与核验证据不一致，自动采购参考未通过验收':xianyu.message};
  }
- const hours=Number(result.settings?.xianyuFreshHours)||168;
  const combinedReviewed=inventory.filter(item=>{
   const cost=item.xianyu||{},time=Date.parse(cost.reviewedAt||'');
   const xianyuReviewed=cost.reviewVersion===XIANYU_VERIFICATION&&Number.isFinite(time)&&time<=now+300000&&now-time<hours*3600000;
@@ -86,16 +89,12 @@ export function cloudCostStatus(result={},now=Date.now()){
  }).length;
  const combinedCoverage={total:inventory.length,reviewed:combinedReviewed,remaining:inventory.length-combinedReviewed,
   complete:inventory.length>0&&combinedReviewed===inventory.length&&profilesComplete};
- const references=inventory.filter(item=>{
-  const selected=chooseProcurementReference(item,{now,xianyuFreshHours:hours});
-  return selected&&Number.isFinite(item.averageCNY)&&Math.abs(selected.averageCNY-item.averageCNY)<.01;
- }).length;
  // A complete, independently accepted Xianyu path is sufficient even when
  // another provider failed. Keep that provider's failure in sources.public_cn.
  const coveredByAcceptedSource=xianyu.accepted||!failed;
- const status=references?(combinedCoverage.complete&&coveredByAcceptedSource?'verified':'partial'):'no_verified_cost';
+ const status=references?(combinedCoverage.complete&&coveredByAcceptedSource&&!displayMismatches?'verified':'partial'):'no_verified_cost';
  return {...xianyu,status,accepted:status==='verified',attempted:xianyu.attempted+attempted,
-  newlyVerified:xianyu.newlyVerified+newlyVerified,verifiedReferences:references,coverage:combinedCoverage,sources,
-  message:status==='verified'?'已取得可核验的自动采购参考；各渠道访问状态单独显示':
+  newlyVerified:xianyu.newlyVerified+newlyVerified,verifiedReferences:references,displayMismatches,coverage:combinedCoverage,sources,
+  message:displayMismatches?'展示金额与核验证据不一致，自动采购参考未通过验收':status==='verified'?'已取得可核验的自动采购参考；各渠道访问状态单独显示':
    status==='partial'?'已有可用采购参考，其他商品或渠道尚未完成核验':'采集参考与商品展示金额不一致，自动成本未通过验收'};
 }

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { decrypt,encrypt } from './lib/crypto.mjs';
 import { curateMerchantProducts } from './lib/merchant-curation.mjs';
 import { merchantProducts } from './lib/merchant-monitor.mjs';
+import { imageCoverage,IMAGE_LOOKUP_VERSION } from './lib/merchant-image-jobs.mjs';
 import { writeOutputs } from './lib/publish.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -17,7 +18,7 @@ try{
  if(discovery.mode==='merchant_monitor'){
   const configured=new Set((result.merchantMonitors||[]).filter(m=>m.enabled).map(m=>m.key));
   const raw=discovery.merchantListings?merchantProducts(Object.fromEntries(Object.entries(discovery.merchantListings).filter(([,r])=>configured.has(r.merchant.key)))):(discovery.products||[]).flatMap(p=>p.observations||[p]);
-  const curated=curateMerchantProducts(raw,{...result,merchantPrimaryImages:discovery.merchantPrimaryImages||{}});discovery.products=curated.products;discovery.stats={...discovery.stats,total:curated.products.length,excludedOwned:curated.excludedOwned,mergedListings:curated.mergedListings};
+  const curated=curateMerchantProducts(raw,{...result,merchantPrimaryImages:discovery.merchantPrimaryImages||{}});discovery.products=curated.products;discovery.stats={...discovery.stats,total:curated.products.length,excludedOwned:curated.excludedOwned,mergedListings:curated.mergedListings,images:imageCoverage(curated.products),imagePolicyVersion:IMAGE_LOOKUP_VERSION};
   await fs.writeFile(path.join(root,'state/discovery.json.enc'),encrypt(Buffer.from(JSON.stringify(discovery)),password));
   await fs.writeFile(path.join(root,'state/discovery-status.json'),JSON.stringify({version:discovery.version,mode:discovery.mode,checkedAt:discovery.checkedAt,total:discovery.products.length,sourceStats:discovery.stats,errors:discovery.errors||[],merchants:discovery.merchants||[]}));
  }
