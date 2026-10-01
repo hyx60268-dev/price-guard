@@ -6,6 +6,14 @@ import { normalize,titleScore } from './rules.mjs';
 import { PUBLIC_PROCUREMENT_VERIFICATION,procurementTarget,procurementSource,canonicalProcurementUrl,verifiedPublicCostEvidence,safeProcurementUrl as safe } from './procurement-evidence.mjs';
 export { PUBLIC_PROCUREMENT_VERIFICATION,procurementTarget,procurementSource,canonicalProcurementUrl,verifiedPublicCostEvidence } from './procurement-evidence.mjs';
 const text=value=>String(value||'').replace(/<[^>]*>/g,' ').replace(/&quot;/g,'"').replace(/&amp;/g,'&').replace(/&#39;/g,"'").replace(/\s+/g,' ').trim();
+// A brand's own storefronts on different platforms are one source of pricing.
+// Do not merge independent retailers merely because they sell that brand.
+export function procurementSellerIdentity(name=''){
+ const value=String(name).normalize('NFKC');
+ const anker=/(?:^|[^a-z])anker(?:$|[^a-z])|安克/i.test(value);
+ const official=/官方|旗舰|旗艦|直营|直營/.test(value)&&!/非(?:官方|旗舰|旗艦|直营|直營)|not\s+official/i.test(value);
+ return anker&&official?'brand_official:anker':normalize(value);
+}
 // Read JSON literals already delivered to the public page. Never evaluate scripts.
 export function embeddedPublicJSON(html,assignment='window._global'){
  const anchor=html.indexOf(assignment);if(anchor<0)return null;
@@ -48,7 +56,7 @@ export function youzanQuoteFromPublicState(state,item,url,selected){
  if(!shop.shopName||!shop.kdtId)return {status:'incomplete',reason:'seller_unconfirmed'};
  const images=(g.pictures||[]).map(p=>p.url).filter(safe);
  const description=[g.subTitle,chosen.selectedVariant,...(g.itemCatePropDetailModel?.propNameList||[])].filter(Boolean).join('；');
- return {status:'quoted',source:'youzan',id:alias,skuId:chosen.skuId,url:canonical,canonicalUrl:canonical,sellerKey:'youzan:'+shop.kdtId,sellerName:shop.shopName,sellerIdentityKey:normalize(shop.shopName),
+ return {status:'quoted',source:'youzan',id:alias,skuId:chosen.skuId,url:canonical,canonicalUrl:canonical,sellerKey:'youzan:'+shop.kdtId,sellerName:shop.shopName,sellerIdentityKey:procurementSellerIdentity(shop.shopName),
   unitCNY:selected.price,shippingCNY:0,landedCNY:selected.price,price:selected.price,currency:'CNY',inStock:true,skuVerified:true,shippingKnown:true,shippingScope:'source_displayed_destination',stock:chosen.stock.stockNum,
   selectedVariant:chosen.selectedVariant,detailTitle:g.title,detailDescription:description,detailImages:images,priceSource:'target_detail',priceEvidence:'visible_selected_sku',condition:'retail_unspecified',quantity:1};
 }
@@ -83,7 +91,7 @@ export function parsePublicProcurementDetail(html,url){
  if(!seller?.name||!seller?.['@id']||!safe(seller['@id'])||new URL(seller['@id']).hostname!==new URL(url).hostname)return {status:'incomplete',reason:'seller_unconfirmed'};
  const images=[p.image||[]].flat().map(v=>typeof v==='string'?v:v.url).filter(safe);
  if(!p.name||!p.description||!images.length)return {status:'incomplete',reason:'detail_content_unconfirmed'};
- return {status:'quoted',source,id:canonical,skuId,url:canonical,canonicalUrl:canonical,sellerKey:source+':'+seller['@id'],sellerName:seller.name,sellerIdentityKey:normalize(seller.name),unitCNY,shippingCNY,landedCNY:unitCNY+shippingCNY,price:unitCNY+shippingCNY,currency:'CNY',inStock:true,skuVerified:true,shippingKnown:true,shippingScope:'CN',selectedVariant:[p.model,p.color,p.size,skuId].filter(Boolean).join(' / '),detailTitle:p.name,detailDescription:text(p.description),detailImages:images,priceSource:'target_detail',priceEvidence:'target_product_offer',condition:'new',conditionEvidence:offer.itemCondition,quantity:1};
+ return {status:'quoted',source,id:canonical,skuId,url:canonical,canonicalUrl:canonical,sellerKey:source+':'+seller['@id'],sellerName:seller.name,sellerIdentityKey:procurementSellerIdentity(seller.name),unitCNY,shippingCNY,landedCNY:unitCNY+shippingCNY,price:unitCNY+shippingCNY,currency:'CNY',inStock:true,skuVerified:true,shippingKnown:true,shippingScope:'CN',selectedVariant:[p.model,p.color,p.size,skuId].filter(Boolean).join(' / '),detailTitle:p.name,detailDescription:text(p.description),detailImages:images,priceSource:'target_detail',priceEvidence:'target_product_offer',condition:'new',conditionEvidence:offer.itemCondition,quantity:1};
 }
 // This function is serialized into the page. It only reads public DOM content;
 // does not access session tokens, hidden account state or private endpoints.
@@ -98,7 +106,22 @@ export function readYouzanPublicDOM(){
  const root=[...document.querySelectorAll('.sku-container')].find(visible),active=root?[...root.querySelectorAll('.sku-row__item--active .sku-row__item-name-text')].map(n=>n.innerText.trim()):[];
  const priceText=root?.querySelector('.sku__price-num')?.innerText?.trim()||'',stock=Number((root?.querySelector('.sku-header')?.innerText||'').match(/剩余\s*(\d+)\s*件/)?.[1]);
  const header=root?.querySelector('.sku-header')?.innerText||'';
- return {state,blocked,login,mobile:document.querySelector('meta[name="mobile-agent"]')?.content?.match(/url=(.*)$/)?.[1],selected:{visible:Boolean(root),labels:active,price:/^\d+(?:\.\d{1,2})?$/.test(priceText)?Number(priceText):null,stock,quantity:Number(root?.querySelector('input')?.value||0),conditionedPrice:/券后|会员专享|新人专享|每期|定金|订金|尾款/.test(header)}};
+ const rowPrices=root?[...root.querySelectorAll('.sku-row__item--active .sku-row__item-price')].map(n=>{const value=(n.innerText||'').replace(/[¥￥,\s]/g,'');return /^\d+(?:\.\d{1,2})?$/.test(value)?Number(value):null}):[];
+ return {state,blocked,login,mobile:document.querySelector('meta[name="mobile-agent"]')?.content?.match(/url=(.*)$/)?.[1],selected:{visible:Boolean(root),labels:active,rowPrices,price:/^\d+(?:\.\d{1,2})?$/.test(priceText)?Number(priceText):null,stock,quantity:Number(root?.querySelector('input')?.value||0),conditionedPrice:/券后|会员专享|新人专享|每期|定金|订金|尾款/.test(header)}};
+}
+// Require consecutive observations of the selected public SKU. This does not
+// retry access challenges, change authentication, or dismiss a login surface.
+export async function settleYouzanSelection(page,chosen,{deadline=Date.now()+2500}={}){
+ const expected=chosen.options.map(o=>o.value);
+ const diagnostic=dom=>({stage:'selected_sku',expectedLabels:expected,visibleLabels:dom.selected?.labels||[],visiblePrice:dom.selected?.price??null,visibleStock:Number.isFinite(dom.selected?.stock)?dom.selected.stock:null,quantity:dom.selected?.quantity??null,visibleRowPrices:dom.selected?.rowPrices||[]});
+ const check=dom=>Boolean(dom.selected?.visible)&&JSON.stringify(dom.selected.labels)===JSON.stringify(expected)&&dom.selected.quantity===1&&dom.selected.price>0&&dom.selected.stock===chosen.stock.stockNum&&(!dom.selected.rowPrices?.length||expected.length!==1||dom.selected.rowPrices.length===1&&dom.selected.rowPrices[0]===dom.selected.price);
+ let previous=null;
+ for(let attempt=0;attempt<3;attempt++){
+  const dom=await page.evaluate(readYouzanPublicDOM);
+  if(dom.blocked||dom.login)return {ok:false,status:'unavailable',reason:dom.blocked?'source_challenge':'source_login_required',diagnostic:diagnostic(dom)};
+  if(previous&&check(dom)&&check(previous)&&dom.selected.price===previous.selected.price&&dom.selected.stock===previous.selected.stock)return {ok:true,dom};
+  previous=dom;if(attempt<2&&Date.now()<deadline)await page.waitForTimeout(Math.min(attempt===0?400:600,Math.max(1,deadline-Date.now())));else break;
+ }return {ok:false,status:'incomplete',reason:'selected_sku_unsettled',diagnostic:diagnostic(previous||{})};
 }
 export async function readPublicProcurementDetail(url,{item,context,getContext,deadline=Date.now()+45000,html=publicHtml}={}){
  const source=procurementSource(url);if(!source)return {status:'unsupported',reason:'unsupported_source'};
@@ -116,10 +139,15 @@ export async function readPublicProcurementDetail(url,{item,context,getContext,d
   if(canonicalProcurementUrl(page.url())!==canonicalProcurementUrl(url))return {status:'incomplete',reason:'target_redirect_mismatch'};
   const chosen=chooseYouzanSku(dom.state?.goodsData,item);if(!chosen.ok)return {status:'incomplete',reason:chosen.reason};
   const props=dom.state?.goodsData?.skuInfo?.props||[];
-  if(!dom.selected.visible&&props.length)await page.getByText(props[0].k,{exact:true}).first().click({timeout:remaining()});
-  for(const option of chosen.options){const active=await page.locator('.sku-container .sku-row__item--active .sku-row__item-name-text').allTextContents();if(!active.some(v=>v.trim()===option.value))await page.locator('.sku-container .sku-row__item-name-text').filter({hasText:option.value}).click({timeout:remaining()});}
-  await page.waitForFunction(labels=>{const root=document.querySelector('.sku-container');return root&&labels.every(label=>[...root.querySelectorAll('.sku-row__item--active .sku-row__item-name-text')].some(n=>n.innerText.trim()===label))},chosen.options.map(o=>o.value),{timeout:remaining()});
-  dom=await page.evaluate(readYouzanPublicDOM);if(dom.blocked||dom.login)return {status:'unavailable',reason:dom.blocked?'source_challenge':'source_login_required'};
+  if(!dom.selected.visible&&props.length)await page.getByText(props[0].k,{exact:true}).filter({visible:true}).first().click({timeout:remaining()});
+  for(const option of chosen.options){const active=await page.locator('.sku-container:visible .sku-row__item--active .sku-row__item-name-text').allTextContents();if(!active.some(v=>v.trim()===option.value))await page.locator('.sku-container:visible .sku-row__item-name-text').filter({hasText:option.value}).click({timeout:remaining()});}
+  await page.waitForFunction(labels=>{
+   const visible=node=>{if(!node)return false;for(let n=node;n;n=n.parentElement){const style=getComputedStyle(n);if(n.hidden||style.display==='none'||style.visibility==='hidden'||style.opacity==='0')return false}const rect=node.getBoundingClientRect();return rect.width>0&&rect.height>0};
+   if([...document.querySelectorAll('iframe,form')].some(n=>visible(n)&&/captcha|challenge|baxia|\/punish|login/i.test((n.getAttribute('src')||'')+' '+n.id)))return true;
+   const root=[...document.querySelectorAll('.sku-container')].find(visible);
+   return root&&labels.every(label=>[...root.querySelectorAll('.sku-row__item--active .sku-row__item-name-text')].some(n=>n.innerText.trim()===label));
+  },chosen.options.map(o=>o.value),{timeout:Math.min(8000,remaining())}).catch(()=>{});
+  const settled=await settleYouzanSelection(page,chosen,{deadline});if(!settled.ok)return settled;dom=settled.dom;
   const variant=dom.selected.labels.join(' / ');return youzanQuoteFromPublicState(dom.state,item,url,{...dom.selected,variant,skuId:variant===chosen.selectedVariant?chosen.skuId:null});
  }finally{await page.close().catch(()=>{})}
 }
@@ -154,7 +182,7 @@ export async function alternativeProcurementCost(item,{deadline=Date.now()+90000
    if(sealed.test(ownTitle+'\n'+ownDescription)&&(!sealed.test(candidateOriginal)||sealConflict.test(candidateOriginal))){report.diagnostics.push({source:quote.source,reason:'sealed_condition_unconfirmed',url});continue}
    const guard=offerIdentityGuard({ownTitle:identityText(ownTitle),ownDescription:identityText(ownDescription),candidateTitle:identityText([quote.detailTitle,quote.selectedVariant].filter(Boolean).join(' ')),candidateDescription:identityText(candidateDescription),primaryImageScore});
    if(!guard.accepted||!(primaryImageScore>=.98)||titleMatch<.62){report.diagnostics.push({source:quote.source,reason:guard.accepted?'identity_unconfirmed':guard.reason,url,titleScore:titleMatch,primaryImageScore});continue}
-   report.samples.push({...quote,checkedAt:new Date().toISOString(),verification:PUBLIC_PROCUREMENT_VERIFICATION,target,identity:{accepted:true,titleScore:titleMatch,primaryImageScore}});
+   report.samples.push({...quote,sellerIdentityKey:procurementSellerIdentity(quote.sellerName),checkedAt:new Date().toISOString(),verification:PUBLIC_PROCUREMENT_VERIFICATION,target,identity:{accepted:true,titleScore:titleMatch,primaryImageScore}});
    if(verifiedPublicCostEvidence(report.samples,{target}).ready)return;
   }catch(e){sourceFailure=true;report.diagnostics.push({source:procurementSource(url),reason:String(e?.message||e).slice(0,160),url})}
  }};

@@ -22,7 +22,8 @@ export function recordMerchantObservation(previous={},merchant,items=[],now=Date
   const transitioned=old.status==='OPEN'&&item.status==='SOLD';
   const observed={...old,...item};
   const observedPrimary=Object.hasOwn(item,'images')?primaryImage(item):Object.hasOwn(item,'image')?(item.image||''):primaryImage(old);
-  const identityChanged=Boolean(old.id)&&(['title','description'].some(field=>observedText(observed[field])!==observedText(old[field]))||observedPrimary!==primaryImage(old)||JSON.stringify(observed.condition)!==JSON.stringify(old.condition));
+  const priorPrimary=Object.hasOwn(item,'image')&&!Object.hasOwn(item,'images')?(old.image||primaryImage(old)):primaryImage(old);
+  const identityChanged=Boolean(old.id)&&(['title','description'].some(field=>observedText(observed[field])!==observedText(old[field]))||observedPrimary!==priorPrimary||JSON.stringify(observed.condition)!==JSON.stringify(old.condition));
   records[key]={...old,...item,merchant,key,firstSeenAt:old.firstSeenAt||stamp,lastSeenAt:stamp,listedAt,soldAt,
    soldObservedAt:old.soldObservedAt||(transitioned?stamp:null),
    soldWindowStart:old.soldWindowStart||(transitioned?old.lastSeenAt:null),

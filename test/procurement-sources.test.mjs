@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { PUBLIC_PROCUREMENT_VERIFICATION,procurementSource,canonicalProcurementUrl,embeddedPublicJSON,chooseYouzanSku,youzanQuoteFromPublicState,parsePublicProcurementDetail,readYouzanPublicDOM,verifiedPublicCostEvidence,alternativeProcurementCost } from '../scripts/lib/procurement-sources.mjs';
+import { PUBLIC_PROCUREMENT_VERIFICATION,procurementSource,canonicalProcurementUrl,embeddedPublicJSON,procurementSellerIdentity,chooseYouzanSku,youzanQuoteFromPublicState,parsePublicProcurementDetail,readYouzanPublicDOM,readPublicProcurementDetail,settleYouzanSelection,verifiedPublicCostEvidence,alternativeProcurementCost } from '../scripts/lib/procurement-sources.mjs';
 const url='https://detail.youzan.com/show/goods?alias=2osy35s5abbdhtd';
 const title='Anker AeroClip 2 张凌赫 联名 礼盒 白色';
 const target={accountId:'owner',id:'z1',title,image:'https://images.example.org/own.jpg',description:title,condition:''};
@@ -111,4 +111,60 @@ test('Chinese recall aliases do not require removing Japanese hard condition or 
  const sourceItem={...item,title:'新品未開封 Anker AeroClip 2 張凌赫 レッド ギフトボックス',description:'商品说明'};
  const result=await checkOriginalIdentity(sourceItem,{detailTitle:'Anker AeroClip 2 张凌赫 联名 红色 礼盒',detailDescription:'全新未拆封完整礼盒',conditionEvidence:'https://schema.org/NewCondition'});assert.equal(result.status,'ok',JSON.stringify(result.diagnostics));
  const wrong=await checkOriginalIdentity(sourceItem,{detailTitle:'Anker AeroClip 2 张凌赫 联名 白色 礼盒',selectedVariant:'白色',detailDescription:'全新未拆封完整礼盒',conditionEvidence:'https://schema.org/NewCondition'});assert.equal(wrong.sellerCount,0);
+});
+
+test('same Anker official business across marketplaces cannot supply two independent seller votes',()=>{
+ const officialNames=['Anker安克官方商城','安克官方旗舰店','Anker天猫官方旗舰店','安克京东自营官方旗舰店'];
+ for(const name of officialNames)assert.equal(procurementSellerIdentity(name),'brand_official:anker');
+ const a=sample(1,{sellerName:officialNames[0],sellerIdentityKey:procurementSellerIdentity(officialNames[0])});
+ const b=sample(2,{source:'tmall',url:'https://detail.tmall.com/item.htm?id=2',canonicalUrl:'https://detail.tmall.com/item.htm?id=2',sellerKey:'tmall:shop2',sellerName:officialNames[1],sellerIdentityKey:procurementSellerIdentity(officialNames[1])});
+ assert.equal(verifiedPublicCostEvidence([a,b],{now,target}).sellerCount,1);assert.equal(verifiedPublicCostEvidence([a,b],{now,target}).ready,false);
+ const parsed=JSON.parse(ld().replace(/^.*?>/,'').replace(/<\/script>$/,''));
+ const jd=parsePublicProcurementDetail(ld({offers:{...parsed.offers,seller:{'@id':'https://item.jd.com/shop/anker',name:officialNames[1]}}}),'https://item.jd.com/123.html');
+ assert.equal(jd.sellerIdentityKey,youzanQuoteFromPublicState(youzan,item,url,chosen).sellerIdentityKey);
+});
+test('ordinary stores selling Anker stay independent and raw old quote identity keys are recomputed',async()=>{
+ assert.notEqual(procurementSellerIdentity('小明数码店 Anker专区'),procurementSellerIdentity('老王数码店 Anker专区'));
+ assert.notEqual(procurementSellerIdentity('非官方安克数码店'),'brand_official:anker');
+ const run=async names=>alternativeProcurementCost(item,{fingerprint:async()=>fp,search:async()=>[{url:'https://item.jd.com/1.html'},{url:'https://item.jd.com/2.html'}],detail:async link=>{if(link.includes('youzan'))return {status:'incomplete',reason:'fixture'};const n=link.includes('/1.')?1:2;return {...sample(n),status:'quoted',sellerName:names[n-1],sellerIdentityKey:'stale_raw_name_'+n}}});
+ const official=await run(['Anker安克官方商城','安克官方旗舰店']);assert.equal(official.sellerCount,1);assert.equal(official.averageCNY,null);
+ const retail=await run(['小明数码店 Anker专区','老王数码店 Anker专区']);assert.equal(retail.sellerCount,2);assert.equal(retail.status,'ok');
+});
+
+
+test('Youzan detail reader ignores hidden stale SKU sheets in both waits and final quote',async()=>{
+ const html='<script>window._global = '+JSON.stringify(youzan)+';</script><div class="goods-title__main-text">'+title+'</div><div style="display:none"><div class="sku-container"><div class="sku-row__item--active"><span class="sku-row__item-name-text">红色旧弹层</span></div></div></div><div class="sku-container"><div class="sku-header">剩余 84 件</div><div class="sku__price-num">999</div><div class="sku-row__item--active"><span class="sku-row__item-name-text">'+chosen.variant+'</span><span class="sku-row__item-price">¥999</span></div><input value="1"></div>';
+ const dom=new JSDOM(html,{runScripts:'outside-only'});
+ Object.defineProperty(dom.window.HTMLElement.prototype,'innerText',{get(){return this.textContent}});
+ dom.window.HTMLElement.prototype.getBoundingClientRect=()=>({width:100,height:100});
+ let closed=false,waits=0;
+ const page={goto:async()=>{},url:()=>url,evaluate:async fn=>dom.window.eval('('+fn.toString()+')()'),locator:selector=>{assert.ok(selector.includes(':visible'));return {allTextContents:async()=>[chosen.variant]};},waitForFunction:async(fn,arg)=>{assert.equal(Boolean(dom.window.eval('('+fn.toString()+')('+JSON.stringify(arg)+')')),true);waits++;},waitForTimeout:async()=>{},close:async()=>{closed=true}};
+ const result=await readPublicProcurementDetail(url,{item,context:{newPage:async()=>page}});
+ assert.equal(result.status,'quoted');assert.equal(result.unitCNY,999);assert.equal(result.skuId,'15099721490');assert.equal(waits,2);assert.equal(closed,true);
+ dom.window.close();
+});
+
+const selectionSnapshot=(patch={})=>({blocked:false,login:false,selected:{visible:true,labels:[chosen.variant],rowPrices:[999],price:999,stock:84,quantity:1,...patch}});
+function observationPage(snapshots){let reads=0,waits=0;return {evaluate:async()=>structuredClone(snapshots[Math.min(reads++,snapshots.length-1)]),waitForTimeout:async()=>{waits++;},counts:()=>({reads,waits})};}
+test('Youzan selected quote waits for dynamic price to agree with selected row and stabilize',async()=>{
+ const page=observationPage([selectionSnapshot({price:1199}),selectionSnapshot(),selectionSnapshot()]);
+ const result=await settleYouzanSelection(page,chooseYouzanSku(youzan.goodsData,item));
+ assert.equal(result.ok,true);assert.equal(result.dom.selected.price,999);assert.deepEqual(page.counts(),{reads:3,waits:2});
+});
+
+test('Youzan unsettled or mismatched SKU price returns only safe public diagnostics',async()=>{
+ for(const snapshots of [[selectionSnapshot({price:1199})],[selectionSnapshot({price:999,rowPrices:[]}),selectionSnapshot({price:1099,rowPrices:[]}),selectionSnapshot({price:1199,rowPrices:[]})],[selectionSnapshot({labels:['红色'],stock:0})]]){
+  const page=observationPage(snapshots),result=await settleYouzanSelection(page,chooseYouzanSku(youzan.goodsData,item));
+  assert.equal(result.ok,false);assert.equal(result.reason,'selected_sku_unsettled');assert.equal(result.status,'incomplete');
+  assert.deepEqual(Object.keys(result.diagnostic).sort(),['stage','expectedLabels','visibleLabels','visiblePrice','visibleStock','quantity','visibleRowPrices'].sort());
+  assert.deepEqual(result.diagnostic.expectedLabels,[chosen.variant]);assert.equal(page.counts().reads,3);
+ }
+});
+
+test('Youzan selection observations stop on login or challenge without retrying the access barrier',async()=>{
+ for(const blocked of ['blocked','login']){
+  const page=observationPage([{...selectionSnapshot(),[blocked]:true},selectionSnapshot()]);
+  const result=await settleYouzanSelection(page,chooseYouzanSku(youzan.goodsData,item));
+  assert.equal(result.ok,false);assert.equal(result.status,'unavailable');assert.equal(result.reason,blocked==='blocked'?'source_challenge':'source_login_required');assert.deepEqual(page.counts(),{reads:1,waits:0});
+ }
 });

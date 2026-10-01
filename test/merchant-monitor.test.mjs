@@ -35,3 +35,10 @@ test('observed product content changes revoke prior image evidence without erasi
  }
  const cardOnly=recordMerchantObservation(saved,merchant,[{id:'cache',status:'SOLD',price:6500}],now+1000)[key];assert.equal(cardOnly.webImageStatus,'verified');assert.equal(cardOnly.webImages.length,1);assert.equal(cardOnly.description,original.description);
 });
+
+test('unchanged profile thumbnails do not revoke a reviewed full-size detail gallery',()=>{
+ const item={id:'thumb',status:'OPEN',title:'中国限定 set',description:'one complete set',image:'https://img.test/thumb.jpg',images:['https://img.test/full.jpg'],price:6000};const key=merchant.key+':thumb';
+ const saved=recordMerchantObservation({},merchant,[item],now);saved[key].webImages=[{url:'https://outside.test/photo.jpg'}];saved[key].webImageStatus='verified';
+ const unchanged=recordMerchantObservation(saved,merchant,[{id:'thumb',status:'OPEN',image:item.image}],now+1000)[key];assert.equal(unchanged.webImages.length,1);assert.deepEqual(unchanged.images,item.images);
+ const changed=recordMerchantObservation(saved,merchant,[{id:'thumb',status:'OPEN',image:'https://img.test/another-thumb.jpg'}],now+1000)[key];assert.equal(changed.webImages,undefined);assert.deepEqual(changed.images,['https://img.test/another-thumb.jpg']);
+});
