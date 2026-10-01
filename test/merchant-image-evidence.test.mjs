@@ -121,3 +121,19 @@ test('reviewed Dentist photos reject explicit changed size, clothes-only or mult
  assert.deepEqual(reviewedProductImages({...item,description:'サイズ10cm',sourceDescription:'サイズ20cm'}),[]);
  assert.deepEqual(reviewedProductImages({...item,sourceDetail:{condition:{name:'衣装のみ'}}}),[]);
 });
+
+
+test('the real Dentist description keeps remaining stock separate from the quantity of this sale',()=>{
+ const item={id:'m91581618076',title:'中国限定 第五人格 歯医者 初期衣装 ぬいぐるみ',images:['https://static.mercdn.net/item/detail/orig/photos/m91581618076_1.jpg?1790594913']};
+ const real='中国限定商品。輸入品のため気付かない汚れ等あるかもしれません。神経質な方は購入をご遠慮ください。 第五人格 IdentityV ぬいぐるみ 歯医者 フィンセン・ハント 衣装：初期衣装 状態：未使用品。輸入品のため袋にシワがあります。 残り2点。 発送は普通郵便を予定していますが、ほかの発送方法へ変更も可能です。(送料が加算されます)コメントからお願いいたします。 ほかのぬいぐるみと同時購入の場合、まとめて購入で500円引きします。';
+ const known=reviewedProductImages(item);
+ for(const description of [real,'残り2点。','在庫2点です。','在庫数：あと2点。','库存2件。','庫存2件。','剩余2只。','remaining 2点','stock: 2件','残り2点。1点です。']){
+  for(const fields of [{description},{sourceDescription:description},{sourceDetail:{description}},{yahoo:{ownDescription:description}}]){
+   const product={...item,...fields};assert.equal(reviewedProductImages(product).length,3,description);assert.equal(reconcileReviewedProductImages(product,known).length,3,description);
+  }
+ }
+ const set=merchantImageSet({webImages:reviewedProductImages({...item,description:real})});assert.equal(set.photoCount,3);assert.equal(set.officialCount,0);assert.equal(set.status,'partial');
+ for(const description of ['残り2点。2点セット','残り2点、2点セット','在庫2点です。2点セット','库存2件，2只合售','remaining 2点。2体セット','残り2点。サイズ20cm','残り2点。衣装のみです。','残り2点まとめて販売します。','在庫2点まとめて出品します。','残り2点をまとめて販売します。','在庫2点のまとめ売りです。','残り2点、まとめて販売します。','在庫2点出品します。','库存2件合售']){
+  for(const fields of [{description},{sourceDescription:description},{sourceDetail:{description}},{yahoo:{ownDescription:description}}]){const product={...item,...fields};assert.deepEqual(reviewedProductImages(product),[],description);assert.deepEqual(reconcileReviewedProductImages(product,known),[],description);}
+ }
+});

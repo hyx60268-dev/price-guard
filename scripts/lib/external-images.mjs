@@ -32,7 +32,7 @@ export function imageSearchRelevance(query='',result={}){
  if(models.some(model=>!normalize(candidate).includes(normalize(model))))return 0;
  return titleScore(wanted,candidate);
 }
-export function parseImageSearchResults(html,provider='bing',query=''){
+export function parseImageSearchResults(html,provider='bing',query='',{candidateSelector}={}){
  const rows=provider==='bing_web'?[...html.matchAll(/<li\b[^>]*class=["'][^"']*b_algo[^"']*["'][^>]*>([\s\S]*?)<\/li>/gi)].map(m=>{
   const link=m[1].match(/<h2[^>]*>[\s\S]*?<a\b([^>]*)>([\s\S]*?)<\/a>/i),href=decode(link?.[1]?.match(/href=["']([^"']+)["']/i)?.[1]);let url=href;
   try{const parsed=new URL(href,'https://www.bing.com');if(parsed.hostname.endsWith('.bing.com')&&parsed.pathname==='/ck/a'){const target=parsed.searchParams.get('u');url=target?.startsWith('a1')?Buffer.from(target.slice(2),'base64url').toString('utf8'):''}}catch{url=''}
@@ -44,13 +44,13 @@ export function parseImageSearchResults(html,provider='bing',query=''){
  });
  const unique=[...new Map(rows.filter(r=>externalPublicUrl(r.url)).map(r=>[r.url,r])).values()];
  const relevant=unique.map(r=>({...r,relevance:query?imageSearchRelevance(query,r):1})).filter(r=>r.relevance>=.35).sort((a,b)=>b.relevance-a.relevance);
- return {candidates:relevant.slice(0,5),returned:unique.length,rejected:unique.length-relevant.length,rejectedExamples:unique.filter(r=>query&&imageSearchRelevance(query,r)<.35).slice(0,3)};
+ return {candidates:(candidateSelector?candidateSelector(relevant):relevant).slice(0,5),returned:unique.length,rejected:unique.length-relevant.length,rejectedExamples:unique.filter(r=>query&&imageSearchRelevance(query,r)<.35).slice(0,3)};
 }
 export function searchImageLinks(html,provider='bing'){
  return parseImageSearchResults(html,provider).candidates.map(({url})=>({url}));
 }
 const unavailableProviders=new Map();
-export async function searchExternalImages(query,{provider='bing',deadline=Infinity}={}){
+export async function searchExternalImages(query,{provider='bing',deadline=Infinity,candidateSelector}={}){
  if((unavailableProviders.get(provider)||0)>Date.now())throw Error('search_provider_cooldown');
  // Exclude marketplace URLs after parsing. Keep query text about the product.
  const q=encodeURIComponent(query);
@@ -61,7 +61,7 @@ export async function searchExternalImages(query,{provider='bing',deadline=Infin
  if(provider==='bing'&&!/<rss\b/i.test(html)||provider==='bing_web'&&!/b_algo|No results|找不到|没有结果/i.test(html)||provider==='duckduckgo'&&!/result__a|No results found|没有找到|沒有找到/i.test(html)){
   unavailableProviders.set(provider,Date.now()+20*60000);throw Error('search_response_unavailable: '+searchText(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]).slice(0,100));
  }
- return parseImageSearchResults(html,provider,query);
+ return parseImageSearchResults(html,provider,query,{candidateSelector});
 }
 export function externalProductImages(html=''){
  const photos=[];
