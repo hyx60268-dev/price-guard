@@ -1,7 +1,7 @@
 import { xianyuAccessDiagnostic } from './lib/xianyu-evidence.mjs';
 import { merchantRetryDelay,merchantBudget,merchantXianyuAccess } from './lib/merchant-scheduling.mjs';
 import { curateMerchantProducts,prepareMerchantVisuals } from './lib/merchant-curation.mjs';
-import { isMixedBundle,expandMerchantBundles } from './lib/merchant-bundles.mjs';
+import { isMixedBundle,expandMerchantBundles,resolveMercariBundles } from './lib/merchant-bundles.mjs';
 import { allowedMerchantPhotoSource } from '../public/merchant-records.js';
 import { runMerchantImageJobs,imageCoverage } from './lib/merchant-image-jobs.mjs';
 import { mergeMerchantConfigs } from '../public/merchant-config.js';
@@ -23,7 +23,7 @@ for(const p of ['state','public/data','.auth'])await fs.mkdir(path.join(root,p),
 let previous={};try{previous=JSON.parse(decrypt(await fs.readFile(path.join(root,'state/discovery.json.enc')),password))}catch(e){if(e.code!=='ENOENT')throw e}
 let dashboard={};try{dashboard=JSON.parse(decrypt(await fs.readFile(path.join(root,'state/latest.json.enc')),password))}catch(e){if(e.code!=='ENOENT')throw e}
 cfg.merchants=mergeMerchantConfigs((cfg.merchants||[]).map(raw=>({...merchantProfile(raw),enabled:true})),dashboard.merchantMonitors||[]).filter(m=>m.enabled);
-const monitorVersion=17;
+const monitorVersion=18;
 const configDigest=crypto.createHash('sha256').update(JSON.stringify({cfg,monitorVersion})).digest('hex');
 if(process.env.MERCHANT_MONITOR_IF_DUE==='1'&&previous.mode==='merchant_monitor'&&previous.configDigest===configDigest&&Date.now()-Date.parse(previous.checkedAt||'')<merchantRetryDelay(previous)){console.log('商家监控未到下次更新时间，保留已发布记录');process.exit(0)}
 const merchants=[...new Map((cfg.merchants||[]).map(raw=>{const m=merchantProfile(raw);return [m.key,m]})).values()];
@@ -43,19 +43,24 @@ try{
    records=recordMerchantObservation(records,merchant,result.cards.filter(c=>Number.isFinite(c.price)));
    const age=c=>{const old=records[merchant.key+':'+c.id];return isMixedBundle(old||c)&&!old?.bundleComplete?-1:(Date.parse(old?.lastDetailAt)||0)};
    const tasks=result.cards.filter(c=>c.price===null||c.price>4999).sort((a,b)=>age(a)-age(b));
-   let pending=0;
+   let pending=0;const pendingBundles=new Set();
    for(const card of tasks){
     const old=records[merchant.key+':'+card.id];
     if((!isMixedBundle(old)||old.bundleComplete)&&merchant.name!==merchant.id&&old?.description&&Date.now()-Date.parse(old.lastDetailAt||'')<24*3600000)continue;
     if(Date.now()>=budget.deadline||merchantDetails>=budget.detailLimit){pending++;continue}
     details++;merchantDetails++;
-    try{const detail=await merchantDetail(merchant,card,options);if(detail.sellerName)merchant.name=detail.sellerName;records=recordMerchantObservation(records,merchant,[{...detail,lastDetailAt:new Date().toISOString()}]);if(isMixedBundle(detail)&&!detail.bundleComplete)pending++}
+    try{const detail=await merchantDetail(merchant,card,options);if(detail.sellerName)merchant.name=detail.sellerName;records=recordMerchantObservation(records,merchant,[{...detail,lastDetailAt:new Date().toISOString()}]);if(isMixedBundle(detail)&&!detail.bundleComplete)pendingBundles.add(merchant.key+':'+card.id)}
     catch(e){errors.push(`${merchant.key}/${card.id}: ${String(e)}`);pending++}
    }
+   resolveMercariBundles(records);
+   pending+=[...pendingBundles].filter(key=>!records[key]?.bundleComplete).length;
    sources.push({...merchant,status:result.complete&&!pending?'ok':'partial',cards:result.cards.length,pages:result.pages,pendingDetails:pending});
   }catch(e){sources.push({...merchant,status:'error'});errors.push(`${merchant.key}: ${String(e)}`)}
  }
 }finally{await browser?.close()}
+// Reconcile explicit bundle contents using every verified detail collected above.
+expandMerchantBundles(records);
+for(const r of Object.values(records).filter(isMixedBundle))console.log('[集合明细]',JSON.stringify({key:r.key,complete:r.bundleComplete===true,resolved:r.components?.length||0,declared:r.bundleDeclarations?.length||r.components?.length||0,reason:r.bundleResolution||null,unresolved:r.bundleUnresolved||[]}));
 dashboard.merchantPrimaryImages=previous.merchantPrimaryImages||{};
 const visualProducts=merchantProducts(records);
 const merchantPrimaryImages=await prepareMerchantVisuals(visualProducts,dashboard,{deadline:Math.min(deadline-60000,Date.now()+60000)});
