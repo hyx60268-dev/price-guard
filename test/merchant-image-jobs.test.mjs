@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import { runMerchantImageJobs,imageCoverage,IMAGE_LOOKUP_VERSION } from '../scripts/lib/merchant-image-jobs.mjs';
 import { merchantRetryDelay } from '../scripts/lib/merchant-scheduling.mjs';
 import { reviewedProductImages } from '../scripts/lib/reviewed-product-images.mjs';
-const complete=reviewedProductImages({title:'【中国限定】Anker AeroClip 2 ワイヤレスイヤホン 張凌赫 コラボ 限定ギフトボックス レッド'});
+const targetTitle='【中国限定】Anker AeroClip 2 ワイヤレスイヤホン 張凌赫 コラボ 限定ギフトボックス レッド';
+const complete=reviewedProductImages({title:targetTitle});
 const now=Date.parse('2026-10-01T13:00:00Z'),photo={url:'https://img.test/a.jpg',sourceUrl:'https://brand.test/product'};
 
 test('bounded image workers recover legacy failures without rescanning verified evidence; one error cannot stop peers',async()=>{
- const items=[{key:'saved',webImages:complete},{key:'old',webImageVersion:2,webImageStatus:'error',webImageRetryAt:new Date(now+86400000).toISOString()},{key:'break'},{key:'third'}];
+ const items=[{key:'saved',title:targetTitle,webImages:complete},{key:'old',webImageVersion:2,webImageStatus:'error',webImageRetryAt:new Date(now+86400000).toISOString()},{key:'break'},{key:'third'}];
  let active=0,maxActive=0;const called=[];
  await runMerchantImageJobs(items,{now:()=>now,deadline:now+120000,inspect:async p=>{
   called.push(p.key);active++;maxActive=Math.max(maxActive,active);await new Promise(resolve=>setTimeout(resolve,5));active--;

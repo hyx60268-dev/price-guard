@@ -1,4 +1,5 @@
 import { inspectExternalImages } from './external-images.mjs';
+import { reconcileReviewedProductImages } from './reviewed-product-images.mjs';
 import { mapLimit } from './worker-pool.mjs';
 import { merchantImageSet,mergeMerchantImages,usableMerchantImage } from '../../public/merchant-image-evidence.js';
 export const IMAGE_LOOKUP_VERSION=6;
@@ -19,6 +20,10 @@ export function imageCoverage(products=[]){
 // A single previously verified image is progress, never a complete publication
 // set. Keep it across failures and continue looking for the missing evidence.
 export async function runMerchantImageJobs(items,{deadline,inspect=inspectExternalImages,log=()=>{},now=Date.now}={}){
+ for(const item of items){
+  const before=(item.webImages||[]).length;item.webImages=reconcileReviewedProductImages(item,item.webImages||[]);
+  if(item.webImages.length!==before){item.webImageVersion=0;item.webImageRetryAt=null;}
+ }
  const tasks=items.filter(p=>!merchantImageSet(p).complete)
   .sort((a,b)=>(Date.parse(a.webImageCheckedAt)||0)-(Date.parse(b.webImageCheckedAt)||0));
  let attempted=0;

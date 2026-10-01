@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { merchantImageSet,mergeMerchantImages } from '../public/merchant-image-evidence.js';
-import { reviewedProductImages } from '../scripts/lib/reviewed-product-images.mjs';
+import { reviewedProductImages,reconcileReviewedProductImages } from '../scripts/lib/reviewed-product-images.mjs';
 import { inspectExternalImages,externalImagePlan } from '../scripts/lib/external-images.mjs';
 import { runMerchantImageJobs,IMAGE_LOOKUP_VERSION,imageCoverage } from '../scripts/lib/merchant-image-jobs.mjs';
 import { merchantRetryDelay } from '../scripts/lib/merchant-scheduling.mjs';
@@ -68,4 +68,30 @@ test('official and physical gaps drive separate queries; a single matched generi
 test('a failed source retains previous candidate evidence and never downgrades product-specific review metadata',()=>{
  const reviewed=photo('front'),old={url:reviewed.url,sourceUrl:reviewed.sourceUrl,kind:'product_image',verification:'external_detail_image_match'};
  assert.deepEqual(mergeMerchantImages([reviewed],[old]),[reviewed]);assert.deepEqual(mergeMerchantImages([old],[reviewed]),[reviewed]);
+});
+
+
+test('reviewed red full-box images reject conflicting sale contents in every live merchant description field',()=>{
+ const title='【中国限定】Anker AeroClip 2 ワイヤレスイヤホン 張凌赫 コラボ 限定ギフトボックス レッド';
+ const positive='Anker AeroClip 2 レッドの限定ギフトボックスセットです。\nイヤホンと張凌赫の特典を含む完全なセットです。';
+ assert.equal(reviewedProductImages({title,description:positive}).length,5);
+ for(const description of ['外箱のみ。イヤホンと特典は付属しません。','ホワイトのイヤホン本体のみです。','レッドのギフトボックスを2セットまとめて販売します。','2セットまとめて販売します。','ギフトボックス2套合售','特典は付属しません。','イヤホンなしのセットです。']){
+  for(const fields of [{description},{sourceDescription:description},{sourceDetail:{description}},{yahoo:{ownDescription:description}}])assert.deepEqual(reviewedProductImages({title,...fields}),[],JSON.stringify(fields));
+ }
+ assert.deepEqual(reviewedProductImages({title,description:positive,sourceDescription:'外箱のみです。'}),[]);
+ assert.deepEqual(reviewedProductImages({title,sourceDetail:{description:positive,condition:{name:'本体のみ'}}}),[]);
+});
+
+
+test('a historical wrong reviewed mapping is removed before complete-set skipping and retry scheduling',async()=>{
+ const title='【中国限定】Anker AeroClip 2 ワイヤレスイヤホン 張凌赫 コラボ 限定ギフトボックス レッド',photos=reviewedProductImages({title});
+ const generic={url:'https://other.test/image.jpg',sourceUrl:'https://other.test/page',verification:'external_detail_image_match',kind:'product_image'};
+ const item={key:'changed',title,description:'外箱のみ。イヤホンは付属しません。',webImages:[...photos,generic],webImageVersion:IMAGE_LOOKUP_VERSION,webImageRetryAt:'2099-01-01T00:00:00Z'};
+ assert.deepEqual(reconcileReviewedProductImages(item),[generic]);
+ let attempts=0;const now=Date.parse('2026-10-01T17:00:00Z');
+ await runMerchantImageJobs([item],{now:()=>now,deadline:now+60000,inspect:async()=>{attempts++;return {photos:[],status:'not_found'}}});
+ assert.equal(attempts,1);assert.deepEqual(item.webImages,[generic]);assert.equal(merchantImageSet(item).complete,false);
+ assert.equal(reconcileReviewedProductImages({title,description:'レッドの完全なギフトボックスです。'},photos).length,5);
+ const dentist={id:'m91581618076',title:'中国限定 第五人格 歯医者 初期衣装 ぬいぐるみ',images:['https://static.mercdn.net/item/detail/orig/photos/m91581618076_1.jpg?1790594913']};
+ assert.equal(reconcileReviewedProductImages({...dentist,images:['https://image.test/changed']},reviewedProductImages(dentist)).length,0);
 });

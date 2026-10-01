@@ -1,5 +1,38 @@
-export const PUBLIC_PROCUREMENT_VERIFICATION='public_procurement_detail_v1';
-export const procurementTarget=item=>({accountId:String(item?.accountId||''),id:String(item?.id||''),title:String(item?.title||''),image:String(item?.image||'')});
+export const PUBLIC_PROCUREMENT_VERIFICATION='public_procurement_detail_v2';
+const identityFields=['accountId','id','title','image'];
+const semanticFields=['description','condition'];
+const normalizedText=value=>typeof value==='string'?value.replace(/\s+/g,' ').trim():'';
+function normalizedCondition(value){
+ if(value===null||value===undefined)return '';
+ if(typeof value==='string')return normalizedText(value);
+ // Platforms may expose condition as {name,key}, nested labels, or an ID.
+ // Keep every observed field in stable key order instead of discarding objects.
+ const stable=entry=>Array.isArray(entry)?entry.map(stable):entry&&typeof entry==='object'
+  ?Object.fromEntries(Object.keys(entry).sort().map(key=>[key,stable(entry[key])]))
+  :typeof entry==='string'?normalizedText(entry):entry;
+ return JSON.stringify(stable(value));
+}
+function observedSemantic(item,field){
+ const normalize=field==='condition'?normalizedCondition:normalizedText;
+ // Explicitly observed blanks clear prior text. Never replace them with an older
+ // cached description/condition from a different field.
+ if(item.sourceDetail&&Object.hasOwn(item.sourceDetail,field))return normalize(item.sourceDetail[field]);
+ const alias=field==='description'?'ownDescription':'ownCondition';
+ if(item.yahoo&&Object.hasOwn(item.yahoo,alias))return normalize(item.yahoo[alias]);
+ return normalize(item[field]);
+}
+export function procurementTarget(item={}){
+ return {...Object.fromEntries(identityFields.map(key=>[key,String(item[key]||'')])),
+  description:observedSemantic(item,'description'),condition:observedSemantic(item,'condition')};
+}
+export function procurementTargetsEqual(a,b){
+ // Older four-field bindings are incompatible, even when the new fields are
+ // presently unknown. Unknown values may only match explicitly captured unknowns.
+ return identityFields.every(key=>typeof a?.[key]==='string'&&Boolean(a[key])&&a[key]===b?.[key])&&
+  semanticFields.every(key=>Object.hasOwn(a||{},key)&&Object.hasOwn(b||{},key)&&
+   typeof a[key]==='string'&&typeof b[key]==='string'&&normalizedText(a[key])===normalizedText(b[key]));
+}
+
 const amount=value=>typeof value==='number'&&Number.isFinite(value)&&value>=0?value:null;
 export const safeProcurementUrl=url=>{try{const u=new URL(url);return u.protocol==='https:'&&!u.username&&!u.password&&!u.port&&u.hostname.includes('.')&&!/^(?:localhost|.*\.localhost|.*\.local|\d+(?:\.\d+){3}|\[)/i.test(u.hostname)}catch{return false}};
 const safe=safeProcurementUrl;
@@ -19,13 +52,12 @@ export function canonicalProcurementUrl(value){
   const key=source==='weidian'?'itemID':'id';return u.origin+u.pathname+'?'+key+'='+u.searchParams.get(key);
  }catch{return null}
 }
-function targetEqual(a,b){return ['accountId','id','title','image'].every(k=>Boolean(a?.[k])&&a[k]===b?.[k])}
 export function verifiedPublicCostEvidence(samples=[],{now=Date.now(),maxAgeHours=24,target}={}){
  const valid=[],urls=new Set(),sellers=new Set(),identities=new Set(),evidenceTarget=target||samples[0]?.target;const time=typeof now==='number'?now:Date.parse(now);
  for(const s of samples){
   const age=time-Date.parse(s.checkedAt||'');
   if(s.verification!==PUBLIC_PROCUREMENT_VERIFICATION||s.currency!=='CNY'||s.priceSource!=='target_detail'||s.skuVerified!==true||s.inStock!==true||s.shippingKnown!==true||!s.skuId||!s.selectedVariant||!s.detailTitle||!s.detailDescription||!s.detailImages?.length||!s.detailImages.every(safe)||!s.sellerKey||!s.sellerName||!s.sellerIdentityKey||!s.identity?.accepted||s.identity.primaryImageScore<.98||s.identity.titleScore<.62||!Number.isFinite(s.identity.primaryImageScore)||!Number.isFinite(s.identity.titleScore))continue;
-  if(!targetEqual(s.target,evidenceTarget)||!(age>=0&&age<=maxAgeHours*3600000))continue;
+  if(!procurementTargetsEqual(s.target,evidenceTarget)||!(age>=0&&age<=maxAgeHours*3600000))continue;
   if(!(amount(s.unitCNY)>0)||amount(s.shippingCNY)===null||s.landedCNY!==s.unitCNY+s.shippingCNY||s.price!==s.landedCNY)continue;
   const url=canonicalProcurementUrl(s.url);if(!url||url!==s.canonicalUrl||!procurementSource(s.url)||urls.has(url)||sellers.has(s.sellerKey)||identities.has(s.sellerIdentityKey))continue;
   urls.add(url);sellers.add(s.sellerKey);identities.add(s.sellerIdentityKey);valid.push(s);

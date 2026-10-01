@@ -1,20 +1,16 @@
 import { mergeXianyuReview } from './xianyu-review-plan.mjs';
 import { XIANYU_VERIFICATION, verifiedCostEvidence } from './xianyu-evidence.mjs';
-import { PUBLIC_PROCUREMENT_VERIFICATION, verifiedPublicCostEvidence } from './procurement-evidence.mjs';
+import { PUBLIC_PROCUREMENT_VERIFICATION, verifiedPublicCostEvidence, procurementTarget, procurementTargetsEqual } from './procurement-evidence.mjs';
 
 const positive=value=>Number.isFinite(value)&&value>0;
 const fresh=(value,hours,now)=>{const time=Date.parse(value||'');return Number.isFinite(time)&&time<=now+300000&&now-time<Math.max(0,hours)*3600000};
 const publicHours=hours=>Math.min(24,Number.isFinite(Number(hours))&&Number(hours)>0?Number(hours):24);
-const targetFields=['accountId','id','title','image'];
+export { procurementTarget } from './procurement-evidence.mjs';
 
 // Public references are scoped to the exact inventory row, including its image.
 // A relist or renamed/changed variant must be checked again; manual costs remain separate.
-export function procurementTarget(item={}){
- return Object.fromEntries(targetFields.map(key=>[key,typeof item[key]==='string'?item[key]:'']));
-}
 export function sameProcurementTarget(target,item={}){
- const expected=procurementTarget(item);
- return targetFields.every(key=>expected[key]&&target?.[key]===expected[key]);
+ return procurementTargetsEqual(target,procurementTarget(item));
 }
 export function bindProcurementTarget(reference={},item={}){
  // Never rewrite sample targets: they describe which item the collector verified.

@@ -16,10 +16,10 @@ export async function runPublicProcurement(buckets,{lookup,hydrate=async item=>i
   if(sameProcurementTarget(prior.procurementSource?.target,item)&&age>=0&&age<retry){results.set(key,{...prior.procurementSource,attempted:false,cacheStatus:'awaiting_retry'});return;}
   if(admitted>=limit||now()>=deadline){results.set(key,{...prior.procurementSource,attempted:false,cacheStatus:'deferred_budget'});return;}
   admitted++;
-  let reference;
-  try{reference=await lookup(await hydrate(item,prior),{deadline:Math.min(deadline,now()+60000)});}
+  let reference,observedItem=item;
+  try{observedItem=await hydrate(item,prior);reference=await lookup(observedItem,{deadline:Math.min(deadline,now()+60000)});}
   catch(error){reference={status:'error',averageCNY:null,samples:[],diagnostics:[{reason:'lookup_exception',message:String(error?.message||error).slice(0,160)}]};}
-  reference=bindProcurementTarget({...reference,attempted:true,checkedAt:reference.checkedAt||new Date(now()).toISOString()},item);
+  reference=bindProcurementTarget({...reference,attempted:true,checkedAt:reference.checkedAt||new Date(now()).toISOString()},observedItem);
   results.set(key,reference);
   log({key,status:reference.status,sellers:reference.sellerCount||0,averageCNY:reference.averageCNY??null,diagnostics:reference.diagnostics||[]});
  });

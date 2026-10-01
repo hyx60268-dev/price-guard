@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom';
 import { PUBLIC_PROCUREMENT_VERIFICATION,procurementSource,canonicalProcurementUrl,embeddedPublicJSON,chooseYouzanSku,youzanQuoteFromPublicState,parsePublicProcurementDetail,readYouzanPublicDOM,verifiedPublicCostEvidence,alternativeProcurementCost } from '../scripts/lib/procurement-sources.mjs';
 const url='https://detail.youzan.com/show/goods?alias=2osy35s5abbdhtd';
 const title='Anker AeroClip 2 张凌赫 联名 礼盒 白色';
-const target={accountId:'owner',id:'z1',title,image:'https://images.example.org/own.jpg'};
+const target={accountId:'owner',id:'z1',title,image:'https://images.example.org/own.jpg',description:title,condition:''};
 const item={...target,description:title};
 // Public page observed 2026-10-02: base SKU values both 119900 cents,
 // selected white is 999 CNY / 84 units; red is 1199 CNY / sold out.
@@ -72,4 +72,43 @@ test('deadlines and all-source errors never report a completed cost reference',a
 
 test('successful search plus blocked detail does not mark a completed procurement review',async()=>{
  const result=await alternativeProcurementCost(item,{fingerprint:async()=>fp,search:async()=>[{url:'https://item.jd.com/1.html'}],detail:async()=>({status:'unavailable',reason:'source_challenge'})});assert.equal(result.status,'unavailable');assert.equal(result.reviewedAt,undefined);assert.equal(result.averageCNY,null);
+});
+
+async function checkOriginalIdentity(sourceItem,quoteOverrides={}){
+ return alternativeProcurementCost(sourceItem,{fingerprint:async()=>fp,search:async()=>[{url:'https://item.jd.com/1.html'},{url:'https://item.jd.com/2.html'}],detail:async link=>link.includes('youzan')?{status:'incomplete',reason:'not_supported'}:{...sample(link.includes('/1.')?1:2),status:'quoted',detailTitle:sourceItem.title.replace(/新品未開封 |新品 |未開封 /g,''),detailDescription:'商品说明',selectedVariant:'红色',condition:'retail_unspecified',...quoteOverrides}});
+}
+test('original new/sealed constraint survives search title cleanup for every shop account',async()=>{
+ for(const accountId of ['老板雅虎','メロン','third-managed-shop']){
+  const sourceItem={...item,accountId,title:'新品未開封 Anker AeroClip 2 張凌赫 レッド ギフトボックス',description:'商品说明'};
+  const result=await checkOriginalIdentity(sourceItem);assert.equal(result.sellerCount,0);assert.equal(result.averageCNY,null);assert.ok(result.diagnostics.some(d=>d.reason==='sealed_condition_unconfirmed'));
+  const schemaNew=await checkOriginalIdentity(sourceItem,{condition:'new',conditionEvidence:'https://schema.org/NewCondition'});assert.equal(schemaNew.sellerCount,0);
+  const plainNew=await checkOriginalIdentity({...sourceItem,title:sourceItem.title.replace('新品未開封','新品')},{condition:'new',conditionEvidence:'https://schema.org/NewCondition'});assert.equal(plainNew.status,'ok');
+  const sealedNew=await checkOriginalIdentity(sourceItem,{detailDescription:'全新未拆封完整礼盒',conditionEvidence:'https://schema.org/NewCondition'});assert.equal(sealedNew.status,'ok');
+  const contradictory=await checkOriginalIdentity(sourceItem,{detailDescription:'全新未拆封，已开封验货',conditionEvidence:'https://schema.org/NewCondition'});assert.equal(contradictory.sellerCount,0);
+  const fakeNew=await checkOriginalIdentity(sourceItem,{condition:'new'});assert.equal(fakeNew.sellerCount,0);
+ }
+});
+test('full source detail condition and description remain hard constraints',async()=>{
+ const sourceItem={...item,title:'Anker AeroClip 2 張凌赫 レッド ギフトボックス',description:'商品说明',sourceDetail:{condition:{name:'新品、未使用'},description:'红色完整礼盒'}};
+ const result=await checkOriginalIdentity(sourceItem);assert.equal(result.sellerCount,0);assert.ok(result.diagnostics.some(d=>d.reason==='condition_or_packaging_mismatch'));
+ const used=await checkOriginalIdentity(sourceItem,{detailDescription:'已开封 二手',conditionEvidence:'https://schema.org/NewCondition'});assert.equal(used.sellerCount,0);
+});
+test('quantity and version at the end of long original titles are never replaced by truncated search words',async()=>{
+ const base='Anker AeroClip 2 張凌赫 レッド ギフトボックス '+ '記念商品 '.repeat(25);
+ for(const [suffix,wrong,reason]of [['2点セット','1点','sale_unit_mismatch'],['A版','B版','explicit_variant_mismatch']]){
+  const result=await checkOriginalIdentity({...item,title:base+suffix,description:'商品说明'},{detailTitle:base+wrong});assert.equal(result.sellerCount,0);assert.ok(result.diagnostics.some(d=>['sale_unit_mismatch','explicit_variant_mismatch'].includes(d.reason)),JSON.stringify(result.diagnostics));
+  const same=await checkOriginalIdentity({...item,title:base+suffix,description:'商品说明'},{detailTitle:base+suffix});assert.equal(same.status,'ok',JSON.stringify(same.diagnostics));
+ }
+});
+test('structured national currency does not make regional shipping universally applicable',()=>{
+ const parsed=JSON.parse(ld().replace(/^.*?>/,'').replace(/<\/script>$/,''));
+ for(const restriction of [{addressRegion:'广东省'},{addressLocality:'广州市'},{postalCode:'510000'},{postalCodeRange:{postalCodeBegin:'510000',postalCodeEnd:'519999'}}]){
+  const offers={...parsed.offers,shippingDetails:{...parsed.offers.shippingDetails,shippingDestination:{addressCountry:'CN',...restriction}}};assert.equal(parsePublicProcurementDetail(ld({offers}),'https://item.jd.com/123.html').reason,'shipping_destination_unconfirmed');
+ }
+});
+
+test('Chinese recall aliases do not require removing Japanese hard condition or colour constraints',async()=>{
+ const sourceItem={...item,title:'新品未開封 Anker AeroClip 2 張凌赫 レッド ギフトボックス',description:'商品说明'};
+ const result=await checkOriginalIdentity(sourceItem,{detailTitle:'Anker AeroClip 2 张凌赫 联名 红色 礼盒',detailDescription:'全新未拆封完整礼盒',conditionEvidence:'https://schema.org/NewCondition'});assert.equal(result.status,'ok',JSON.stringify(result.diagnostics));
+ const wrong=await checkOriginalIdentity(sourceItem,{detailTitle:'Anker AeroClip 2 张凌赫 联名 白色 礼盒',selectedVariant:'白色',detailDescription:'全新未拆封完整礼盒',conditionEvidence:'https://schema.org/NewCondition'});assert.equal(wrong.sellerCount,0);
 });

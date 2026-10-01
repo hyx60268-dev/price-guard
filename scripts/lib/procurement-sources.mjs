@@ -75,11 +75,15 @@ export function parsePublicProcurementDetail(html,url){
  if(offer.eligibleQuantity&&!(offer.eligibleQuantity.minValue===1&&(!offer.eligibleQuantity.maxValue||offer.eligibleQuantity.maxValue>=1)))return {status:'incomplete',reason:'quantity_price_unconfirmed'};
  const rate=[offer.shippingDetails||[]].flat();
  if(rate.length!==1||rate[0]?.shippingRate?.currency!=='CNY'||scalar(rate[0]?.shippingRate?.value)===null||rate[0]?.shippingDestination?.addressCountry!=='CN')return {status:'incomplete',reason:'shipping_unconfirmed'};
+ const destination=rate[0].shippingDestination;
+ // No destination address is supplied to this collector. A quote limited to a
+ // province, locality or postcode cannot become a generally applicable cost.
+ if(Object.entries(destination).some(([key,value])=>!['@type','addressCountry'].includes(key)&&value!==undefined&&value!==null&&value!==''))return {status:'incomplete',reason:'shipping_destination_unconfirmed'};
  const shippingCNY=scalar(rate[0].shippingRate.value),seller=offer.seller;
  if(!seller?.name||!seller?.['@id']||!safe(seller['@id'])||new URL(seller['@id']).hostname!==new URL(url).hostname)return {status:'incomplete',reason:'seller_unconfirmed'};
  const images=[p.image||[]].flat().map(v=>typeof v==='string'?v:v.url).filter(safe);
  if(!p.name||!p.description||!images.length)return {status:'incomplete',reason:'detail_content_unconfirmed'};
- return {status:'quoted',source,id:canonical,skuId,url:canonical,canonicalUrl:canonical,sellerKey:source+':'+seller['@id'],sellerName:seller.name,sellerIdentityKey:normalize(seller.name),unitCNY,shippingCNY,landedCNY:unitCNY+shippingCNY,price:unitCNY+shippingCNY,currency:'CNY',inStock:true,skuVerified:true,shippingKnown:true,shippingScope:'CN',selectedVariant:[p.model,p.color,p.size,skuId].filter(Boolean).join(' / '),detailTitle:p.name,detailDescription:text(p.description),detailImages:images,priceSource:'target_detail',priceEvidence:'target_product_offer',condition:'new',quantity:1};
+ return {status:'quoted',source,id:canonical,skuId,url:canonical,canonicalUrl:canonical,sellerKey:source+':'+seller['@id'],sellerName:seller.name,sellerIdentityKey:normalize(seller.name),unitCNY,shippingCNY,landedCNY:unitCNY+shippingCNY,price:unitCNY+shippingCNY,currency:'CNY',inStock:true,skuVerified:true,shippingKnown:true,shippingScope:'CN',selectedVariant:[p.model,p.color,p.size,skuId].filter(Boolean).join(' / '),detailTitle:p.name,detailDescription:text(p.description),detailImages:images,priceSource:'target_detail',priceEvidence:'target_product_offer',condition:'new',conditionEvidence:offer.itemCondition,quantity:1};
 }
 // This function is serialized into the page. It only reads public DOM content;
 // does not access session tokens, hidden account state or private endpoints.
@@ -122,7 +126,7 @@ export async function readPublicProcurementDetail(url,{item,context,getContext,d
 function rejected(records,item,candidate){return Object.values(records||{}).some(r=>!r.deleted&&r.accountId===item.accountId&&(r.itemId===item.id||r.itemId===item.relistedFrom&&r.ownTitle===item.title&&r.ownImage===item.image)&&(r.candidateId===candidate.id||r.candidateId===candidate.skuId||r.candidateId===candidate.canonicalUrl||canonicalProcurementUrl(r.candidateUrl||r.url)===candidate.canonicalUrl));}
 export async function alternativeProcurementCost(item,{deadline=Date.now()+90000,maxDetails=8,search=searchExternalImages,detail=readPublicProcurementDetail,fingerprint=imageFingerprints,matchCorrections={},context,getContext}={}){
  const target=procurementTarget(item),checkedAt=new Date().toISOString(),report={status:'incomplete',averageCNY:null,samples:[],sellerCount:0,verification:PUBLIC_PROCUREMENT_VERIFICATION,checkedAt,target,diagnostics:[],searched:0,detailCheckedCount:0};
- if(Object.values(target).some(v=>!v))return {...report,reason:'target_identity_missing'};
+ if(['accountId','id','title','image'].some(key=>!target[key]))return {...report,reason:'target_identity_missing'};
  if(Date.now()>=deadline)return {...report,status:'deferred',reason:'budget_exhausted'};
  const own=await fingerprint(item.image);if(!own)return {...report,status:'unavailable',reason:'target_image_unavailable'};
  const seen=new Set();let sourcesCompleted=0,sourceFailure=false;
@@ -133,7 +137,22 @@ export async function alternativeProcurementCost(item,{deadline=Date.now()+90000
    if(rejected(matchCorrections,item,quote)){report.diagnostics.push({source:quote.source,reason:'rejected_by_memory',url});continue}
    const query=externalImageQueries(item.title)[0],candidate=colorText(quote.detailTitle+' '+quote.selectedVariant);
    const titleMatch=titleScore(query,candidate),fp=await fingerprint(quote.detailImages?.[0]),primaryImageScore=primaryProductSimilarity(own,fp);
-   const guard=offerIdentityGuard({ownTitle:colorText(query),ownDescription:item.yahoo?.ownDescription||item.description||'',candidateTitle:candidate,candidateDescription:quote.detailDescription,primaryImageScore});
+   // Search queries deliberately strip descriptors and may truncate. Only the
+   // original offer can provide quantity, condition and version constraints.
+   const conditionText=value=>typeof value==='string'?value:value?.name||value?.text||value?.label||value?.key||'';
+   const ownDescription=[item.sourceDetail?.description,item.yahoo?.ownDescription,item.description,conditionText(item.sourceDetail?.condition),conditionText(item.condition)].filter(Boolean).join('\n');
+   const ownTitle=[item.title,item.sourceDetail?.title].filter(Boolean).join('\n');
+   // Lossless equivalent spelling only: preserve every character outside these
+   // observed aliases, including condition, quantity and suffixes past 80 chars.
+   const identityText=value=>colorText(value).replace(/白色/g,'ホワイト').replace(/红色/g,'レッド').replace(/黑色/g,'ブラック').replace(/蓝色/g,'ブルー').replace(/ギフトボックス/g,'礼盒').replace(/コラボ/g,'联名');
+   // NewCondition is explicit source evidence; normal retail / unknown condition
+   // is not. Do not infer new/sealed from a shop name or a matching photograph.
+   const candidateDescription=[quote.detailDescription,quote.conditionEvidence==='https://schema.org/NewCondition'?'新品':''].filter(Boolean).join('\n');
+   const sealed=/(?:未開封|未拆封|未开封|全新未拆)/;
+   const candidateOriginal=[quote.detailTitle,quote.selectedVariant,quote.detailDescription].filter(Boolean).join('\n');
+   const sealConflict=/(?:已[开拆]封|開封済|拆封验货|不是.{0,3}未[开拆]封|非.{0,3}未[开拆]封|不(?:保证|确定).{0,4}未[开拆]封)/;
+   if(sealed.test(ownTitle+'\n'+ownDescription)&&(!sealed.test(candidateOriginal)||sealConflict.test(candidateOriginal))){report.diagnostics.push({source:quote.source,reason:'sealed_condition_unconfirmed',url});continue}
+   const guard=offerIdentityGuard({ownTitle:identityText(ownTitle),ownDescription:identityText(ownDescription),candidateTitle:identityText([quote.detailTitle,quote.selectedVariant].filter(Boolean).join(' ')),candidateDescription:identityText(candidateDescription),primaryImageScore});
    if(!guard.accepted||!(primaryImageScore>=.98)||titleMatch<.62){report.diagnostics.push({source:quote.source,reason:guard.accepted?'identity_unconfirmed':guard.reason,url,titleScore:titleMatch,primaryImageScore});continue}
    report.samples.push({...quote,checkedAt:new Date().toISOString(),verification:PUBLIC_PROCUREMENT_VERIFICATION,target,identity:{accepted:true,titleScore:titleMatch,primaryImageScore}});
    if(verifiedPublicCostEvidence(report.samples,{target}).ready)return;

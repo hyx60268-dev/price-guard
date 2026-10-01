@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chooseProcurementReference,mergeXianyuCostEvidence,verifiedPublicProcurementCache,verifiedXianyuReference,bindProcurementTarget,procurementTarget,hasCompletedPublicProcurementReview } from '../scripts/lib/procurement-reference.mjs';
+import { chooseProcurementReference,mergeXianyuCostEvidence,verifiedPublicProcurementCache,verifiedXianyuReference,bindProcurementTarget,procurementTarget,sameProcurementTarget,hasCompletedPublicProcurementReview } from '../scripts/lib/procurement-reference.mjs';
 import { verifiedXianyuCache } from '../scripts/lib/planner.mjs';
 import { XIANYU_VERIFICATION } from '../scripts/lib/xianyu-evidence.mjs';
+import { procurementTargetsEqual,verifiedPublicCostEvidence } from '../scripts/lib/procurement-evidence.mjs';
 import { publicProcurementItem } from './fixtures/procurement-reference.mjs';
 const now=Date.parse('2026-10-01T17:00:00Z');
 const withXianyu=item=>({...item,xianyu:{averageCNY:95,verification:XIANYU_VERIFICATION,checkedAt:new Date(now).toISOString(),samples:[
@@ -98,4 +99,56 @@ test('a newly verified Xianyu observation replaces the old timestamp, while defe
  assert.equal(deferred.checkedAt,prior.xianyu.checkedAt);assert.equal(deferred.lastAttemptAt,undefined);assert.equal(deferred.averageCNY,95);
  const invalid={...current,averageCNY:1};
  assert.equal(mergeXianyuCostEvidence({},invalid,{now}).averageCNY,null);
+});
+
+test('observed quantity or condition changes invalidate both cached public prices and the final selected reference',()=>{
+ for(const change of [item=>item.sourceDetail.description='红色整套礼盒 2 套，含 AeroClip 2 耳机。',
+  item=>item.sourceDetail.condition='中古',item=>item.sourceDetail.description='',item=>item.sourceDetail.condition='']){
+  const item=publicProcurementItem(now);assert.ok(verifiedPublicProcurementCache(item,{now}));change(item);
+  assert.equal(verifiedPublicProcurementCache(item,{now}),null);assert.equal(chooseProcurementReference(item,{now}),null);
+  assert.equal(sameProcurementTarget(item.procurementSource.target,item),false);
+  assert.equal(hasCompletedPublicProcurementReview(item,{now}),false);
+ }
+});
+
+test('newly observed semantics invalidate explicit unknown bindings and legacy four-field bindings never qualify',()=>{
+ const item=publicProcurementItem(now);delete item.sourceDetail;delete item.description;delete item.condition;
+ const unknown=procurementTarget(item);item.procurementSource.target=unknown;
+ for(const sample of item.procurementSource.samples)sample.target={...unknown};
+ assert.ok(verifiedPublicProcurementCache(item,{now}));
+ item.sourceDetail={description:'红色整套礼盒 2 套',condition:'新品、未使用'};
+ assert.equal(verifiedPublicProcurementCache(item,{now}),null);
+ const legacy=publicProcurementItem(now);delete legacy.procurementSource.target.description;delete legacy.procurementSource.target.condition;
+ assert.equal(verifiedPublicProcurementCache(legacy,{now}),null);
+ const legacySamples=publicProcurementItem(now);for(const sample of legacySamples.procurementSource.samples){delete sample.target.description;delete sample.target.condition;}
+ assert.equal(verifiedPublicCostEvidence(legacySamples.procurementSource.samples,{now}).ready,false);
+});
+
+test('full observed description is bound without truncation while whitespace-only changes remain equivalent',()=>{
+ const item=publicProcurementItem(now),target=item.procurementSource.target;
+ item.sourceDetail.description='  '+target.description.replaceAll(' ','  ')+'\n';
+ item.sourceDetail.condition='  新品、未使用  ';
+ assert.ok(verifiedPublicProcurementCache(item,{now}));
+ const original='商品説明。'.repeat(500)+' 1セット';item.sourceDetail.description=original;
+ const before=procurementTarget(item);item.sourceDetail.description=original.replace('1セット','2セット');
+ assert.equal(procurementTargetsEqual(before,procurementTarget(item)),false);
+ const sampleChanged=publicProcurementItem(now);sampleChanged.procurementSource.samples[0].target.condition='中古';
+ assert.equal(verifiedPublicCostEvidence(sampleChanged.procurementSource.samples,{now}).ready,false);
+ assert.equal(verifiedPublicProcurementCache(sampleChanged,{now}),null);
+});
+
+test('structured source condition preserves names, IDs and nested labels instead of becoming unknown',()=>{
+ const item=publicProcurementItem(now);
+ item.sourceDetail.condition={name:'新品、未使用',key:'unused',metadata:{label:' New ',code:1}};
+ const bound=procurementTarget(item);item.procurementSource.target={...bound};
+ for(const sample of item.procurementSource.samples)sample.target={...bound};
+ assert.notEqual(bound.condition,'');assert.ok(verifiedPublicProcurementCache(item,{now}));
+ item.sourceDetail.condition={metadata:{code:1,label:'New'},key:'unused',name:'新品、未使用'};
+ assert.ok(verifiedPublicProcurementCache(item,{now}),'key order and whitespace are stable');
+ item.sourceDetail.condition.name='中古';
+ assert.equal(verifiedPublicProcurementCache(item,{now}),null);
+ item.sourceDetail.condition.name='新品、未使用';item.sourceDetail.condition.key='used';
+ assert.equal(chooseProcurementReference(item,{now}),null);
+ item.sourceDetail.condition={};
+ assert.equal(verifiedPublicProcurementCache(item,{now}),null);
 });
