@@ -49,3 +49,31 @@ test('Yahoo excludes another managed seller before detail matching',async()=>{
  const result=await yahooCompare(null,{id:'own',platform:'rakuma',title:'フィギュア',ownPrice:30000,sourceDetail:{description:'新品 未開封',images:[],status:'OPEN'}},{ownedOffers:owned,forceYahooBroadSearch:true},{fetchYahooResult:async()=>({items:[{id:'z2',title:'フィギュア',price:20000,sellerId:'shopB',itemStatus:'OPEN'}]}),imageFingerprints:async()=>null,fetchYahooItemBundle:async()=>{throw Error('must not read another managed listing')}});
  assert.equal(result.competitorCount,0);assert.ok(result.rejected.some(r=>r.id==='z2'&&r.reason==='own_seller'));
 });
+
+test('real configured yahoo_fleamarket shop is excluded even when new listing is not in inventory',async()=>{
+ const {readFile}=await import('node:fs/promises');
+ const config=JSON.parse(await readFile(new URL('../config/accounts.json',import.meta.url),'utf8'));
+ const index=buildOwnedOffers(config.accounts,[]);
+ assert.equal(isOwnedOffer(index,'yahoo',{id:'z694516642',sellerId:'p76217154'}),true);
+ const row={platform:'yahoo_fleamarket',id:'another',ownPrice:22000,yahoo:source([offer(22000,'z694516642','p76217154')])};
+ assert.equal(pricingDecision(excludeOwnedOffers(row,index)).recommendedPrice,22000);
+});
+test('z694516642 screenshot: missing seller and ownership index must never undercut itself',()=>{
+ const row={platform:'yahoo_fleamarket',id:'z694516642',ownPrice:22000,yahoo:source([offer(22000,'z694516642',null)])};
+ assert.equal(pricingDecision(row).recommendedPrice,22000);
+ assert.equal(excludeOwnedOffers(row,buildOwnedOffers()).yahoo.candidates.length,0);
+});
+test('legacy platform aliases cover all shops, URL-only candidates and compacted cache',()=>{
+ const index=buildOwnedOffers([{id:'melon',platform:'yahoo_fleamarket',profileUrl:'https://paypayfleamarket.yahoo.co.jp/user/p76217154'},
+ {id:'second',platform:'yahoo',profileUrl:'https://paypayfleamarket.yahoo.co.jp/user/p2'},
+ {id:'third',platform:'rakuma',profileUrl:'https://fril.jp/shop/third'}],
+ [{accountId:'melon',platform:'yahoo_fleamarket',id:'z694516642'}]);
+ for(const accountId of ['melon','second','third']){
+ const row={accountId,ownPrice:22000,yahoo:source([offer(22000,'z694516642',null),offer(21000,'other','outside')])};
+ const clean=excludeOwnedOffers(compactDashboardResult({items:[row]}).items[0],index);
+ assert.equal(clean.yahoo.candidates.length,1);
+ assert.equal(pricingDecision(clean).recommendedPrice,20999);
+ }
+ assert.equal(isOwnedOffer(index,'yahoo',{url:'https://paypayfleamarket.yahoo.co.jp/item/z694516642'}),true);
+ assert.equal(isOwnedOffer(index,'mercari',{id:'z694516642'}),false);
+});
