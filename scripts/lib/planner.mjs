@@ -63,8 +63,11 @@ export function shouldScanXianyu(item,yahooResult){
 }
 
 export function verifiedXianyuCache(item={}){
-  if(item.xianyu?.verification!==XIANYU_VERIFICATION||!verifiedCostEvidence(item.xianyu.samples).ready||!Number.isFinite(item.averageCNY)||item.averageCNY<=0)return null;
-  return {averageCNY:item.averageCNY,samples:item.xianyu.samples||[],checkedAt:item.xianyu.checkedAt||item.checkedAt||null,verification:item.xianyu.verification};
+  const reference=Object.hasOwn(item.xianyu||{},'averageCNY')?item.xianyu.averageCNY:
+    !item.referenceProvider||item.referenceProvider==='xianyu'?item.averageCNY:null;
+  const evidence=verifiedCostEvidence(item.xianyu?.samples);
+  if(item.xianyu?.verification!==XIANYU_VERIFICATION||!evidence.ready||!Number.isFinite(reference)||reference<=0||Math.abs(reference-evidence.median)>=.01)return null;
+  return {averageCNY:evidence.median,samples:evidence.samples,checkedAt:item.xianyu.checkedAt||item.checkedAt||null,verification:item.xianyu.verification};
 }
 
 export function isFresh(value,hours,now=Date.now()){

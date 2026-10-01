@@ -1,6 +1,7 @@
+import { merchantImageSet } from '../../public/merchant-image-evidence.js';
 export function merchantRetryDelay(result={},now=Date.now()){
  if((result.merchants||[]).some(m=>m.status!=='ok'))return 20*60_000;
- const pending=(result.products||[]).filter(p=>!p.webImages?.length&&!p.xianyuImages?.length);
+ const pending=(result.products||[]).filter(p=>!merchantImageSet(p).complete);
  if(!pending.length)return 24*3600_000;
  const due=Math.min(...pending.map(p=>Date.parse(p.webImageRetryAt)||now));
  return Math.max(20*60_000,Math.min(24*3600_000,due-(Date.parse(result.checkedAt)||now)));

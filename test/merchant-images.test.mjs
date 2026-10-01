@@ -28,7 +28,7 @@ test('official gallery parser excludes recommendation images and parses Product 
 });
 test('reviewed PChome real photos bind only to the red Zhang Linghe full gift box',()=>{
  const sourceTitle='【中国限定】Anker ワイヤレスイヤホン 張凌赫 コラボ ギフトボックスセット AeroClip2 レッドイヤホン';
- const photos=reviewedProductImages({sourceTitle});assert.equal(photos.length,2);assert.ok(photos.every(p=>p.kind==='physical_photo'&&p.sourceUrl.startsWith('https://article.pchome.net/')));
+ const photos=reviewedProductImages({sourceTitle});assert.equal(photos.length,5);assert.equal(photos.filter(p=>p.kind==='physical_photo'&&p.sourceUrl.startsWith('https://article.pchome.net/')).length,3);assert.equal(photos.filter(p=>p.kind==='official_image').length,2);
  for(const title of [sourceTitle.replace('レッド','ホワイト'),sourceTitle.replace('張凌赫','別コラボ'),sourceTitle.replace('AeroClip2','AeroClip3'),sourceTitle+' 2セット',sourceTitle+' 単品'])assert.deepEqual(reviewedProductImages({title}),[]);
 });
 
@@ -38,7 +38,7 @@ test('visually reviewed Dentist photograph requires the exact listing, initial c
  const photos=reviewedProductImages(item);assert.equal(photos.length,1);assert.equal(photos[0].sourceUrl,'https://booth.pm/ja/items/8885115');assert.equal(photos[0].kind,'physical_photo');assert.equal(photos[0].price,undefined);
  assert.deepEqual(reviewedProductImages({sourceId:item.id,sourceTitle:title,sourceImages:item.images}),photos);
  for(const change of [{id:'m98929657142'},{images:[]},{images:['https://image.test/changed']},{title:title+' 2個セット'},{title:title.replace('歯医者','画家')},{title:title.replace('初期衣装','別衣装')}])assert.deepEqual(reviewedProductImages({...item,...change}),[]);
- const result=await inspectExternalImages(item,{search:async()=>{throw Error('must use reviewed evidence without re-search')}});assert.equal(result.status,'verified');assert.equal(result.reason,'reviewed_source');
+ const result=await inspectExternalImages(item,{search:async()=>[],fingerprint:async()=>fp});assert.equal(result.status,'partial');assert.equal(result.reason,'image_set_incomplete');assert.equal(result.photos.length,1);
 });
 
 test('a failing search provider falls back and a failed page does not prevent the next verified source',async()=>{
@@ -47,8 +47,8 @@ test('a failing search provider falls back and a failed page does not prevent th
   providers.push(provider);if(provider==='bing')throw Error('HTTP 503');
   return [{url:'https://broken.test/product'},{url:'https://official.test/product'}];
  },detail:async url=>{if(url.includes('broken'))throw Error('HTTP 404');return dependencies.detail(url)}});
- assert.deepEqual(providers,['bing','bing_web']);assert.equal(r.status,'verified');assert.equal(r.photos.length,2);
- assert.deepEqual(r.failures.map(f=>f.stage),['search','detail']);assert.equal(r.pagesRead,1);
+ assert.ok(providers.includes('bing_web')&&providers.includes('duckduckgo'));assert.equal(r.status,'partial');assert.equal(r.photos.length,2);
+ assert.ok(r.failures.some(f=>f.stage==='search'));assert.ok(r.failures.some(f=>f.stage==='detail'));assert.equal(r.pagesRead,1);
 });
 
 test('empty search, source outage and rejected product image remain separate outcomes',async()=>{

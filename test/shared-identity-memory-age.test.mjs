@@ -99,7 +99,7 @@ test('encrypted correction sync publishes a safe price and retains fees and emai
     await fs.copyFile(path.join(root,'public/durable-state.js'),path.join(temp,'public/durable-state.js'));
     await fs.copyFile(path.join(root,'public/build-version.js'),path.join(temp,'public/build-version.js'));
     await fs.copyFile(path.join(root,'public/pricing-policy.js'),path.join(temp,'public/pricing-policy.js'));
-    for(const name of ['owned-offers.js','merchant-config.js'])await fs.copyFile(path.join(root,'public',name),path.join(temp,'public',name));
+    for(const name of ['owned-offers.js','merchant-config.js','merchant-records.js','merchant-image-evidence.js'])await fs.copyFile(path.join(root,'public',name),path.join(temp,'public',name));
     await fs.writeFile(path.join(temp,'package.json'),' {"type":"module"}');
     await fs.symlink(await fs.realpath(path.join(root,'node_modules')),path.join(temp,'node_modules'),process.platform==='win32'?'junction':'dir');
     await fs.writeFile(path.join(temp,'config/accounts.json'),JSON.stringify({accounts:[{id:'melon',enabled:true}]}));

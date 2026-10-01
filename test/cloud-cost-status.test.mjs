@@ -51,3 +51,33 @@ test('access cooldown is reported truthfully, keeps prior references and never c
   assert.equal(result.verifiedReferences,1);assert.equal(result.attempted,0);
   assert.deepEqual(result.access,access);assert.equal(result.coverage.remaining,1);
 });
+
+import { publicProcurementItem } from './fixtures/procurement-reference.mjs';
+
+test('independent public procurement can pass while Xianyu remains in its own access cooldown',()=>{
+ const access={allowed:false,reason:'login_required',retryAt:new Date(now+3600000).toISOString()};
+ const result=cloudCostStatus({items:[publicProcurementItem(now)],login:{xianyuAccess:access},accounts:[{profileStatus:'live',scanStats:{procurementScanned:1,procurementVerifiedNew:1,procurementStatuses:{ok:1}}}]},now);
+ assert.equal(result.accepted,true);assert.equal(result.status,'verified');assert.equal(result.verifiedReferences,1);
+ assert.equal(result.attempted,1);assert.equal(result.newlyVerified,1);
+ assert.equal(result.sources.xianyu.status,'access_cooldown');assert.equal(result.sources.xianyu.accepted,false);
+ assert.equal(result.sources.xianyu.verifiedReferences,0);assert.deepEqual(result.sources.xianyu.access,access);
+ assert.equal(result.sources.public_cn.verifiedReferences,1);assert.equal(result.sources.public_cn.accepted,true);
+});
+
+test('public success does not hide incomplete overall inventory or turn a retry into a new reference',()=>{
+ const result=cloudCostStatus({items:[publicProcurementItem(now),{id:'still-pending'}],accounts:[{profileStatus:'live',scanStats:{procurementStatuses:{cached_verified:1}}}]},now);
+ assert.equal(result.status,'partial');assert.equal(result.accepted,false);assert.equal(result.newlyVerified,0);
+ assert.equal(result.coverage.total,2);assert.equal(result.coverage.reviewed,1);assert.equal(result.coverage.remaining,1);
+});
+
+test('public source errors, unverified cards and changed display amounts cannot pass overall acceptance',()=>{
+ const good=publicProcurementItem(now);
+ const failure=cloudCostStatus({items:[good],accounts:[{profileStatus:'live',scanStats:{procurementScanned:1,procurementStatuses:{unavailable:1}}}]},now);
+ assert.equal(failure.sources.public_cn.status,'source_failed');assert.equal(failure.accepted,false);
+ const unverified=publicProcurementItem(now);unverified.procurementSource.samples[0].priceSource='search_card';
+ assert.equal(cloudCostStatus({items:[unverified]},now).accepted,false);
+ const altered=publicProcurementItem(now);altered.averageCNY=1;
+ assert.equal(cloudCostStatus({items:[altered]},now).accepted,false);
+ const future=publicProcurementItem(now);future.procurementSource.checkedAt=new Date(now+3600000).toISOString();
+ assert.equal(cloudCostStatus({items:[future]},now).accepted,false);
+});

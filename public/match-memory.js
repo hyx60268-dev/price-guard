@@ -1,11 +1,11 @@
 // Shared browser/server implementation. Corrections only reject evidence; they
 // never force a match or bypass quantity, variant, availability or price checks.
 export const correctionKey=record=>`${record.accountId}:${record.itemId}:${record.platform}:${record.candidateId}`;
-export const candidateId=(platform,row)=>String(row?.id||String(row?.url||'').match(platform==='xianyu'?/[?&]id=(\d+)/:platform==='rakuma'?/item\.fril\.jp\/([^/?#]+)/:/\/item\/([^/?#]+)/)?.[1]||'');
+export const candidateId=(platform,row)=>String(row?.id||(platform==='procurement'?(row?.canonicalUrl||row?.url):'')||String(row?.url||'').match(platform==='xianyu'?/[?&]id=(\d+)/:platform==='rakuma'?/item\.fril\.jp\/([^/?#]+)/:/\/item\/([^/?#]+)/)?.[1]||'');
 export function mergeMatchCorrections(base={},incoming={}){
   const output={...base};
   for(const record of Object.values(incoming||{})){
-    if(!record||!record.accountId||!record.itemId||!record.candidateId||!['yahoo','rakuma','mercari','xianyu'].includes(record.platform))continue;
+    if(!record||!record.accountId||!record.itemId||!record.candidateId||!['yahoo','rakuma','mercari','xianyu','procurement'].includes(record.platform))continue;
     const time=Date.parse(record.updatedAt||'');if(!Number.isFinite(time))continue;
     const key=correctionKey(record),old=Date.parse(output[key]?.updatedAt||'');
     if(!Number.isFinite(old)||time>old)output[key]={...record};
@@ -37,6 +37,9 @@ export function invalidateCorrectedMatches(item,records={}){
   }
   if((item.xianyu?.samples||[]).some(row=>rejectedByMemory(records,item,'xianyu',row))){
     next={...next,averageCNY:null,costSource:'missing',xianyu:{...item.xianyu,status:'correction_pending',verification:null,averageCNY:null,samples:[]}};
+  }
+  if((item.procurementSource?.samples||[]).some(row=>rejectedByMemory(records,item,'procurement',row))){
+    next={...next,averageCNY:null,costSource:'missing',referenceProvider:null,procurementSource:{...item.procurementSource,status:'correction_pending',verification:null,averageCNY:null,samples:[]}};
   }
   return next;
 }

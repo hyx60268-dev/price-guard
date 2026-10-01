@@ -3,6 +3,7 @@ import { xianyuQueryFor } from './discovery.mjs';
 import { allowedMerchantPhotoSource } from '../../public/merchant-records.js';
 import { hasExplicitVariantMismatch,titleScore,normalize } from './rules.mjs';
 import { reviewedProductImages } from './reviewed-product-images.mjs';
+import { merchantImageSet,mergeMerchantImages } from '../../public/merchant-image-evidence.js';
 const decode=s=>String(s||'').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>');
 export function externalPublicUrl(value){
  try{const u=new URL(value);return allowedMerchantPhotoSource(value)&&!u.username&&!u.password&&!u.port&&!/^(?:localhost|.*\.localhost|.*\.local|\d+(?:\.\d+){3}|\[)/i.test(u.hostname)&&u.hostname.includes('.')}catch{return false}
@@ -25,7 +26,7 @@ const searchText=value=>decode(String(value||'').replace(/<!\[CDATA\[([\s\S]*?)\
 export function imageSearchRelevance(query='',result={}){
  // Search recall only: final variant and primary-image checks stay mandatory.
  const aliases=value=>xianyuQueryFor(value).replace(/Identity\s*V/gi,'第五人格').replace(/Edgar\s*Valden|Painter/gi,'画家').replace(/Dentist|歯医者/gi,'牙医').replace(/初期衣装/g,'初始服装').replace(/張凌赫/g,'张凌赫').replace(/コラボ/g,'联名').replace(/レッド/g,'红色').replace(/ギフトボックス(?:セット)?/g,'礼盒');
- const wanted=aliases(query).replace(/毛绒玩偶|ぬいぐるみ|plush(?:\s+toy)?|初始服装|中国限定|海外限定/gi,' ').replace(/AeroClip\s*2/gi,'AeroClip2');
+ const wanted=aliases(query).replace(/官方|官网|商品图|实拍|开箱|多角度|official|photos|unboxing/gi,' ').replace(/毛绒玩偶|ぬいぐるみ|plush(?:\s+toy)?|初始服装|中国限定|海外限定/gi,' ').replace(/AeroClip\s*2/gi,'AeroClip2');
  const candidate=aliases(result.title||'').replace(/AeroClip\s*2/gi,'AeroClip2');
  const models=wanted.match(/\b[a-z]+\d+[a-z\d]*\b/gi)||[];
  if(models.some(model=>!normalize(candidate).includes(normalize(model))))return 0;
@@ -86,24 +87,33 @@ export function externalProductImages(html=''){
  return [...new Map(photos.filter(p=>externalPublicUrl(p.url)).map(p=>[p.url,p])).values()].slice(0,12);
 }
 export async function readExternalImages(url,options){return externalProductImages(await publicHtml(url,options))}
-export function externalImageQueries(title=''){
+export function externalImageQueries(title='',purpose=''){
  const original=xianyuQueryFor(title);
  const localized=original.replace(/歯医者/g,'牙医').replace(/初期衣装/g,'初始服装').replace(/エドガー[・·\s]*ワルデン/g,'艾格 瓦尔登').replace(/張凌赫/g,'张凌赫').replace(/コラボ/g,'联名').replace(/レッド/g,'红色').replace(/ギフトボックス(?:セット)?/g,'礼盒');
- return [...new Set([localized,original])].filter(Boolean);
+ const suffix=purpose==='official'?' 官方 商品图':purpose==='physical'?' 实拍 开箱 多角度':'';
+ return [...new Set([localized,original])].filter(Boolean).map(q=>q+suffix);
+}
+export function externalImagePlan(item={}){
+ const set=merchantImageSet(item),queries=[];
+ // Search both gaps independently. Generic matching images cannot close either.
+ for(const purpose of [set.officialCount?null:'official',set.photoCount>=2?null:'physical'].filter(Boolean))for(const query of externalImageQueries(item.sourceTitle||item.title||'',purpose))queries.push({purpose,query});
+ return queries;
 }
 // Images and procurement are separate evidence paths. Each returned image is
 // checked against source artwork. Search thumbnails and prices are not costs.
 export async function inspectExternalImages(item,{deadline=Date.now()+60000,search=searchExternalImages,detail=readExternalImages,fingerprint=imageFingerprints}={}){
- const report={photos:[],status:'not_found',reason:'no_search_results',searches:0,pagesRead:0,imagesChecked:0,failures:[],searchResults:[]};
+ const report={photos:[],status:'not_found',reason:'no_search_results',searches:0,pagesRead:0,imagesChecked:0,failures:[],searchResults:[],candidates:[]};
  const fail=(stage,url,error)=>report.failures.push({stage,host:url?new URL(url).hostname:'',reason:String(error?.message||error).slice(0,160)});
  if(Date.now()>=deadline)return {...report,status:'deferred',reason:'deadline'};
- const reviewed=reviewedProductImages(item);if(reviewed.length)return {...report,photos:reviewed,status:'verified',reason:'reviewed_source'};
- const sources=(item.images||[item.image]).filter(Boolean).slice(0,3);if(!sources.length)return {...report,status:'unavailable',reason:'source_image_missing'};
+ const reviewed=reviewedProductImages(item);report.photos=mergeMerchantImages(item.webImages||[],item.xianyuImages||[],reviewed);
+ const complete=()=>merchantImageSet({webImages:report.photos}).complete;
+ if(complete())return {...report,status:'verified',reason:'reviewed_complete_set'};
+ const sources=(item.sourceImages||item.images||[item.image]).filter(Boolean).slice(0,3);if(!sources.length)return {...report,status:'unavailable',reason:'source_image_missing'};
  const own=(await Promise.all(sources.map(async url=>{try{return await fingerprint(url)}catch(e){fail('source_image',url,e);return null}}))).filter(Boolean);
  if(!own.length)return {...report,status:'unavailable',reason:'source_image_unavailable'};
  const seed=/Anker/i.test(item.title)&&/AeroClip\s*2/i.test(item.title)&&/張凌赫/.test(item.title)?[{url:'https://detail.youzan.com/show/goods?alias=2osy35s5abbdhtd&from_source=gbox_seo'}]:[];
  const visited=new Set();let hadCandidates=false;
- async function check(candidates){for(const candidate of candidates){
+ async function check(candidates,purpose='product'){for(const candidate of candidates){
   if(Date.now()>=deadline)break;if(!externalPublicUrl(candidate.url)||visited.has(candidate.url))continue;
   visited.add(candidate.url);hadCandidates=true;
   let gallery;try{gallery=await detail(candidate.url,{deadline});report.pagesRead++}catch(e){fail('detail',candidate.url,e);continue}
@@ -113,22 +123,24 @@ export async function inspectExternalImages(item,{deadline=Date.now()+60000,sear
    let fp;try{fp=await fingerprint(p.url)}catch(e){fail('image',p.url,e);continue}
    if(!fp){fail('image',p.url,'image_download_unavailable');continue}report.imagesChecked++;
    const score=Math.max(-1,...own.map(o=>primaryProductSimilarity(o,fp)??-1));
+   if(report.candidates.length<24)report.candidates.push({url:p.url,sourceUrl:candidate.url,title:p.title||candidate.title||'',purpose,primaryImageScore:score,status:score>=.98?'same_image_unclassified':'different_view_or_product_unconfirmed'});
    if(score<.98)continue;
    report.photos.push({url:p.url,sourceUrl:candidate.url,verification:'external_detail_image_match',primaryImageScore:score,kind:'product_image'});
   }
-  if(report.photos.length)break;
+  if(complete())break;
  }}
  await check(seed);
- for(const query of externalImageQueries(item.title))for(const provider of ['bing','bing_web','duckduckgo']){
-  if(report.photos.length||Date.now()>=deadline)break;
+ for(const {query,purpose} of externalImagePlan({...item,webImages:report.photos}))for(const provider of ['bing','bing_web','duckduckgo']){
+  if(complete()||Date.now()>=deadline)break;
   report.searches++;let candidates=[];
   try{const found=await search(query,{provider,deadline});candidates=Array.isArray(found)?found:found.candidates||[];
-   report.searchResults.push({provider,query,returned:found.returned??candidates.length,rejected:found.rejected||0,accepted:candidates.length});
+   report.searchResults.push({provider,query,purpose,returned:found.returned??candidates.length,rejected:found.rejected||0,accepted:candidates.length});
   }catch(e){fail('search',provider.startsWith('bing')?'https://www.bing.com':'https://duckduckgo.com',e)}
-  await check(candidates);
+  await check(candidates,purpose);
  }
- report.photos=[...new Map(report.photos.map(p=>[p.url,p])).values()].slice(0,8);
- if(report.photos.length){report.status='verified';report.reason='image_match'}
+ report.photos=mergeMerchantImages(report.photos).slice(0,20);
+ if(complete()){report.status='verified';report.reason='complete_image_set'}
+ else if(report.photos.length){report.status='partial';report.reason='image_set_incomplete'}
  else if(Date.now()>=deadline){report.status='deferred';report.reason='deadline'}
  else if(report.failures.length){report.status='error';report.reason=report.pagesRead?'image_or_partial_source_failed':hadCandidates?'detail_unavailable':'search_unavailable'}
  else report.reason=report.imagesChecked?'no_verified_match':hadCandidates?'no_product_gallery':'no_search_results';

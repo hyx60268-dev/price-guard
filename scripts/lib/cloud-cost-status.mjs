@@ -1,17 +1,11 @@
-import { XIANYU_VERIFICATION, verifiedCostEvidence } from './xianyu-evidence.mjs';
+import { XIANYU_VERIFICATION } from './xianyu-evidence.mjs';
+import { chooseProcurementReference, verifiedXianyuReference, verifiedPublicProcurementCache, hasCompletedPublicProcurementReview } from './procurement-reference.mjs';
 
 // Publication, a loaded login file, and search cards are not cost acceptance.
 // Count only a fresh reference backed by the current detail-evidence contract.
-export function cloudCostStatus(result = {}, now = Date.now()) {
+function xianyuCloudCostStatus(result = {}, now = Date.now()) {
   const hours = Number(result.settings?.xianyuFreshHours) || 168;
-  const verified = (result.items || []).filter(item => {
-    const cost = item.xianyu || {}, time = Date.parse(cost.checkedAt || '');
-    const evidence = verifiedCostEvidence(cost.samples);
-    return cost.verification === XIANYU_VERIFICATION && evidence.ready &&
-      Number.isFinite(item.averageCNY) && item.averageCNY > 0 &&
-      Math.abs(item.averageCNY - evidence.median) < .01 &&
-      Number.isFinite(time) && time <= now + 300000 && now - time < hours * 3600000;
-  });
+  const verified=(result.items||[]).filter(item=>verifiedXianyuReference(item,{now,xianyuFreshHours:hours}));
   const statuses = {}, reasons = {};
   let attempted = 0, newlyVerified = 0;
   for (const account of result.accounts || []) {
@@ -48,4 +42,45 @@ export function cloudCostStatus(result = {}, now = Date.now()) {
       no_verified_cost: '本轮已检查，但未取得合格的自动成本',
       not_verified: '尚无已核验的云端自动成本'
     }[status] };
+}
+
+// Keep access failures attached to their provider. An unavailable Xianyu session
+// must not suppress independently verified procurement details from other stores.
+export function cloudCostStatus(result={},now=Date.now()){
+ const xianyu=xianyuCloudCostStatus(result,now),inventory=result.items||[];
+ const verified=inventory.filter(item=>verifiedPublicProcurementCache(item,{now}));
+ const reviewed=inventory.filter(item=>hasCompletedPublicProcurementReview(item,{now})).length;
+ const profilesComplete=(result.accounts||[]).every(account=>account.profileStatus==='live');
+ const coverage={total:inventory.length,reviewed,remaining:inventory.length-reviewed,complete:inventory.length>0&&reviewed===inventory.length&&profilesComplete};
+ const statuses={},reasons={};let attempted=0,newlyVerified=0;
+ for(const account of result.accounts||[]){
+  const scan=account.scanStats||{};
+  attempted+=Number(scan.procurementScanned)||0;newlyVerified+=Number(scan.procurementVerifiedNew)||0;
+  for(const [key,count] of Object.entries(scan.procurementStatuses||{}))statuses[key]=(statuses[key]||0)+(Number(count)||0);
+  for(const [key,count] of Object.entries(scan.procurementRejectedReasons||{}))reasons[key]=(reasons[key]||0)+(Number(count)||0);
+ }
+ const failed=Boolean(statuses.unavailable||statuses.error||statuses.blocked||statuses.login_required);
+ const publicStatus=failed?'source_failed':verified.length?(coverage.complete?'verified':'partial'):attempted?'no_verified_cost':'not_verified';
+ const publicSource={execution:'cloud',status:publicStatus,accepted:publicStatus==='verified',attempted,newlyVerified,
+  verifiedReferences:verified.length,coverage,statuses,reasons,
+  message:failed?'国内采购渠道本轮访问未完成':verified.length?'已取得国内采购渠道同款、运费与独立卖家证据':attempted?'已检查国内采购渠道，尚无合格参考':'国内采购渠道尚无已核验参考'};
+ const sources={xianyu,public_cn:publicSource};
+ if(!verified.length)return {...xianyu,attempted:xianyu.attempted+attempted,newlyVerified:xianyu.newlyVerified+newlyVerified,sources};
+ const hours=Number(result.settings?.xianyuFreshHours)||168;
+ const combinedReviewed=inventory.filter(item=>{
+  const cost=item.xianyu||{},time=Date.parse(cost.reviewedAt||'');
+  const xianyuReviewed=cost.reviewVersion===XIANYU_VERIFICATION&&Number.isFinite(time)&&time<=now+300000&&now-time<hours*3600000;
+  return xianyuReviewed||hasCompletedPublicProcurementReview(item,{now});
+ }).length;
+ const combinedCoverage={total:inventory.length,reviewed:combinedReviewed,remaining:inventory.length-combinedReviewed,
+  complete:inventory.length>0&&combinedReviewed===inventory.length&&profilesComplete};
+ const references=inventory.filter(item=>{
+  const selected=chooseProcurementReference(item,{now,xianyuFreshHours:hours});
+  return selected&&Number.isFinite(item.averageCNY)&&Math.abs(selected.averageCNY-item.averageCNY)<.01;
+ }).length;
+ const status=references?(combinedCoverage.complete&&!failed?'verified':'partial'):'no_verified_cost';
+ return {...xianyu,status,accepted:status==='verified',attempted:xianyu.attempted+attempted,
+  newlyVerified:xianyu.newlyVerified+newlyVerified,verifiedReferences:references,coverage:combinedCoverage,sources,
+  message:status==='verified'?'已取得可核验的自动采购参考；各渠道访问状态单独显示':
+   status==='partial'?'已有可用采购参考，其他商品或渠道尚未完成核验':'采集参考与商品展示金额不一致，自动成本未通过验收'};
 }
