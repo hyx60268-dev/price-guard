@@ -133,5 +133,7 @@ test('the real Dentist description keeps remaining stock separate from the quant
   }
  }
  const set=merchantImageSet({webImages:reviewedProductImages({...item,description:real})});assert.equal(set.photoCount,3);assert.equal(set.officialCount,0);assert.equal(set.status,'partial');
- for(const description of ['残り2点。2点セット','残り2点、2点セット','在庫2点です。2点セット','库存2件，2只合售','remaining 2点。2体セット','残り2点。サイズ20cm','残り2点。衣装のみです。'])assert.deepEqual(reviewedProductImages({...item,description}),[],description);
+ for(const description of ['残り2点。2点セット','残り2点、2点セット','在庫2点です。2点セット','库存2件，2只合售','remaining 2点。2体セット','残り2点。サイズ20cm','残り2点。衣装のみです。','残り2点まとめて販売します。','在庫2点まとめて出品します。','残り2点をまとめて販売します。','在庫2点のまとめ売りです。','残り2点、まとめて販売します。','在庫2点出品します。','库存2件合售']){
+  for(const fields of [{description},{sourceDescription:description},{sourceDetail:{description}},{yahoo:{ownDescription:description}}]){const product={...item,...fields};assert.deepEqual(reviewedProductImages(product),[],description);assert.deepEqual(reconcileReviewedProductImages(product,known),[],description);}
+ }
 });

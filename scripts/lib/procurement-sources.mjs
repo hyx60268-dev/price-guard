@@ -106,14 +106,15 @@ export function readYouzanPublicDOM(){
  const root=[...document.querySelectorAll('.sku-container')].find(visible),active=root?[...root.querySelectorAll('.sku-row__item--active .sku-row__item-name-text')].map(n=>n.innerText.trim()):[];
  const priceText=root?.querySelector('.sku__price-num')?.innerText?.trim()||'',stock=Number((root?.querySelector('.sku-header')?.innerText||'').match(/剩余\s*(\d+)\s*件/)?.[1]);
  const header=root?.querySelector('.sku-header')?.innerText||'';
+ const options=root?[...root.querySelectorAll('.sku-row__item-name-text')].map(n=>({label:n.innerText.trim(),active:Boolean(n.closest('.sku-row__item--active')),disabled:Boolean(n.closest('.sku-row__item--disabled,[aria-disabled="true"],[disabled]'))})):[];
  const rowPrices=root?[...root.querySelectorAll('.sku-row__item--active .sku-row__item-price')].map(n=>{const value=(n.innerText||'').replace(/[¥￥,\s]/g,'');return /^\d+(?:\.\d{1,2})?$/.test(value)?Number(value):null}):[];
- return {state,blocked,login,mobile:document.querySelector('meta[name="mobile-agent"]')?.content?.match(/url=(.*)$/)?.[1],selected:{visible:Boolean(root),labels:active,rowPrices,price:/^\d+(?:\.\d{1,2})?$/.test(priceText)?Number(priceText):null,stock,quantity:Number(root?.querySelector('input')?.value||0),conditionedPrice:/券后|会员专享|新人专享|每期|定金|订金|尾款/.test(header)}};
+ return {state,blocked,login,mobile:document.querySelector('meta[name="mobile-agent"]')?.content?.match(/url=(.*)$/)?.[1],selected:{visible:Boolean(root),labels:active,options,rowPrices,price:/^\d+(?:\.\d{1,2})?$/.test(priceText)?Number(priceText):null,stock,quantity:Number(root?.querySelector('input')?.value||0),conditionedPrice:/券后|会员专享|新人专享|每期|定金|订金|尾款/.test(header)}};
 }
 // Require consecutive observations of the selected public SKU. This does not
 // retry access challenges, change authentication, or dismiss a login surface.
 export async function settleYouzanSelection(page,chosen,{deadline=Date.now()+2500}={}){
  const expected=chosen.options.map(o=>o.value);
- const diagnostic=dom=>({stage:'selected_sku',expectedLabels:expected,visibleLabels:dom.selected?.labels||[],visiblePrice:dom.selected?.price??null,visibleStock:Number.isFinite(dom.selected?.stock)?dom.selected.stock:null,quantity:dom.selected?.quantity??null,visibleRowPrices:dom.selected?.rowPrices||[]});
+ const diagnostic=dom=>({stage:'selected_sku',expectedLabels:expected,visibleLabels:dom.selected?.labels||[],visiblePrice:dom.selected?.price??null,visibleStock:Number.isFinite(dom.selected?.stock)?dom.selected.stock:null,quantity:dom.selected?.quantity??null,visibleRowPrices:dom.selected?.rowPrices||[],visibleOptions:(dom.selected?.options||[]).slice(0,8).map(o=>({label:String(o.label).slice(0,100),active:o.active===true,disabled:o.disabled===true}))});
  const check=dom=>Boolean(dom.selected?.visible)&&JSON.stringify(dom.selected.labels)===JSON.stringify(expected)&&dom.selected.quantity===1&&dom.selected.price>0&&dom.selected.stock===chosen.stock.stockNum&&(!dom.selected.rowPrices?.length||expected.length!==1||dom.selected.rowPrices.length===1&&dom.selected.rowPrices[0]===dom.selected.price);
  let previous=null;
  for(let attempt=0;attempt<3;attempt++){
@@ -122,6 +123,35 @@ export async function settleYouzanSelection(page,chosen,{deadline=Date.now()+250
   if(previous&&check(dom)&&check(previous)&&dom.selected.price===previous.selected.price&&dom.selected.stock===previous.selected.stock)return {ok:true,dom};
   previous=dom;if(attempt<2&&Date.now()<deadline)await page.waitForTimeout(Math.min(attempt===0?400:600,Math.max(1,deadline-Date.now())));else break;
  }return {ok:false,status:'incomplete',reason:'selected_sku_unsettled',diagnostic:diagnostic(previous||{})};
+}
+// Opening the sheet can asynchronously apply its default option. Observe first:
+// clicking an option from a stale empty selection can toggle the default off.
+export async function ensureYouzanSelection(page,chosen,{deadline=Date.now()+15000}={}){
+ let settled=await settleYouzanSelection(page,chosen,{deadline});
+ if(settled.ok||settled.status==='unavailable')return settled;
+ let selectionAttempts=0;
+ for(let attempt=0;attempt<2&&Date.now()<deadline;attempt++){
+  let clicked=false;
+  for(const option of chosen.options){
+   const before=await page.evaluate(readYouzanPublicDOM);
+   if(before.blocked||before.login)return {...settled,status:'unavailable',reason:before.blocked?'source_challenge':'source_login_required',diagnostic:{...settled.diagnostic,selectionAttempts}};
+   const row=before.selected?.options?.find(row=>row.label===option.value);
+   if(!before.selected?.visible||!row||row.disabled)return {...settled,diagnostic:{...settled.diagnostic,selectionAttempts,selectionAction:'target_option_not_available'}};
+   if(row.active)continue;
+   // Resolve an inactive target at action time. If it becomes selected while
+   // Playwright waits, a timeout is re-observed, not converted into a blind click.
+   const exact=new RegExp('^'+option.value.replace(/[-/\\^$*+?.()|[\]{}]/g,'\\$&')+'$');
+   selectionAttempts++;clicked=true;
+   try{await page.locator('.sku-container:visible .sku-row__item-name-text:not(.sku-row__item--active *)').filter({hasText:exact}).click({timeout:Math.max(1,Math.min(2500,deadline-Date.now()))});}
+   catch(error){if(error.name!=='TimeoutError'&&!/Timeout.*exceeded/i.test(error.message||''))throw error;}
+  }
+  settled=await settleYouzanSelection(page,chosen,{deadline});
+  if(settled.ok||settled.status==='unavailable')return settled.ok?settled:{...settled,diagnostic:{...settled.diagnostic,selectionAttempts}};
+  // One corrective selection is allowed only for an explicitly empty selected
+  // state. Never reselect a proven option to paper over a price/stock mismatch.
+  if(!clicked||settled.diagnostic?.visibleLabels?.length)break;
+ }
+ return {...settled,diagnostic:{...settled.diagnostic,selectionAttempts}};
 }
 export async function readPublicProcurementDetail(url,{item,context,getContext,deadline=Date.now()+45000,html=publicHtml}={}){
  const source=procurementSource(url);if(!source)return {status:'unsupported',reason:'unsupported_source'};
@@ -140,14 +170,7 @@ export async function readPublicProcurementDetail(url,{item,context,getContext,d
   const chosen=chooseYouzanSku(dom.state?.goodsData,item);if(!chosen.ok)return {status:'incomplete',reason:chosen.reason};
   const props=dom.state?.goodsData?.skuInfo?.props||[];
   if(!dom.selected.visible&&props.length)await page.getByText(props[0].k,{exact:true}).filter({visible:true}).first().click({timeout:remaining()});
-  for(const option of chosen.options){const active=await page.locator('.sku-container:visible .sku-row__item--active .sku-row__item-name-text').allTextContents();if(!active.some(v=>v.trim()===option.value))await page.locator('.sku-container:visible .sku-row__item-name-text').filter({hasText:option.value}).click({timeout:remaining()});}
-  await page.waitForFunction(labels=>{
-   const visible=node=>{if(!node)return false;for(let n=node;n;n=n.parentElement){const style=getComputedStyle(n);if(n.hidden||style.display==='none'||style.visibility==='hidden'||style.opacity==='0')return false}const rect=node.getBoundingClientRect();return rect.width>0&&rect.height>0};
-   if([...document.querySelectorAll('iframe,form')].some(n=>visible(n)&&/captcha|challenge|baxia|\/punish|login/i.test((n.getAttribute('src')||'')+' '+n.id)))return true;
-   const root=[...document.querySelectorAll('.sku-container')].find(visible);
-   return root&&labels.every(label=>[...root.querySelectorAll('.sku-row__item--active .sku-row__item-name-text')].some(n=>n.innerText.trim()===label));
-  },chosen.options.map(o=>o.value),{timeout:Math.min(8000,remaining())}).catch(()=>{});
-  const settled=await settleYouzanSelection(page,chosen,{deadline});if(!settled.ok)return settled;dom=settled.dom;
+  const settled=await ensureYouzanSelection(page,chosen,{deadline});if(!settled.ok)return settled;dom=settled.dom;
   const variant=dom.selected.labels.join(' / ');return youzanQuoteFromPublicState(dom.state,item,url,{...dom.selected,variant,skuId:variant===chosen.selectedVariant?chosen.skuId:null});
  }finally{await page.close().catch(()=>{})}
 }

@@ -36,9 +36,10 @@ function dentistContentCompatible(item){
    if(size){const cm=/^(?:mm|ミリ|毫米)$/i.test(size[2])?Number(size[1])/10:Number(size[1]);if(cm!==10)return false;}
    // A stock notice states how many units the seller has, not how many this
    // offer includes. Remove only that count, keeping any adjacent sale count.
-   // In particular, "残り2点。2点セット" must still reject the actual set.
-   const saleLine=line.replace(/(?:残り(?:在庫)?|残数|在庫(?:数)?|库存|庫存|剩余|剩餘|remaining(?:\s+stock)?|stock(?:\s+remaining)?)\s*(?:は|が|:)?\s*(?:あと|残り|仅|僅|only)?\s*(?:\d+|[一二三四五六七八九])\s*(?:体|個|点|件|只|套|items?\b|pieces?\b|pcs?\b)(?!\s*(?:セット|まとめ売り|合售))/gi,' ');
-   const quantity=saleLine.match(/(?:^|ぬいぐるみ|娃娃|玩偶|商品内容|出品内容|セット内容|数量|合計|計|共)[^\d\n]{0,24}(\d+|[二三四五六七八九])\s*(?:体|個|点|件|只|套|セット)(?=\s*(?:セット|まとめ|販売|出品|売り|合售|です|になります|となります|[、,.!！]|$))/i);
+   // A stock count followed by まとめて販売/出品 is the actual sale
+   // quantity, so keep it; also keep a separate "残り2点。2点セット" count.
+   const saleLine=line.replace(/(?:残り(?:在庫)?|残数|在庫(?:数)?|库存|庫存|剩余|剩餘|remaining(?:\s+stock)?|stock(?:\s+remaining)?)\s*(?:は|が|:)?\s*(?:あと|残り|仅|僅|only)?\s*(?:\d+|[一二三四五六七八九])\s*(?:体|個|点|件|只|套|items?\b|pieces?\b|pcs?\b)(?!\s*(?:[、,，]\s*)?(?:を|の)?\s*(?:セット|まとめ|販売|出品|売り|合售))/gi,' ');
+   const quantity=saleLine.match(/(?:^|ぬいぐるみ|娃娃|玩偶|商品内容|出品内容|セット内容|数量|合計|計|共)[^\d\n]{0,24}(\d+|[二三四五六七八九])\s*(?:体|個|点|件|只|套|セット)(?=\s*(?:を|の)?\s*(?:セット|まとめ|販売|出品|売り|合售|です|になります|となります|[、,.!！]|$))/i);
    if(quantity&&(Number(quantity[1])>1||/^[二三四五六七八九]$/.test(quantity[1])))return false;
   }
  }

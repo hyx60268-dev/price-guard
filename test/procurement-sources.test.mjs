@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { parseImageSearchResults } from '../scripts/lib/external-images.mjs';
-import { PUBLIC_PROCUREMENT_VERIFICATION,procurementSource,canonicalProcurementUrl,embeddedPublicJSON,procurementSellerIdentity,chooseYouzanSku,youzanQuoteFromPublicState,parsePublicProcurementDetail,readYouzanPublicDOM,readPublicProcurementDetail,settleYouzanSelection,verifiedPublicCostEvidence,alternativeProcurementCost } from '../scripts/lib/procurement-sources.mjs';
+import { PUBLIC_PROCUREMENT_VERIFICATION,procurementSource,canonicalProcurementUrl,embeddedPublicJSON,procurementSellerIdentity,chooseYouzanSku,youzanQuoteFromPublicState,parsePublicProcurementDetail,readYouzanPublicDOM,readPublicProcurementDetail,settleYouzanSelection,ensureYouzanSelection,verifiedPublicCostEvidence,alternativeProcurementCost } from '../scripts/lib/procurement-sources.mjs';
 const url='https://detail.youzan.com/show/goods?alias=2osy35s5abbdhtd';
 const title='Anker AeroClip 2 张凌赫 联名 礼盒 白色';
 const target={accountId:'owner',id:'z1',title,image:'https://images.example.org/own.jpg',description:title,condition:''};
@@ -133,7 +133,7 @@ test('ordinary stores selling Anker stay independent and raw old quote identity 
 });
 
 
-test('Youzan detail reader ignores hidden stale SKU sheets in both waits and final quote',async()=>{
+test('Youzan detail reader ignores hidden stale SKU sheets and preserves the visible preselected SKU',async()=>{
  const html='<script>window._global = '+JSON.stringify(youzan)+';</script><div class="goods-title__main-text">'+title+'</div><div style="display:none"><div class="sku-container"><div class="sku-row__item--active"><span class="sku-row__item-name-text">红色旧弹层</span></div></div></div><div class="sku-container"><div class="sku-header">剩余 84 件</div><div class="sku__price-num">999</div><div class="sku-row__item--active"><span class="sku-row__item-name-text">'+chosen.variant+'</span><span class="sku-row__item-price">¥999</span></div><input value="1"></div>';
  const dom=new JSDOM(html,{runScripts:'outside-only'});
  Object.defineProperty(dom.window.HTMLElement.prototype,'innerText',{get(){return this.textContent}});
@@ -141,11 +141,11 @@ test('Youzan detail reader ignores hidden stale SKU sheets in both waits and fin
  let closed=false,waits=0;
  const page={goto:async()=>{},url:()=>url,evaluate:async fn=>dom.window.eval('('+fn.toString()+')()'),locator:selector=>{assert.ok(selector.includes(':visible'));return {allTextContents:async()=>[chosen.variant]};},waitForFunction:async(fn,arg)=>{assert.equal(Boolean(dom.window.eval('('+fn.toString()+')('+JSON.stringify(arg)+')')),true);waits++;},waitForTimeout:async()=>{},close:async()=>{closed=true}};
  const result=await readPublicProcurementDetail(url,{item,context:{newPage:async()=>page}});
- assert.equal(result.status,'quoted');assert.equal(result.unitCNY,999);assert.equal(result.skuId,'15099721490');assert.equal(waits,2);assert.equal(closed,true);
+ assert.equal(result.status,'quoted');assert.equal(result.unitCNY,999);assert.equal(result.skuId,'15099721490');assert.equal(waits,1);assert.equal(closed,true);
  dom.window.close();
 });
 
-const selectionSnapshot=(patch={})=>({blocked:false,login:false,selected:{visible:true,labels:[chosen.variant],rowPrices:[999],price:999,stock:84,quantity:1,...patch}});
+const selectionSnapshot=(patch={})=>({blocked:false,login:false,selected:{visible:true,labels:[chosen.variant],rowPrices:[999],price:999,stock:84,quantity:1,options:[{label:chosen.variant,active:true,disabled:false}],...patch}});
 function observationPage(snapshots){let reads=0,waits=0;return {evaluate:async()=>structuredClone(snapshots[Math.min(reads++,snapshots.length-1)]),waitForTimeout:async()=>{waits++;},counts:()=>({reads,waits})};}
 test('Youzan selected quote waits for dynamic price to agree with selected row and stabilize',async()=>{
  const page=observationPage([selectionSnapshot({price:1199}),selectionSnapshot(),selectionSnapshot()]);
@@ -157,7 +157,7 @@ test('Youzan unsettled or mismatched SKU price returns only safe public diagnost
  for(const snapshots of [[selectionSnapshot({price:1199})],[selectionSnapshot({price:999,rowPrices:[]}),selectionSnapshot({price:1099,rowPrices:[]}),selectionSnapshot({price:1199,rowPrices:[]})],[selectionSnapshot({labels:['红色'],stock:0})]]){
   const page=observationPage(snapshots),result=await settleYouzanSelection(page,chooseYouzanSku(youzan.goodsData,item));
   assert.equal(result.ok,false);assert.equal(result.reason,'selected_sku_unsettled');assert.equal(result.status,'incomplete');
-  assert.deepEqual(Object.keys(result.diagnostic).sort(),['stage','expectedLabels','visibleLabels','visiblePrice','visibleStock','quantity','visibleRowPrices'].sort());
+  assert.deepEqual(Object.keys(result.diagnostic).sort(),['stage','expectedLabels','visibleLabels','visiblePrice','visibleStock','quantity','visibleRowPrices','visibleOptions'].sort());
   assert.deepEqual(result.diagnostic.expectedLabels,[chosen.variant]);assert.equal(page.counts().reads,3);
  }
 });
@@ -198,4 +198,55 @@ test('missing target and search barriers retain bounded diagnostics without raw 
  const result=await alternativeProcurementCost(subject,{fingerprint:async()=>fp,search:async()=>{throw Error('search_challenge https://example.test/login?token=secret <html>token=secret</html>')}});
  assert.equal(result.status,'unavailable');assert.equal(result.reason,'source_unavailable');assert.equal(result.searched,2);assert.equal(result.searchResults.length,2);assert.equal(result.diagnostics.length,2);assert.ok(result.searchResults.every(r=>r.error.startsWith('search_challenge')));
  const output=JSON.stringify(result.searchResults)+JSON.stringify(result.diagnostics);assert.equal(output.includes('secret'),false);assert.equal(output.includes('/login'),false);assert.equal(output.includes('<html>'),false);assert.ok(result.diagnostics.every(d=>d.reason.length<=160));
+});
+
+
+const emptySelection=()=>selectionSnapshot({labels:[],rowPrices:[],options:[{label:chosen.variant,active:false,disabled:false}]});
+test('Youzan asynchronous default selection settles without toggling the active white option off',async()=>{
+ const page=observationPage([emptySelection(),selectionSnapshot(),selectionSnapshot()]);
+ page.locator=()=>{throw Error('already selected default must never be clicked')};
+ const result=await ensureYouzanSelection(page,chooseYouzanSku(youzan.goodsData,item));
+ assert.equal(result.ok,true);assert.equal(result.dom.selected.price,999);assert.deepEqual(result.dom.selected.labels,[chosen.variant]);assert.deepEqual(page.counts(),{reads:3,waits:2});
+});
+
+test('Youzan explicit selection targets only an inactive exact option and then requires stable evidence',async()=>{
+ let snapshot=emptySelection(),clicks=0;
+ const page={evaluate:async()=>structuredClone(snapshot),waitForTimeout:async()=>{},locator:selector=>{
+  assert.equal(selector,'.sku-container:visible .sku-row__item-name-text:not(.sku-row__item--active *)');
+  const dom=new JSDOM('<div class="sku-container"><div class="sku-row__item--active"><span class="sku-row__item-name-text">red</span></div><div><span class="sku-row__item-name-text">white</span></div></div>');
+  assert.deepEqual([...dom.window.document.querySelectorAll(selector.replace(':visible',''))].map(n=>n.textContent),['white']);dom.window.close();
+  return {filter:({hasText})=>{assert.ok(hasText.test(chosen.variant));assert.equal(hasText.test(chosen.variant+' extra'),false);return {click:async()=>{clicks++;snapshot=selectionSnapshot()}}}};
+ }};
+ const result=await ensureYouzanSelection(page,chooseYouzanSku(youzan.goodsData,item));assert.equal(result.ok,true);assert.equal(clicks,1);
+});
+
+test('Youzan default selected between observation and action is re-observed without a blind fallback click',async()=>{
+ let snapshot=emptySelection(),attempts=0;
+ const page={evaluate:async()=>structuredClone(snapshot),waitForTimeout:async()=>{},locator:()=>({filter:()=>({click:async()=>{attempts++;snapshot=selectionSnapshot();throw Object.assign(Error('inactive selector timeout'),{name:'TimeoutError'})}})})};
+ const result=await ensureYouzanSelection(page,chooseYouzanSku(youzan.goodsData,item));assert.equal(result.ok,true);assert.equal(attempts,1);
+});
+
+test('Youzan allows only one corrective option selection for an explicitly empty state',async()=>{
+ for(const eventuallySelected of [true,false]){
+  let snapshot=emptySelection(),clicks=0;
+  const page={evaluate:async()=>structuredClone(snapshot),waitForTimeout:async()=>{},locator:()=>({filter:()=>({click:async()=>{clicks++;if(eventuallySelected&&clicks===2)snapshot=selectionSnapshot()}})})};
+  const result=await ensureYouzanSelection(page,chooseYouzanSku(youzan.goodsData,item));assert.equal(result.ok,eventuallySelected);assert.equal(clicks,2);
+  if(!eventuallySelected){assert.equal(result.reason,'selected_sku_unsettled');assert.equal(result.diagnostic.selectionAttempts,2);}
+ }
+});
+
+test('Youzan selected price or stock mismatch and disabled options never trigger repeat clicks',async()=>{
+ for(const snapshot of [selectionSnapshot({price:1199}),selectionSnapshot({stock:83}),emptySelection()]){
+  if(!snapshot.selected.labels.length)snapshot.selected.options[0].disabled=true;
+  const page=observationPage([snapshot]);page.locator=()=>{throw Error('must not click proven or disabled option')};
+  const result=await ensureYouzanSelection(page,chooseYouzanSku(youzan.goodsData,item));assert.equal(result.ok,false);assert.equal(result.reason,'selected_sku_unsettled');assert.equal(result.diagnostic.selectionAttempts,0);
+ }
+});
+
+test('Youzan access barrier appearing before a spec click stops immediately without re-observation or interaction',async()=>{
+ for(const barrier of ['blocked','login']){
+  const page=observationPage([emptySelection(),emptySelection(),emptySelection(),{...emptySelection(),[barrier]:true},selectionSnapshot()]);
+  page.locator=()=>{throw Error('must not interact after an access barrier')};
+  const result=await ensureYouzanSelection(page,chooseYouzanSku(youzan.goodsData,item));assert.equal(result.ok,false);assert.equal(result.status,'unavailable');assert.equal(result.reason,barrier==='blocked'?'source_challenge':'source_login_required');assert.equal(page.counts().reads,4);
+ }
 });
