@@ -22,7 +22,7 @@ for(const p of ['state','public/data','.auth'])await fs.mkdir(path.join(root,p),
 let previous={};try{previous=JSON.parse(decrypt(await fs.readFile(path.join(root,'state/discovery.json.enc')),password))}catch(e){if(e.code!=='ENOENT')throw e}
 let dashboard={};try{dashboard=JSON.parse(decrypt(await fs.readFile(path.join(root,'state/latest.json.enc')),password))}catch(e){if(e.code!=='ENOENT')throw e}
 cfg.merchants=mergeMerchantConfigs((cfg.merchants||[]).map(raw=>({...merchantProfile(raw),enabled:true})),dashboard.merchantMonitors||[]).filter(m=>m.enabled);
-const monitorVersion=15;
+const monitorVersion=16;
 const configDigest=crypto.createHash('sha256').update(JSON.stringify({cfg,monitorVersion})).digest('hex');
 if(process.env.MERCHANT_MONITOR_IF_DUE==='1'&&previous.mode==='merchant_monitor'&&previous.configDigest===configDigest&&Date.now()-Date.parse(previous.checkedAt||'')<merchantRetryDelay(previous)){console.log('商家监控未到下次更新时间，保留已发布记录');process.exit(0)}
 const merchants=[...new Map((cfg.merchants||[]).map(raw=>{const m=merchantProfile(raw);return [m.key,m]})).values()];
