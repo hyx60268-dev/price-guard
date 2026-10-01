@@ -1,0 +1,23 @@
+name: 站外找图搜索实测
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/lib/external-images.mjs
+      - scripts/prove-image-search.mjs
+      - .github/workflows/image-source-proof.yml
+permissions:
+  contents: read
+jobs:
+  public-search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: 核对真实搜索是否返回相关商品
+        run: node scripts/prove-image-search.mjs

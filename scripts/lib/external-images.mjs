@@ -1,7 +1,7 @@
 import { imageFingerprints,primaryProductSimilarity } from './image.mjs';
 import { xianyuQueryFor } from './discovery.mjs';
 import { allowedMerchantPhotoSource } from '../../public/merchant-records.js';
-import { hasExplicitVariantMismatch } from './rules.mjs';
+import { hasExplicitVariantMismatch,titleScore,normalize } from './rules.mjs';
 import { reviewedProductImages } from './reviewed-product-images.mjs';
 const decode=s=>String(s||'').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>');
 export function externalPublicUrl(value){
@@ -21,12 +21,28 @@ export async function publicHtml(url,{deadline=Infinity,request=fetch}={}){
  }
  throw Error('公开来源跳转过多');
 }
+const searchText=value=>decode(String(value||'').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,'$1')).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
+export function imageSearchRelevance(query='',result={}){
+ // Search recall only: final variant and primary-image checks stay mandatory.
+ const aliases=value=>xianyuQueryFor(value).replace(/Identity\s*V/gi,'第五人格').replace(/Edgar\s*Valden|Painter/gi,'画家').replace(/Dentist|歯医者/gi,'牙医').replace(/初期衣装/g,'初始服装');
+ const wanted=aliases(query).replace(/毛绒玩偶|ぬいぐるみ|plush(?:\s+toy)?|初始服装|中国限定|海外限定/gi,' ').replace(/AeroClip\s*2/gi,'AeroClip2');
+ const candidate=aliases(result.title||'').replace(/AeroClip\s*2/gi,'AeroClip2');
+ const models=wanted.match(/\b[a-z]+\d+[a-z\d]*\b/gi)||[];
+ if(models.some(model=>!normalize(candidate).includes(normalize(model))))return 0;
+ return titleScore(wanted,candidate);
+}
+export function parseImageSearchResults(html,provider='bing',query=''){
+ const rows=provider==='bing'?[...html.matchAll(/<item>([\s\S]*?)<\/item>/g)].map(m=>({
+  url:decode(m[1].match(/<link>([\s\S]*?)<\/link>/)?.[1]),title:searchText(m[1].match(/<title>([\s\S]*?)<\/title>/)?.[1])
+ })):[...html.matchAll(/<a\b[^>]*class=["'][^"']*result__a[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi)].map(m=>{
+  const href=decode(m[0].match(/href=["']([^"']+)["']/i)?.[1]);try{const u=new URL(href,'https://duckduckgo.com');return {url:u.searchParams.get('uddg')||u.href,title:searchText(m[1])}}catch{return {}}
+ });
+ const unique=[...new Map(rows.filter(r=>externalPublicUrl(r.url)).map(r=>[r.url,r])).values()];
+ const relevant=unique.map(r=>({...r,relevance:query?imageSearchRelevance(query,r):1})).filter(r=>r.relevance>=.35).sort((a,b)=>b.relevance-a.relevance);
+ return {candidates:relevant.slice(0,5),returned:unique.length,rejected:unique.length-relevant.length};
+}
 export function searchImageLinks(html,provider='bing'){
- const links=provider==='bing'?[...html.matchAll(/<item>([\s\S]*?)<\/item>/g)].map(m=>decode(m[1].match(/<link>([\s\S]*?)<\/link>/)?.[1])):
-  [...html.matchAll(/<a\b[^>]*class=["'][^"']*result__a[^"']*["'][^>]*>/gi)].map(m=>{
-   const href=decode(m[0].match(/href=["']([^"']+)["']/i)?.[1]);try{const u=new URL(href,'https://duckduckgo.com');return u.searchParams.get('uddg')||u.href}catch{return ''}
-  });
- return [...new Set(links)].filter(externalPublicUrl).slice(0,5).map(url=>({url}));
+ return parseImageSearchResults(html,provider).candidates.map(({url})=>({url}));
 }
 export async function searchExternalImages(query,{provider='bing',deadline=Infinity}={}){
  const q=encodeURIComponent(query+' -site:paypayfleamarket.yahoo.co.jp -site:jp.mercari.com -site:fril.jp');
@@ -34,7 +50,7 @@ export async function searchExternalImages(query,{provider='bing',deadline=Infin
  const html=await publicHtml(endpoint+q,{deadline});
  // A challenge or unexpected HTML is an access failure, not an empty result.
  if(provider==='bing'&&!/<rss\b/i.test(html)||provider==='duckduckgo'&&!/result__a|No results found/i.test(html))throw Error('search_response_unavailable');
- return searchImageLinks(html,provider);
+ return parseImageSearchResults(html,provider,query);
 }
 export function externalProductImages(html=''){
  const photos=[];
@@ -68,7 +84,7 @@ export function externalImageQueries(title=''){
 // Images and procurement are separate evidence paths. Each returned image is
 // checked against source artwork. Search thumbnails and prices are not costs.
 export async function inspectExternalImages(item,{deadline=Date.now()+60000,search=searchExternalImages,detail=readExternalImages,fingerprint=imageFingerprints}={}){
- const report={photos:[],status:'not_found',reason:'no_search_results',searches:0,pagesRead:0,imagesChecked:0,failures:[]};
+ const report={photos:[],status:'not_found',reason:'no_search_results',searches:0,pagesRead:0,imagesChecked:0,failures:[],searchResults:[]};
  const fail=(stage,url,error)=>report.failures.push({stage,host:url?new URL(url).hostname:'',reason:String(error?.message||error).slice(0,160)});
  if(Date.now()>=deadline)return {...report,status:'deferred',reason:'deadline'};
  const reviewed=reviewedProductImages(item);if(reviewed.length)return {...report,photos:reviewed,status:'verified',reason:'reviewed_source'};
@@ -96,7 +112,9 @@ export async function inspectExternalImages(item,{deadline=Date.now()+60000,sear
  for(const query of externalImageQueries(item.title))for(const provider of ['bing','duckduckgo']){
   if(report.photos.length||Date.now()>=deadline)break;
   report.searches++;let candidates=[];
-  try{candidates=await search(query,{provider,deadline})}catch(e){fail('search',provider==='bing'?'https://www.bing.com':'https://duckduckgo.com',e)}
+  try{const found=await search(query,{provider,deadline});candidates=Array.isArray(found)?found:found.candidates||[];
+   report.searchResults.push({provider,query,returned:found.returned??candidates.length,rejected:found.rejected||0,accepted:candidates.length});
+  }catch(e){fail('search',provider==='bing'?'https://www.bing.com':'https://duckduckgo.com',e)}
   await check(candidates);
  }
  report.photos=[...new Map(report.photos.map(p=>[p.url,p])).values()].slice(0,8);

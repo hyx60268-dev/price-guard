@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { findMerchantImages } from '../scripts/lib/merchant-images.mjs';
-import { externalPublicUrl,externalProductImages,inspectExternalImages,searchImageLinks,publicHtml,externalImageQueries } from '../scripts/lib/external-images.mjs';
+import { externalPublicUrl,externalProductImages,inspectExternalImages,searchImageLinks,publicHtml,externalImageQueries,parseImageSearchResults } from '../scripts/lib/external-images.mjs';
 import { reviewedProductImages } from '../scripts/lib/reviewed-product-images.mjs';
 const fp={dHash:'123456789abcdef0',aHash:'123456789abcdef0',centerHash:'123456789abcdef0',colorGrid:[1,80,150,60,180,240]};
 const title='中国限定 Anker AeroClip2 ワイヤレスイヤホン レッド ギフトボックス',item={title,description:'新品未開封 ギフトボックス',images:['https://image.test/source']};
@@ -68,4 +68,22 @@ test('fallback parses only result links, unwraps public targets and rejects mark
 test('source transport rejects oversized streamed bodies and unsafe redirects before requesting them',async()=>{
  await assert.rejects(publicHtml('https://public.test/',{request:async()=>new Response('x'.repeat(3_000_001))}),/页面过大/);
  let count=0;await assert.rejects(publicHtml('https://public.test/',{request:async()=>{count++;return new Response(null,{status:302,headers:{location:'https://127.0.0.1/'}})}}),/地址无效/);assert.equal(count,1);
+});
+
+test('cloud search keeps relevant titles and rejects unrelated pages or a different Anker model before fetching',async()=>{
+ const rss='<rss><channel>'+[
+  ['https://www.ankersolix.com/products/power','Anker SOLIX Power Station'],
+  ['https://news.test/current','Current NBA news'],
+  ['https://shop.test/aero','Anker AeroClip 2 張凌赫 コラボ レッド ギフトボックス']
+ ].map(([url,name])=>'<item><title><![CDATA['+name+']]></title><link>'+url+'</link></item>').join('')+'</channel></rss>';
+ const found=parseImageSearchResults(rss,'bing','Anker AeroClip2 張凌赫 レッド ギフトボックス');
+ assert.equal(found.returned,3);assert.equal(found.rejected,2);assert.equal(found.candidates.length,1);assert.equal(found.candidates[0].url,'https://shop.test/aero');
+ const read=[];const result=await inspectExternalImages(item,{...dependencies,search:async()=>found,detail:async url=>{read.push(url);return dependencies.detail(url)}});
+ assert.deepEqual(read,['https://shop.test/aero']);assert.equal(result.photos.length,2);assert.equal(result.searchResults[0].rejected,2);
+});
+
+test('search recall supports translated character names without accepting a different franchise',()=>{
+ const html='<a class="result__a" href="https://shop.test/edgar">Identity V Edgar Valden Painter Plush Toy</a><a class="result__a" href="https://shop.test/landscape">Painter landscape tutorial</a>';
+ const found=parseImageSearchResults(html,'duckduckgo','第五人格 画家 初始服装 毛绒玩偶');
+ assert.deepEqual(found.candidates.map(r=>r.url),['https://shop.test/edgar']);assert.equal(found.rejected,1);
 });
