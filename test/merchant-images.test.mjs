@@ -47,7 +47,7 @@ test('a failing search provider falls back and a failed page does not prevent th
   providers.push(provider);if(provider==='bing')throw Error('HTTP 503');
   return [{url:'https://broken.test/product'},{url:'https://official.test/product'}];
  },detail:async url=>{if(url.includes('broken'))throw Error('HTTP 404');return dependencies.detail(url)}});
- assert.deepEqual(providers,['bing','duckduckgo']);assert.equal(r.status,'verified');assert.equal(r.photos.length,2);
+ assert.deepEqual(providers,['bing','bing_web']);assert.equal(r.status,'verified');assert.equal(r.photos.length,2);
  assert.deepEqual(r.failures.map(f=>f.stage),['search','detail']);assert.equal(r.pagesRead,1);
 });
 
@@ -86,4 +86,11 @@ test('search recall supports translated character names without accepting a diff
  const html='<a class="result__a" href="https://shop.test/edgar">Identity V Edgar Valden Painter Plush Toy</a><a class="result__a" href="https://shop.test/landscape">Painter landscape tutorial</a>';
  const found=parseImageSearchResults(html,'duckduckgo','第五人格 画家 初始服装 毛绒玩偶');
  assert.deepEqual(found.candidates.map(r=>r.url),['https://shop.test/edgar']);assert.equal(found.rejected,1);
+});
+
+test('Bing public web results unwrap the observed redirect shape and keep source title relevance',()=>{
+ const target='https://brand.test/aeroclip2',encoded='a1'+Buffer.from(target).toString('base64url');
+ const html='<li class="b_algo"><h2><a href="https://www.bing.com/ck/a?u='+encoded+'">Anker AeroClip2 张凌赫 红色 礼盒</a></h2></li>';
+ const found=parseImageSearchResults(html,'bing_web','Anker AeroClip2 張凌赫 レッド ギフトボックス');
+ assert.equal(found.candidates[0].url,target);assert.equal(found.rejected,0);
 });

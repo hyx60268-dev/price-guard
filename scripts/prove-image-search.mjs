@@ -6,7 +6,7 @@ const titles=['中国限定 第五人格 画家 初期衣装 ぬいぐるみ','�
 let passed=true;
 for(const title of titles){
  let candidates=0;
- for(const query of externalImageQueries(title))for(const provider of ['bing','duckduckgo']){
+ for(const query of externalImageQueries(title))for(const provider of ['bing','bing_web','duckduckgo']){
   try{
    const result=await searchExternalImages(query,{provider,deadline:Date.now()+15000});candidates+=result.candidates.length;
    console.log(JSON.stringify({title,query,provider,...result}));
