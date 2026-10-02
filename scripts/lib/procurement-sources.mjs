@@ -1,4 +1,4 @@
-import { publicHtml,searchExternalImages,externalImageQueries,externalSearchQueries,externalPublicUrl } from './external-images.mjs';
+import { publicHtml,searchExternalImages,externalImageQueries,externalSearchQueries,externalPublicUrl,publicAccessRoute } from './external-images.mjs';
 import { imageFingerprints,primaryProductSimilarity } from './image.mjs';
 import { offerIdentityGuard } from './offer-identity.mjs';
 import { normalize,titleScore } from './rules.mjs';
@@ -60,38 +60,84 @@ export function youzanQuoteFromPublicState(state,item,url,selected){
   unitCNY:selected.price,shippingCNY:0,landedCNY:selected.price,price:selected.price,currency:'CNY',inStock:true,skuVerified:true,shippingKnown:true,shippingScope:'source_displayed_destination',stock:chosen.stock.stockNum,
   selectedVariant:chosen.selectedVariant,detailTitle:g.title,detailDescription:description,detailImages:images,priceSource:'target_detail',priceEvidence:'visible_selected_sku',condition:'retail_unspecified',quantity:1};
 }
-function structuredProducts(html){
- const output=[];for(const match of html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi))try{
-  const walk=node=>{if(!node||typeof node!=='object')return;if([node['@type']].flat().includes('Product'))output.push(node);if(Array.isArray(node))node.forEach(walk);else if(node['@graph'])walk(node['@graph']);};walk(JSON.parse(match[1]));
- }catch{}return output;
+// Only these public, bounded fields may leave a detail reader. In particular,
+// raw final URLs, HTML, headers and embedded account state never enter a report.
+export function safeProcurementDiagnostic(value={}){
+ const result={};
+ if(['timeout','network','size_limit','redirect_limit','invalid_url','reader_error'].includes(value.failureKind))result.failureKind=value.failureKind;
+ for(const key of ['stage','selectionAction'])if(typeof value[key]==='string')result[key]=diagnosticText(value[key],80);
+ const host=entry=>typeof entry==='string'&&/^[a-z0-9.-]+$/i.test(entry)?entry.slice(0,100):null;
+ if(host(value.finalHost))result.finalHost=host(value.finalHost);
+ if(Array.isArray(value.redirectHosts))result.redirectHosts=value.redirectHosts.map(host).filter(Boolean).slice(0,4);
+ for(const key of ['httpStatus','redirectCount','responseBytes','schemaScriptCount','schemaParseErrorCount','productCount','matchedProductCount','offerCount','skuCount','visiblePrice','visibleStock','quantity','selectionAttempts']){
+  if(typeof value[key]==='number'&&Number.isFinite(value[key])&&value[key]>=0)result[key]=Math.min(value[key],key==='responseBytes'?3_000_000:1_000_000);
+ }
+ for(const key of ['targetUrlMatched','hasPublicState','loginFormPresent','challengeMarkerPresent','stoppedBeforeAccess'])if(typeof value[key]==='boolean')result[key]=value[key];
+ for(const key of ['expectedLabels','visibleLabels'])if(Array.isArray(value[key]))result[key]=value[key].slice(0,8).map(entry=>diagnosticText(entry,100));
+ if(Array.isArray(value.visibleRowPrices))result.visibleRowPrices=value.visibleRowPrices.filter(entry=>typeof entry==='number'&&Number.isFinite(entry)&&entry>=0).slice(0,8);
+ if(Array.isArray(value.visibleOptions))result.visibleOptions=value.visibleOptions.slice(0,8).map(entry=>({label:diagnosticText(entry?.label,100),active:entry?.active===true,disabled:entry?.disabled===true}));
+ return result;
 }
-export function parsePublicProcurementDetail(html,url){
- const source=procurementSource(url),canonical=canonicalProcurementUrl(url);if(!source)return {status:'unsupported',reason:'unsupported_source'};
- if(/<(?:iframe|form)[^>]*(?:captcha|challenge|baxia)|id=["'](?:captcha|b_captcha)/i.test(html))return {status:'unavailable',reason:'source_challenge'};
- const products=structuredProducts(html).filter(p=>canonicalProcurementUrl(p.url||p['@id'])===canonical);
- if(products.length!==1)return {status:'incomplete',reason:source==='youzan'?'sku_selection_required':'target_product_unconfirmed'};
- const p=products[0],offers=[p.offers||[]].flat(),offer=offers[0];
- if(offers.length!==1||offer?.['@type']!=='Offer'||offer.lowPrice!==undefined||offer.highPrice!==undefined||offer.priceSpecification?.['@type']==='CompoundPriceSpecification')return {status:'incomplete',reason:'price_or_variant_range'};
- if(offer.url&&canonicalProcurementUrl(offer.url)!==canonical||offer.itemOffered?.sku&&String(offer.itemOffered.sku)!==String(p.sku)||offer.priceValidUntil&&Date.parse(offer.priceValidUntil)<Date.now())return {status:'incomplete',reason:'target_offer_mismatch_or_expired'};
+function detailFailureKind(error){const value=String(error?.name||'')+' '+String(error?.message||'');return /timeout|timed? ?out|lookup_deadline/i.test(value)?'timeout':/过大/.test(value)?'size_limit':/跳转过多/.test(value)?'redirect_limit':/地址无效/.test(value)?'invalid_url':/fetch|network|ECONN|ENOTFOUND|socket|断流/i.test(value)?'network':'reader_error';}
+function fetchDiagnostic(metadata={},url){
+ let finalHost;try{finalHost=new URL(metadata.finalUrl||url).hostname}catch{}
+ return safeProcurementDiagnostic({stage:'public_detail',finalHost,httpStatus:metadata.httpStatus,redirectHosts:metadata.redirectHosts,
+  redirectCount:metadata.redirectCount,responseBytes:metadata.responseBytes,stoppedBeforeAccess:metadata.stoppedBeforeAccess,
+  ...(metadata.finalUrl?{targetUrlMatched:canonicalProcurementUrl(metadata.finalUrl)===canonicalProcurementUrl(url)}:{})});
+}
+function structuredProducts(html){
+ const products=[];let scriptCount=0,parseErrors=0;
+ for(const match of html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)){
+  scriptCount++;
+  try{const walk=node=>{if(!node||typeof node!=='object')return;if([node['@type']].flat().includes('Product'))products.push(node);if(Array.isArray(node))node.forEach(walk);else if(node['@graph'])walk(node['@graph']);};walk(JSON.parse(match[1]));}
+  catch{parseErrors++;}
+ }
+ return {products,scriptCount,parseErrors};
+}
+export function parsePublicProcurementDetail(html,url,{metadata={}}={}){
+ html=String(html||'');
+ const source=procurementSource(url),canonical=canonicalProcurementUrl(url),structured=structuredProducts(html);
+ const products=structured.products.filter(p=>canonicalProcurementUrl(p.url||p['@id'])===canonical);
+ const challenge=/<(?:iframe|form)[^>]*(?:captcha|challenge|baxia)|id=["'](?:captcha|b_captcha)/i.test(html);
+ const diagnostic={...fetchDiagnostic(metadata,url),schemaScriptCount:structured.scriptCount,schemaParseErrorCount:structured.parseErrors,
+  productCount:structured.products.length,matchedProductCount:products.length,challengeMarkerPresent:challenge,
+  hasPublicState:/window\._global\s*=|__NEXT_DATA__|__INITIAL_STATE__|__INIT_DATA__/.test(html),
+  loginFormPresent:/<form\b[^>]*>[\s\S]{0,30000}?<input\b[^>]*type\s*=\s*["']password["']/i.test(html)};
+ let readable=false;
+ const fail=(reason,status='incomplete',reviewComplete=readable)=>({status,reason,reviewComplete,diagnostic:safeProcurementDiagnostic(diagnostic)});
+ if(!source)return fail('unsupported_source','unsupported',false);
+ const access=metadata.accessRoute||publicAccessRoute(metadata.finalUrl||url);
+ if(access==='challenge'||challenge)return fail('source_challenge','unavailable',false);
+ if(access==='login'||metadata.httpStatus===401)return fail('source_login_required','unavailable',false);
+ if(Number.isFinite(metadata.httpStatus)&&metadata.httpStatus>=400)return fail('source_http_'+metadata.httpStatus,'unavailable',false);
+ if(metadata.finalUrl&&canonicalProcurementUrl(metadata.finalUrl)!==canonical)return fail('target_redirect_mismatch','incomplete',false);
+ if(!structured.scriptCount)return fail('structured_data_missing','unavailable',false);
+ if(!structured.products.length)return fail(structured.parseErrors?'structured_data_invalid':'structured_product_missing','unavailable',false);
+ if(!products.length)return fail('target_product_mismatch','incomplete',false);
+ if(products.length!==1)return fail('target_product_ambiguous','incomplete',false);
+ const p=products[0],offers=[p.offers||[]].flat(),offer=offers[0];diagnostic.offerCount=offers.length;
+ const images=[p.image||[]].flat().map(v=>typeof v==='string'?v:v?.url).filter(safe);
+ readable=Boolean(p.name&&p.description&&images.length);
+ if(offers.length!==1||offer?.['@type']!=='Offer'||offer.lowPrice!==undefined||offer.highPrice!==undefined||offer.priceSpecification?.['@type']==='CompoundPriceSpecification')return fail('price_or_variant_range');
+ if(offer.url&&canonicalProcurementUrl(offer.url)!==canonical||offer.itemOffered?.sku&&String(offer.itemOffered.sku)!==String(p.sku)||offer.priceValidUntil&&Date.parse(offer.priceValidUntil)<Date.now())return fail('target_offer_mismatch_or_expired');
  const scalar=value=>typeof value==='number'?value:typeof value==='string'&&/^\d+(?:\.\d{1,2})?$/.test(value)?Number(value):null;
  const unitCNY=scalar(offer.price),skuId=String(p.sku||'');
- if(offer.priceCurrency!=='CNY'||!(unitCNY>0))return {status:'incomplete',reason:'cny_detail_price_missing'};
- if(!skuId||String(offer.sku||skuId)!==skuId||p.hasVariant||p.isVariantOf&&!p.color&&!p.model)return {status:'incomplete',reason:'sku_unconfirmed'};
- if(offer.availability!=='https://schema.org/InStock'||offer.itemCondition!=='https://schema.org/NewCondition')return {status:'incomplete',reason:'availability_or_condition_unconfirmed'};
+ if(offer.priceCurrency!=='CNY'||!(unitCNY>0))return fail('cny_detail_price_missing');
+ if(!skuId||String(offer.sku||skuId)!==skuId||p.hasVariant||p.isVariantOf&&!p.color&&!p.model)return fail('sku_unconfirmed');
+ if(offer.availability!=='https://schema.org/InStock'||offer.itemCondition!=='https://schema.org/NewCondition')return fail('availability_or_condition_unconfirmed');
  const badPrice=/订金|定金|尾款|每期|月供|券后|会员专享|起付|首付|deposit|installment/i.test([p.name,p.description,offer.name,offer.description,offer.priceSpecification?.name].join(' '));
- if(badPrice)return {status:'incomplete',reason:'conditional_or_partial_price'};
- if(offer.eligibleQuantity&&!(offer.eligibleQuantity.minValue===1&&(!offer.eligibleQuantity.maxValue||offer.eligibleQuantity.maxValue>=1)))return {status:'incomplete',reason:'quantity_price_unconfirmed'};
+ if(badPrice)return fail('conditional_or_partial_price');
+ if(offer.eligibleQuantity&&!(offer.eligibleQuantity.minValue===1&&(!offer.eligibleQuantity.maxValue||offer.eligibleQuantity.maxValue>=1)))return fail('quantity_price_unconfirmed');
  const rate=[offer.shippingDetails||[]].flat();
- if(rate.length!==1||rate[0]?.shippingRate?.currency!=='CNY'||scalar(rate[0]?.shippingRate?.value)===null||rate[0]?.shippingDestination?.addressCountry!=='CN')return {status:'incomplete',reason:'shipping_unconfirmed'};
+ if(rate.length!==1||rate[0]?.shippingRate?.currency!=='CNY'||scalar(rate[0]?.shippingRate?.value)===null||rate[0]?.shippingDestination?.addressCountry!=='CN')return fail('shipping_unconfirmed');
  const destination=rate[0].shippingDestination;
  // No destination address is supplied to this collector. A quote limited to a
  // province, locality or postcode cannot become a generally applicable cost.
- if(Object.entries(destination).some(([key,value])=>!['@type','addressCountry'].includes(key)&&value!==undefined&&value!==null&&value!==''))return {status:'incomplete',reason:'shipping_destination_unconfirmed'};
+ if(Object.entries(destination).some(([key,value])=>!['@type','addressCountry'].includes(key)&&value!==undefined&&value!==null&&value!==''))return fail('shipping_destination_unconfirmed');
  const shippingCNY=scalar(rate[0].shippingRate.value),seller=offer.seller;
- if(!seller?.name||!seller?.['@id']||!safe(seller['@id'])||new URL(seller['@id']).hostname!==new URL(url).hostname)return {status:'incomplete',reason:'seller_unconfirmed'};
- const images=[p.image||[]].flat().map(v=>typeof v==='string'?v:v.url).filter(safe);
- if(!p.name||!p.description||!images.length)return {status:'incomplete',reason:'detail_content_unconfirmed'};
- return {status:'quoted',source,id:canonical,skuId,url:canonical,canonicalUrl:canonical,sellerKey:source+':'+seller['@id'],sellerName:seller.name,sellerIdentityKey:procurementSellerIdentity(seller.name),unitCNY,shippingCNY,landedCNY:unitCNY+shippingCNY,price:unitCNY+shippingCNY,currency:'CNY',inStock:true,skuVerified:true,shippingKnown:true,shippingScope:'CN',selectedVariant:[p.model,p.color,p.size,skuId].filter(Boolean).join(' / '),detailTitle:p.name,detailDescription:text(p.description),detailImages:images,priceSource:'target_detail',priceEvidence:'target_product_offer',condition:'new',conditionEvidence:offer.itemCondition,quantity:1};
+ if(!seller?.name||!seller?.['@id']||!safe(seller['@id'])||new URL(seller['@id']).hostname!==new URL(url).hostname)return fail('seller_unconfirmed');
+ if(!readable)return fail('detail_content_unconfirmed','incomplete',false);
+ return {status:'quoted',source,id:canonical,skuId,url:canonical,canonicalUrl:canonical,sellerKey:source+':'+seller['@id'],sellerName:seller.name,sellerIdentityKey:procurementSellerIdentity(seller.name),unitCNY,shippingCNY,landedCNY:unitCNY+shippingCNY,price:unitCNY+shippingCNY,currency:'CNY',inStock:true,skuVerified:true,shippingKnown:true,shippingScope:'CN',selectedVariant:[p.model,p.color,p.size,skuId].filter(Boolean).join(' / '),detailTitle:p.name,detailDescription:text(p.description),detailImages:images,priceSource:'target_detail',priceEvidence:'target_product_offer',condition:'new',conditionEvidence:offer.itemCondition,quantity:1,reviewComplete:true,diagnostic:safeProcurementDiagnostic(diagnostic)};
 }
 // This function is serialized into the page. It only reads public DOM content;
 // does not access session tokens, hidden account state or private endpoints.
@@ -154,26 +200,41 @@ export async function ensureYouzanSelection(page,chosen,{deadline=Date.now()+150
  return {...settled,diagnostic:{...settled.diagnostic,selectionAttempts}};
 }
 export async function readPublicProcurementDetail(url,{item,context,getContext,deadline=Date.now()+45000,html=publicHtml}={}){
- const source=procurementSource(url);if(!source)return {status:'unsupported',reason:'unsupported_source'};
+ const source=procurementSource(url);if(!source)return {status:'unsupported',reason:'unsupported_source',reviewComplete:false};
  const remaining=()=>Math.max(1,Math.min(15000,deadline-Date.now()));
- if(source!=='youzan')return parsePublicProcurementDetail(await html(url,{deadline}),url);
+ const staticRead=async()=>{try{const response=await html(url,{deadline,withMetadata:true});return parsePublicProcurementDetail(typeof response==='string'?response:response?.html,url,{metadata:typeof response==='string'?{}:response?.metadata||{}});}catch(error){return {status:'unavailable',reason:'detail_fetch_error',reviewComplete:false,diagnostic:safeProcurementDiagnostic({...fetchDiagnostic(error.publicMetadata||{},url),failureKind:detailFailureKind(error)})};}};
+ if(source!=='youzan')return staticRead();
  const browser=context||await getContext?.();
- if(!browser)return parsePublicProcurementDetail(await html(url,{deadline}),url);
- const page=await browser.newPage();
+ if(!browser)return staticRead();
+ const page=await browser.newPage();let response,dom={},redirectHosts=[];
+ const diagnostic=()=>safeProcurementDiagnostic({...fetchDiagnostic({finalUrl:page.url(),httpStatus:response?.status?.(),redirectHosts,redirectCount:redirectHosts.length},url),hasPublicState:Boolean(dom.state?.goodsData?.goods),skuCount:dom.state?.goodsData?.skuInfo?.skus?.length||0,challengeMarkerPresent:dom.blocked===true});
+ const fail=(reason,status='incomplete',reviewComplete=false,extra={})=>({status,reason,reviewComplete,diagnostic:safeProcurementDiagnostic({...diagnostic(),...extra})});
+ const access=()=>{const route=publicAccessRoute(page.url());if(dom.blocked||route==='challenge')return fail('source_challenge','unavailable');if(dom.login||route==='login'||response?.status?.()===401)return fail('source_login_required','unavailable');if(response?.status?.()>=400)return fail('source_http_'+response.status(),'unavailable');return null;};
+ const navigate=async target=>{response=await page.goto(target,{waitUntil:'domcontentloaded',timeout:remaining()});if(page.url()!==target)redirectHosts.push(new URL(page.url()).hostname);};
  try{
-  await page.goto(url,{waitUntil:'domcontentloaded',timeout:remaining()});
-  let dom=await page.evaluate(readYouzanPublicDOM);
-  if(dom.mobile&&!dom.state){const mobile=new URL(dom.mobile,page.url()).href;if(procurementSource(mobile)!=='youzan'||canonicalProcurementUrl(mobile)!==canonicalProcurementUrl(url))return {status:'incomplete',reason:'target_redirect_mismatch'};await page.goto(mobile,{waitUntil:'domcontentloaded',timeout:remaining()});}
+  await navigate(url);dom=await page.evaluate(readYouzanPublicDOM);
+  if(access())return access();
+  if(dom.mobile&&!dom.state){const mobile=new URL(dom.mobile,page.url()).href;if(procurementSource(mobile)!=='youzan'||canonicalProcurementUrl(mobile)!==canonicalProcurementUrl(url))return fail('target_redirect_mismatch');await navigate(mobile);dom=await page.evaluate(readYouzanPublicDOM);if(access())return access();}
   await page.waitForFunction(()=>Boolean(document.querySelector('.goods-title__main-text')),{},{timeout:remaining()}).catch(()=>{});
-  dom=await page.evaluate(readYouzanPublicDOM);if(dom.blocked||dom.login)return {status:'unavailable',reason:dom.blocked?'source_challenge':'source_login_required'};
-  if(canonicalProcurementUrl(page.url())!==canonicalProcurementUrl(url))return {status:'incomplete',reason:'target_redirect_mismatch'};
-  const chosen=chooseYouzanSku(dom.state?.goodsData,item);if(!chosen.ok)return {status:'incomplete',reason:chosen.reason};
-  const props=dom.state?.goodsData?.skuInfo?.props||[];
+  dom=await page.evaluate(readYouzanPublicDOM);if(access())return access();
+  if(canonicalProcurementUrl(page.url())!==canonicalProcurementUrl(url))return fail('target_redirect_mismatch');
+  const data=dom.state?.goodsData,alias=new URL(canonicalProcurementUrl(url)).searchParams.get('alias');
+  if(!data?.goods)return fail('public_state_unavailable','unavailable');
+  if(data.alias!==alias||data.goods.alias!==alias)return fail('target_product_mismatch');
+  // A matching alias can arrive before the actual product payload. An empty
+  // shell is an unread page, not a completed negative SKU review.
+  const goods=data.goods;
+  if(typeof goods.title!=='string'||!goods.title.trim()||!(goods.pictures||[]).some(p=>safe(p?.url))||typeof goods.soldStatus!=='string'||!goods.soldStatus||typeof goods.isDisplay!=='number'||typeof goods.isPhysical!=='boolean')return fail('public_product_content_unavailable','unavailable');
+  const chosen=chooseYouzanSku(data,item);if(!chosen.ok)return fail(chosen.reason,'incomplete',true);
+  const props=data.skuInfo?.props||[];
   if(!dom.selected.visible&&props.length)await page.getByText(props[0].k,{exact:true}).filter({visible:true}).first().click({timeout:remaining()});
-  const settled=await ensureYouzanSelection(page,chosen,{deadline});if(!settled.ok)return settled;dom=settled.dom;
-  const variant=dom.selected.labels.join(' / ');return youzanQuoteFromPublicState(dom.state,item,url,{...dom.selected,variant,skuId:variant===chosen.selectedVariant?chosen.skuId:null});
- }finally{await page.close().catch(()=>{})}
+  const settled=await ensureYouzanSelection(page,chosen,{deadline});if(!settled.ok)return fail(settled.reason,settled.status,false,settled.diagnostic);dom=settled.dom;
+  const variant=dom.selected.labels.join(' / '),quote=youzanQuoteFromPublicState(dom.state,item,url,{...dom.selected,variant,skuId:variant===chosen.selectedVariant?chosen.skuId:null});
+  return {...quote,reviewComplete:quote.reason!=='target_product_unconfirmed',diagnostic:diagnostic()};
+ }catch(error){return fail('detail_read_error','unavailable',false,{stage:'public_detail',failureKind:detailFailureKind(error)});}
+ finally{await page.close().catch(()=>{})}
 }
+
 function rejected(records,item,candidate){return Object.values(records||{}).some(r=>!r.deleted&&r.accountId===item.accountId&&(r.itemId===item.id||r.itemId===item.relistedFrom&&r.ownTitle===item.title&&r.ownImage===item.image)&&(r.candidateId===candidate.id||r.candidateId===candidate.skuId||r.candidateId===candidate.canonicalUrl||canonicalProcurementUrl(r.candidateUrl||r.url)===candidate.canonicalUrl));}
 function diagnosticText(value,limit=160){
  return String(value??'').replace(/<[^>]*>/g,' ').replace(/https?:\/\/[^\s"'<>]+/gi,'[url omitted]').replace(/\b(?:set-cookie|cookie|authorization|token|password|session)\s*[:=][^,;\n]*/gi,'[sensitive omitted]').replace(/\s+/g,' ').trim().slice(0,limit);
@@ -195,7 +256,7 @@ export async function alternativeProcurementCost(item,{deadline=Date.now()+90000
  const consume=async rows=>{for(const row of rows){if(Date.now()>=deadline||seen.size>=maxDetails)return;
   const url=canonicalProcurementUrl(row.url);if(!url||seen.has(url))continue;seen.add(url);
   try{const quote=await detail(url,{item,context,getContext,deadline});report.detailCheckedCount++;
-   if(quote.status!=='quoted'){if(quote.status==='unavailable'||quote.status==='error')sourceFailure=true;diagnose({source:procurementSource(url),reason:quote.reason,url});continue}
+   if(quote.status!=='quoted'){if(quote.status==='unavailable'||quote.status==='error'||quote.reviewComplete===false)sourceFailure=true;diagnose({source:procurementSource(url),reason:quote.reason,url,...(quote.diagnostic?{detail:safeProcurementDiagnostic(quote.diagnostic)}:{})});continue}
    if(rejected(matchCorrections,item,quote)){diagnose({source:quote.source,reason:'rejected_by_memory',url});continue}
    const query=externalImageQueries(item.title)[0],candidate=colorText(quote.detailTitle+' '+quote.selectedVariant);
    const titleMatch=titleScore(query,candidate),fp=await fingerprint(quote.detailImages?.[0]),primaryImageScore=primaryProductSimilarity(own,fp);

@@ -9,19 +9,37 @@ const decode=s=>String(s||'').replace(/&amp;/g,'&').replace(/&quot;/g,'"').repla
 export function externalPublicUrl(value){
  try{const u=new URL(value);return allowedMerchantPhotoSource(value)&&!u.username&&!u.password&&!u.port&&!/^(?:localhost|.*\.localhost|.*\.local|\d+(?:\.\d+){3}|\[)/i.test(u.hostname)&&u.hostname.includes('.')}catch{return false}
 }
-export async function publicHtml(url,{deadline=Infinity,request=fetch}={}){
- for(let n=0;n<4;n++){
+// Route evidence only. Query parameters containing words such as "login" are
+// not access barriers. Procurement may stop before following a real auth route.
+export function publicAccessRoute(value){
+ try{const url=new URL(value),host=url.hostname.toLowerCase(),pathname=url.pathname.toLowerCase();
+  if(/(?:^|\/)\b(?:punish|captcha|challenge|verifycaptcha|baxia)(?:\/|\.|$)/.test(pathname))return 'challenge';
+  if(/^(?:login|passport|signin|auth|accounts)\./.test(host)||/(?:^|\/)(?:login|signin|sign-in)(?:\/|\.|$)/.test(pathname))return 'login';
+ }catch{}return null;
+}
+export async function publicHtml(url,{deadline=Infinity,request=fetch,withMetadata=false}={}){
+ const redirectHosts=[];let redirects=0,status=null,bytes=0;
+ const finish=(html,status,bytes=0,extra={})=>withMetadata?{html,metadata:{finalUrl:url,httpStatus:status,redirectHosts,redirectCount:redirects,responseBytes:bytes,...extra}}:html;
+ try{for(let n=0;n<4;n++){
   if(Date.now()>=deadline)throw Error('lookup_deadline');
   if(!externalPublicUrl(url))throw Error('站外图片来源地址无效');
+  if(withMetadata&&publicAccessRoute(url))return finish('',null,0,{accessRoute:publicAccessRoute(url),stoppedBeforeAccess:true});
   const response=await request(url,{redirect:'manual',signal:AbortSignal.timeout(Math.max(1,Math.min(12000,deadline-Date.now()))),headers:{'user-agent':'Mozilla/5.0','accept-language':'zh-CN,ja;q=0.8'}});
-  if(response.status>=300&&response.status<400){url=new URL(response.headers.get('location'),url).href;continue}
-  if(!response.ok)throw Error('公开来源 HTTP '+response.status);
+  status=response.status;
+  if(response.status>=300&&response.status<400){
+   url=new URL(response.headers.get('location'),url).href;redirects++;
+   redirectHosts.push(new URL(url).hostname);
+   if(withMetadata&&publicAccessRoute(url))return finish('',response.status,0,{accessRoute:publicAccessRoute(url),stoppedBeforeAccess:true});
+   continue;
+  }
+  if(!response.ok){if(withMetadata)return finish('',response.status);throw Error('公开来源 HTTP '+response.status)}
   if(Number(response.headers.get('content-length'))>3_000_000)throw Error('公开来源页面过大');
   const chunks=[];let length=0;
-  for await(const chunk of response.body){length+=chunk.length;if(length>3_000_000)throw Error('公开来源页面过大');chunks.push(chunk)}
-  return Buffer.concat(chunks).toString('utf8');
+  for await(const chunk of response.body){length+=chunk.length;bytes=length;if(length>3_000_000)throw Error('公开来源页面过大');chunks.push(chunk)}
+  return finish(Buffer.concat(chunks).toString('utf8'),response.status,length);
  }
  throw Error('公开来源跳转过多');
+ }catch(error){if(withMetadata&&error&&typeof error==='object')error.publicMetadata=finish('',status,bytes).metadata;throw error;}
 }
 const searchText=value=>decode(String(value||'').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,'$1')).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
 export function imageSearchRelevance(query='',result={}){

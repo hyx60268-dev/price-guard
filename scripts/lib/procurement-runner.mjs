@@ -5,9 +5,13 @@ const logText=value=>String(value??'').replace(/<[^>]*>/g,' ').replace(/https?:\
 
 // Each account supplies an already ordered bucket. Sources run independently of
 // Xianyu access state, with their own bounded admission and shared scan deadline.
-export async function runPublicProcurement(buckets,{lookup,hydrate=async item=>item,deadline,limit=8,concurrency=2,now=Date.now,log=()=>{}}={}){
+export async function runPublicProcurement(buckets,{lookup,hydrate=async item=>item,deadline,limit=8,concurrency=2,priorityItemIds=[],now=Date.now,log=()=>{}}={}){
  const results=new Map(),tasks=[];
  for(let n=0;n<Math.max(0,...buckets.map(b=>b.length));n++)for(const bucket of buckets)if(bucket[n])tasks.push(bucket[n]);
+ // Priorities reorder only existing, account-bound tasks. The cache, retry and
+ // admission checks below apply unchanged to every prioritized task.
+ const priorities=new Set(priorityItemIds);
+ tasks.sort((a,b)=>Number(priorities.has(b.item.id))-Number(priorities.has(a.item.id)));
  let admitted=0;
  await mapLimit(tasks,Math.max(1,Math.min(2,concurrency)),async task=>{
   const {item,prior={}}=task,key=item.accountId+':'+item.id;

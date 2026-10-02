@@ -46,7 +46,7 @@ test('public state parsing ignores login data and only captures visible selected
 });
 test('structured product quotes require SKU-bound current CNY offer, seller, stock and freight',()=>{
  const q=parsePublicProcurementDetail(ld(),'https://item.jd.com/123.html');assert.equal(q.status,'quoted');assert.equal(q.unitCNY,999);assert.equal(q.shippingCNY,8);assert.equal(q.landedCNY,1007);
- assert.equal(parsePublicProcurementDetail(ld(),'https://item.jd.com/456.html').reason,'target_product_unconfirmed');
+ assert.equal(parsePublicProcurementDetail(ld(),'https://item.jd.com/456.html').reason,'target_product_mismatch');
  const parsed=JSON.parse(ld().replace(/^.*?>/,'').replace(/<\/script>$/,''));
  for(const patch of [{url:'https://item.jd.com/999.html'},{priceValidUntil:'2020-01-01'},{itemOffered:{sku:'999'}},{priceCurrency:'JPY'},{price:'999-1199'},{availability:'https://schema.org/OutOfStock'},{seller:{name:'anonymous'}},{shippingDetails:{}},{'@type':'AggregateOffer'},{lowPrice:1},{description:'券后专享'},{description:'定金'}])assert.notEqual(parsePublicProcurementDetail(ld({offers:{...parsed.offers,...patch}}),'https://item.jd.com/123.html').status,'quoted');
  assert.equal(parsePublicProcurementDetail(ld({hasVariant:[{}]}),'https://item.jd.com/123.html').reason,'sku_unconfirmed');
@@ -276,7 +276,7 @@ test('JD mobile and desktop aliases reach one canonical detail and never count a
 test('JD mobile product identities still require exact detail SKU and an identified source seller',()=>{
  const canonical='https://item.jd.com/123.html',mobile='https://item.m.jd.com/ware/view.action?wareId=123';
  assert.equal(parsePublicProcurementDetail(ld({url:mobile}),canonical).status,'quoted');
- assert.equal(parsePublicProcurementDetail(ld({url:mobile.replace('123','456')}),canonical).reason,'target_product_unconfirmed');
+ assert.equal(parsePublicProcurementDetail(ld({url:mobile.replace('123','456')}),canonical).reason,'target_product_mismatch');
  const product=JSON.parse(ld().replace(/^.*?>/,'').replace(/<\/script>$/,''));
  assert.equal(parsePublicProcurementDetail(ld({url:mobile,offers:{...product.offers,seller:{name:'unidentified'}}}),canonical).reason,'seller_unconfirmed');
 });
