@@ -1,3 +1,4 @@
+import { initializeExternalSearchAccess,externalSearchAccessSnapshot } from './lib/external-images.mjs';
 import { alternativeProcurementCost } from './lib/procurement-sources.mjs';
 import { chooseProcurementReference,mergeXianyuCostEvidence } from './lib/procurement-reference.mjs';
 import { runPublicProcurement } from './lib/procurement-runner.mjs';
@@ -71,6 +72,8 @@ function cachedRakuma(prior,reason='fresh_cache'){
 }
 
 const previous=await previousSnapshot();
+await initializeExternalSearchAccess({root,password,initial:previous?.externalSearchAccess});
+console.log('[公开搜索访问]',JSON.stringify({stage:'scan',providers:externalSearchAccessSnapshot()}));
 const matchCorrections=previous?.matchCorrections||{};
 if(previous?.items)previous.items=previous.items.map(item=>invalidateCorrectedMatches(item,matchCorrections));
 const manualCosts=previous?.manualCosts||{};
@@ -400,6 +403,7 @@ const ownedTitleHistory=[...new Set([
   ...allItems.map(item=>item.title)
 ].map(value=>String(value||'').trim()).filter(Boolean))].slice(-5000);
 const result={
+  externalSearchAccess:externalSearchAccessSnapshot(),
   merchantMonitors:previous?.merchantMonitors||[],listingHistory,pricingCoverage:pricingCoverage(allItems,accountResults),
   version:6,checkedAt,dataRevision:checkedAt,settings,accounts:accountResults,managedAccounts,portalUsers,appliedSyncIssues:previous?.appliedSyncIssues||{},
   manualCosts,matchCorrections,portalPreferences,dismissedDiscoveries,discoveryReviews,ownedTitleHistory,relistAliases,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode,xianyuAccess:sessionManager.access()},items:allItems,
