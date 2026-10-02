@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fairRoundRobin,inventoryDelta,isFresh,isFreshMinutes,reconcileLiveItems,shouldScanXianyu,verifiedXianyuCache } from '../scripts/lib/planner.mjs';
+import { comparisonAttemptTime,retainComparisonAttempt,currentInventoryAdditions,fairRoundRobin,inventoryDelta,isFresh,isFreshMinutes,parsePriceAuditItemIds,prioritizePriceAuditItems,reconcileLiveItems,shouldScanXianyu,verifiedXianyuCache } from '../scripts/lib/planner.mjs';
+import { manualCostFor } from '../scripts/lib/state.mjs';
+import { cachedComparison } from '../scripts/lib/pricing-coverage.mjs';
+import { pricingDecision,PRICING_RULES_VERSION } from '../public/pricing-policy.js';
 
 test('Yahoo minute cache does not accidentally last for hours',()=>{
   const now=Date.parse('2026-09-12T12:00:00Z');
@@ -49,6 +52,99 @@ test('ambiguous duplicate title does not inherit the wrong cost metadata',()=>{
   const merged=reconcileLiveItems([],previous,[{id:'new',title:'同名商品',ownPrice:3000}],'m');
   assert.equal(merged[0].relistedFrom,undefined);
   assert.equal(merged[0].xianyuQuery,'');
+});
+
+test('a relist gains priority only on its first refresh while manual costs remain linked',()=>{
+  const previous=[{accountId:'m',id:'old',title:'中国限定 商品 A 新品',xianyuQuery:'商品A 中国版'}];
+  const live=[{id:'new',title:'中国限定 商品 A 新品',ownPrice:3000}];
+  const costs={'m:old':{accountId:'m',itemId:'old',purchaseCNY:28,manualFeeCNY:10,shippingJPY:210,updatedAt:'2026-10-01T00:00:00Z'}};
+  const first=reconcileLiveItems([],previous,live,'m');
+  const firstDelta=inventoryDelta(previous,first);
+  assert.equal(currentInventoryAdditions(firstDelta).has('new'),true);
+  assert.equal(manualCostFor(costs,first[0])?.purchaseCNY,28);
+
+  const second=reconcileLiveItems([],first,live,'m');
+  const secondDelta=inventoryDelta(first,second);
+  assert.deepEqual(secondDelta,{added:[],removed:[],relisted:[],unchanged:1});
+  assert.equal(currentInventoryAdditions(secondDelta).has('new'),false);
+  assert.equal(second[0].relistedFrom,'old');
+  assert.equal(second[0].xianyuQuery,'商品A 中国版');
+  const inherited=manualCostFor(costs,second[0]);
+  for(const [field,value] of Object.entries(costs['m:old']))assert.equal(inherited?.[field],value);
+  assert.equal(manualCostFor(costs,{...second[0],accountId:'other'}),null);
+});
+
+test('an unchanged relist target is not a new event even if its origin remains in the prior inventory',()=>{
+  const previous=[{id:'old',title:'商品 A'},{id:'new',title:'商品 A',relistedFrom:'old'}];
+  const delta=inventoryDelta(previous,[previous[1]]);
+  assert.deepEqual(delta,{added:[],removed:['old'],relisted:[],unchanged:1});
+  assert.deepEqual([...currentInventoryAdditions(delta)],[]);
+  assert.deepEqual([...currentInventoryAdditions({added:['fresh'],relisted:[{from:'before',to:'after'}]})],['fresh','after']);
+});
+
+test('requested price audit IDs are bounded, deduplicated and reject URLs or malformed IDs',()=>{
+  assert.deepEqual([...parsePriceAuditItemIds(' z685606778, z685606778, m12345678, , https://example.com/item/z99, bad id, ../old ')],['z685606778','m12345678']);
+  assert.deepEqual([...parsePriceAuditItemIds()],[]);
+  assert.equal(parsePriceAuditItemIds('x'.repeat(81)).size,0);
+  assert.deepEqual([...parsePriceAuditItemIds(Array.from({length:23},(_,i)=>'z'+i).join(','))],Array.from({length:20},(_,i)=>'z'+i));
+});
+
+test('requested price audits promote only eligible existing tasks without changing evidence or account context',()=>{
+  const tasks=[
+    {context:{account:{id:'a'}},item:{id:'ordinary-a'},priority:0},
+    {context:{account:{id:'b'}},item:{id:'target-b'},priority:3,prior:{checkedAt:'2026-10-01T01:00:00Z'}},
+    {context:{account:{id:'c'}},item:{id:'ordinary-c'},priority:2},
+    {context:{account:{id:'a'}},item:{id:'target-a'},priority:3}
+  ];
+  assert.equal(prioritizePriceAuditItems(tasks),tasks);
+  const reordered=prioritizePriceAuditItems(tasks,parsePriceAuditItemIds('not-in-live-inventory,target-a,target-b'));
+  assert.deepEqual(reordered.map(task=>task.item.id),['target-b','target-a','ordinary-a','ordinary-c']);
+  assert.equal(reordered.length,tasks.length);
+  assert.equal(reordered[0],tasks[1]);
+  assert.equal(reordered[1],tasks[3]);
+  assert.equal(reordered[0].priority,3);
+  assert.equal(reordered[0].prior.checkedAt,'2026-10-01T01:00:00Z');
+  assert.deepEqual(tasks.map(task=>task.item.id),['ordinary-a','target-b','ordinary-c','target-a']);
+});
+
+test('failed old evidence rotates behind an unattempted peer across successive rounds',()=>{
+  const oldest='2026-10-01T01:00:00.000Z',peerChecked='2026-10-01T02:00:00.000Z',firstAttempt='2026-10-01T12:00:00.000Z',secondAttempt='2026-10-01T12:20:00.000Z';
+  const failed={status:'ok',rulesVersion:PRICING_RULES_VERSION,checkedAt:oldest,candidates:[]};
+  const peer={status:'ok',rulesVersion:PRICING_RULES_VERSION,checkedAt:peerChecked,candidates:[]};
+  const order=sources=>sources.map(([id,source])=>({id,time:comparisonAttemptTime(source)})).sort((a,b)=>a.time-b.time).map(task=>task.id);
+  assert.deepEqual(order([['failed',failed],['peer',peer]]),['failed','peer']);
+  const failedOnce=retainComparisonAttempt(cachedComparison(failed,'request_error'),failed,firstAttempt);
+  assert.equal(failedOnce.checkedAt,oldest);
+  assert.deepEqual(order([['failed',failedOnce],['peer',peer]]),['peer','failed']);
+  const deferred=retainComparisonAttempt(cachedComparison(failedOnce,'scan_budget'),failedOnce);
+  assert.equal(deferred.lastAttemptAt,firstAttempt);
+  const peerAttempted=retainComparisonAttempt({...peer,checkedAt:secondAttempt},peer,secondAttempt);
+  assert.deepEqual(order([['failed',deferred],['peer',peerAttempted]]),['failed','peer']);
+});
+
+test('a retry timestamp never extends a failed or expired quote validity',()=>{
+  const now=Date.parse('2026-10-01T12:00:00Z');
+  const prior={status:'ok',rulesVersion:PRICING_RULES_VERSION,checkedAt:'2026-10-01T01:00:00.000Z',candidates:[{id:'external',price:9000,sellerId:'external',url:'https://example.test/item',matchMethod:'detail_verified'}]};
+  const failed=retainComparisonAttempt(cachedComparison(prior,'request_error'),prior,new Date(now).toISOString());
+  assert.equal(failed.checkedAt,prior.checkedAt);
+  assert.equal(failed.lastAttemptAt,new Date(now).toISOString());
+  for(const result of [failed,retainComparisonAttempt(cachedComparison(failed,'scan_budget'),failed),retainComparisonAttempt(prior,prior,new Date(now).toISOString())]){
+    assert.equal(pricingDecision({ownPrice:10000,yahoo:result},{now}).canRecommend,false);
+    assert.equal(isFreshMinutes(result.checkedAt,20,now),false);
+  }
+});
+
+test('budget deferral preserves the last real attempt without inventing fresh evidence',()=>{
+  const prior={status:'error',rulesVersion:PRICING_RULES_VERSION,checkedAt:'2026-10-01T12:00:00.000Z'};
+  const deferred={status:'deferred_budget',rulesVersion:PRICING_RULES_VERSION,checkedAt:null,candidates:[]};
+  const first=retainComparisonAttempt(deferred,prior),second=retainComparisonAttempt(deferred,first);
+  assert.equal(first.checkedAt,null);
+  assert.equal(second.checkedAt,null);
+  assert.equal(first.lastAttemptAt,prior.checkedAt);
+  assert.equal(second.lastAttemptAt,prior.checkedAt);
+  assert.equal(comparisonAttemptTime(second),Date.parse(prior.checkedAt));
+  assert.equal(retainComparisonAttempt(deferred,{}),deferred);
+  assert.equal(Number.isNaN(comparisonAttemptTime({checkedAt:'invalid'})),true);
 });
 
 test('multi-shop Yahoo work is interleaved fairly',()=>{

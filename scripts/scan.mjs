@@ -19,7 +19,7 @@ import { discoverRakumaProfile,fetchRakumaItem,rakumaCompare } from './lib/rakum
 import { cachedComparison,comparisonIncomplete as isComparisonIncomplete,pricingCoverage } from './lib/pricing-coverage.mjs';
 import { xianyuCost } from './lib/xianyu.mjs';
 import { XIANYU_VERIFICATION,completedXianyuReview } from './lib/xianyu-evidence.mjs';
-import { fairRoundRobin,fairPriorityRoundRobin,inventoryDelta,isFresh,isFreshMinutes,reconcileLiveItems,verifiedXianyuCache } from './lib/planner.mjs';
+import { comparisonAttemptTime,retainComparisonAttempt,currentInventoryAdditions,fairRoundRobin,fairPriorityRoundRobin,inventoryDelta,isFresh,isFreshMinutes,parsePriceAuditItemIds,prioritizePriceAuditItems,reconcileLiveItems,verifiedXianyuCache } from './lib/planner.mjs';
 import { decrypt } from './lib/crypto.mjs';
 import { writeOutputs } from './lib/publish.mjs';
 import { calculateManualFields,manualCostFor,mergeAccountConfigs } from './lib/state.mjs';
@@ -116,21 +116,25 @@ for(const context of contexts)for(const item of context.activeItems)if(item.reli
 // 否则每次都会在时间预算耗尽前反复检查前半段，后半段商品长期得不到核验。
 const fullPriceAudit=process.env.FULL_PRICE_AUDIT==='1';
 const forceYahoo=process.env.FORCE_FULL_SCAN==='1';
+const priceAuditItemIds=parsePriceAuditItemIds(process.env.PRICE_AUDIT_ITEM_IDS);
 const yahooFreshMinutes=Number(settings.yahooFreshMinutes)||20;
 const deadline=startedAt+(fullPriceAudit?280:(Number(settings.scanBudgetMinutes)||12))*60_000;
-const yahooBuckets=contexts.map(context=>context.activeItems.map((item,itemIndex)=>{
-  const prior=priorFor(context,item),added=context.profileDelta.added.includes(item.id)||Boolean(item.relistedFrom);
+const yahooBuckets=contexts.map(context=>{
+  const currentAdditions=currentInventoryAdditions(context.profileDelta);
+  return context.activeItems.map((item,itemIndex)=>{
+  const prior=priorFor(context,item),added=currentAdditions.has(item.id);
   const priceChanged=Number.isFinite(prior.ownPrice)&&prior.ownPrice!==item.ownPrice;
   const rulesChanged=Number(prior.yahoo?.rulesVersion)!==MATCHING_RULES_VERSION;
   const activePriceSignal=prior.yahoo?.underpriced===true||prior.yahoo?.comparisonStatus==='competitor_lower'||
     Number.isFinite(Number(prior.recommendedPrice))&&Number(prior.recommendedPrice)!==Number(item.ownPrice);
-  const checked=Date.parse(prior.yahoo?.checkedAt||'');
+  const checked=comparisonAttemptTime(prior.yahoo);
   // 规则升级后先撤销/重核验所有正在触发调价的结果（降价和提价都包括），
   // 避免旧误判在数百件商品的普通轮转队尾继续显示多个周期。
   return {context,item,itemIndex,prior,priority:added?0:priceChanged?1:rulesChanged&&activePriceSignal?1:rulesChanged?2:Number.isFinite(checked)?3:2,lastChecked:Number.isFinite(checked)?checked:0};
-}).sort((a,b)=>a.priority-b.priority||a.lastChecked-b.lastChecked||a.itemIndex-b.itemIndex));
+}).sort((a,b)=>a.priority-b.priority||a.lastChecked-b.lastChecked||a.itemIndex-b.itemIndex);
+});
 // 每个店铺轮流取一件，不让商品多或旧缓存多的账号占满整轮预算。
-const yahooTasks=fairPriorityRoundRobin(yahooBuckets);
+const yahooTasks=prioritizePriceAuditItems(fairPriorityRoundRobin(yahooBuckets),priceAuditItemIds);
 
 // One in-flight read per own listing, shared across independent platform workers.
 // A deferred Yahoo task must not deprive Rakuma/Mercari/Xianyu of the sale description.
@@ -143,7 +147,7 @@ const yahooWork=mapLimit(yahooTasks,yahooConcurrency,async(task,taskIndex)=>{
     context.yahooById.set(item.id,fresh);return;
   }
   if(Date.now()>=deadline){
-    context.yahooById.set(item.id,cachedYahoo(prior,item,'scan_budget')||{status:'deferred_budget',cacheReason:'rules_changed',rulesVersion:MATCHING_RULES_VERSION,checkedAt:null,lowestPrice:item.ownPrice,lowestUrl:item.url,recommendedPrice:item.ownPrice,candidates:[]});return;
+    context.yahooById.set(item.id,cachedYahoo(prior,item,'scan_budget')||{status:'deferred_budget',cacheReason:'rules_changed',rulesVersion:prior.yahoo?.rulesVersion??MATCHING_RULES_VERSION,checkedAt:null,lowestPrice:item.ownPrice,lowestUrl:item.url,recommendedPrice:item.ownPrice,candidates:[]});return;
   }
   try{
     if(item.platform==='rakuma'){
@@ -157,7 +161,10 @@ const yahooWork=mapLimit(yahooTasks,yahooConcurrency,async(task,taskIndex)=>{
   }catch(error){
     console.error(`[Yahoo ERROR][${context.account.id}:${item.id}]`,String(error));
     context.yahooById.set(item.id,cachedYahoo(prior,item,'request_error')||{status:'error',error:String(error),rulesVersion:MATCHING_RULES_VERSION,checkedAt:new Date().toISOString(),candidates:[],lowestPrice:item.ownPrice,lowestUrl:item.url,recommendedPrice:item.ownPrice});
-  }finally{await wait(550+Math.floor(Math.random()*350))}
+  }finally{
+    context.yahooById.set(item.id,retainComparisonAttempt(context.yahooById.get(item.id)||{},prior.yahoo,new Date().toISOString()));
+    await wait(550+Math.floor(Math.random()*350));
+  }
 });
 
 // Bounded product workers share the run deadline and the platform request gate.
@@ -165,10 +172,10 @@ const rakumaFreshHours=Math.max(1/60,Number(settings.rakumaFreshHours)||1/3);
 const rakumaLimit=Number.POSITIVE_INFINITY; // The deadline bounds admission; no arbitrary per-run item cap.
 const rakumaBuckets=contexts.map(context=>context.activeItems.map((item,itemIndex)=>{
   // Failed attempts rotate to the tail too, without becoming accepted cache.
-  const prior=priorFor(context,item),cached=cachedRakuma(prior),checked=Date.parse(prior.rakuma?.checkedAt||'');
+  const prior=priorFor(context,item),cached=cachedRakuma(prior),checked=comparisonAttemptTime(prior.rakuma);
   return {context,item,prior,cached,itemIndex,lastChecked:Number.isFinite(checked)?checked:0};
 }).filter(task=>!task.cached||!isFresh(task.cached.checkedAt,rakumaFreshHours)).sort((a,b)=>a.lastChecked-b.lastChecked||a.itemIndex-b.itemIndex));
-const rakumaTasks=fairRoundRobin(rakumaBuckets);
+const rakumaTasks=prioritizePriceAuditItems(fairRoundRobin(rakumaBuckets),priceAuditItemIds);
 for(const context of contexts)for(const item of context.activeItems){
   const cached=cachedRakuma(priorFor(context,item));if(cached&&isFresh(cached.checkedAt,rakumaFreshHours))context.rakumaById.set(item.id,cached);
 }
@@ -183,16 +190,19 @@ const rakumaWork=mapLimit(rakumaTasks,rakumaConcurrency,async(task,index)=>{
   }catch(error){
     console.error(`[ラクマ ERROR][${context.account.id}:${item.id}]`,String(error));
     context.rakumaById.set(item.id,cachedRakuma(prior,'request_error')||{status:'error',error:String(error),rulesVersion:MATCHING_RULES_VERSION,candidates:[],lowestPrice:null,checkedAt:new Date().toISOString()});
+  }finally{
+    context.rakumaById.set(item.id,retainComparisonAttempt(context.rakumaById.get(item.id)||{},prior.rakuma,new Date().toISOString()));
   }
 });
 
 // All accounts receive a fair turn. A failed source never becomes 'no offers'.
 const mercariLimit=Number.POSITIVE_INFINITY;
-const mercariTasks=fairRoundRobin(contexts.map(context=>context.activeItems.map((item,itemIndex)=>{
- const prior=priorFor(context,item),cached=cachedComparison(prior.mercari),stamp=Date.parse(prior.mercari?.checkedAt||'');
+const mercariBuckets=contexts.map(context=>context.activeItems.map((item,itemIndex)=>{
+ const prior=priorFor(context,item),cached=cachedComparison(prior.mercari),stamp=comparisonAttemptTime(prior.mercari);
  if(cached&&isFreshMinutes(cached.checkedAt,Number(settings.mercariFreshMinutes)||20)){context.mercariById.set(item.id,cached);return null}
  return {context,item,prior,itemIndex,lastChecked:Number.isFinite(stamp)?stamp:0};
-}).filter(Boolean).sort((a,b)=>a.lastChecked-b.lastChecked||a.itemIndex-b.itemIndex)));
+}).filter(Boolean).sort((a,b)=>a.lastChecked-b.lastChecked||a.itemIndex-b.itemIndex));
+const mercariTasks=prioritizePriceAuditItems(fairRoundRobin(mercariBuckets),priceAuditItemIds);
 const mercariConcurrency=Math.max(1,Math.min(4,Number(settings.mercariConcurrency)||3));
 const mercariWork=(async()=>{
  const pages=new Map();let opened;
@@ -207,6 +217,7 @@ const mercariWork=(async()=>{
     context.mercariById.set(item.id,result);
     console.log('[Mercari]',context.account.id,item.id,result.status,'matches='+result.competitorCount,'lowest='+result.lowestPrice);
    }catch(error){context.mercariById.set(item.id,{status:'error',error:String(error),rulesVersion:MATCHING_RULES_VERSION,checkedAt:new Date().toISOString(),candidates:[]});console.error('[Mercari ERROR]',item.id,String(error))}
+   finally{context.mercariById.set(item.id,retainComparisonAttempt(context.mercariById.get(item.id)||{},prior.mercari,new Date().toISOString()))}
   });
  }finally{if(opened){const session=await opened.catch(()=>null);await session?.browser?.close().catch(()=>{})}}
 })();
@@ -295,7 +306,7 @@ const [,,,,procurementResults]=await Promise.all([yahooWork,rakumaWork,mercariWo
 const accountResults=[];
 for(const context of contexts){
   const rows=context.activeItems.map(item=>{
-    const prior=priorFor(context,item),yc=context.yahooById.get(item.id)||{},rc=context.rakumaById.get(item.id)||{status:'not_requested',candidates:[],lowestPrice:null},mc=context.mercariById.get(item.id)||{status:'not_requested',candidates:[]},xc=context.xianyuById.get(item.id)||{status:'not_requested',samples:[],averageCNY:null};
+    const prior=priorFor(context,item),yc=retainComparisonAttempt(context.yahooById.get(item.id)||{},prior.yahoo),rc=retainComparisonAttempt(context.rakumaById.get(item.id)||{status:'not_requested',candidates:[],lowestPrice:null},prior.rakuma),mc=retainComparisonAttempt(context.mercariById.get(item.id)||{status:'not_requested',candidates:[]},prior.mercari),xc=context.xianyuById.get(item.id)||{status:'not_requested',samples:[],averageCNY:null};
     const priorVerified=verifiedXianyuCache(prior);
     const procurementSource=procurementResults.get(item.accountId+':'+item.id)||prior.procurementSource;
     const xianyuEvidence=mergeXianyuCostEvidence(prior,xc,{xianyuFreshHours});
