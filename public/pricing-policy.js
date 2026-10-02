@@ -1,6 +1,6 @@
 import { isSelfOffer } from './owned-offers.js';
 // Shared by cloud publication and every client view. Old snapshots are evidence, not actions.
-export const PRICING_RULES_VERSION=20;
+export const PRICING_RULES_VERSION=21;
 export const PRICING_PLATFORMS=['yahoo','rakuma','mercari'];
 export const PLATFORM_LABELS={yahoo:'Yahoo!フリマ',rakuma:'Rakuma',mercari:'煤炉 Mercari'};
 const amount=value=>typeof value==='number'&&Number.isFinite(value)&&value>0?value:null;
