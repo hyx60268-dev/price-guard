@@ -16,7 +16,7 @@ let browser;
 try{
  for(const platform of ['yahoo','rakuma','mercari']){
   try{
-   if(platform==='yahoo')item.yahoo=await yahooCompare(null,item,{...settings,forceYahooBroadSearch:true,maxYahooDetailChecks:12});
+   if(platform==='yahoo')item.yahoo=await yahooCompare(null,item,{...settings,forceYahooBroadSearch:true});
    if(platform==='rakuma')item.rakuma=await rakumaCompare(item,settings);
    if(platform==='mercari'){const opened=await openContext();browser=opened.browser;item.mercari=await mercariCompare(await opened.context.newPage(),item,settings)}
   }catch(error){item[platform]={status:'error',error:String(error)}}

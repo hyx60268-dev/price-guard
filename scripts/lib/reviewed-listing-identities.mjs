@@ -42,6 +42,15 @@ function snapshotMatches(detail,primary,snapshot){
     /^[a-f0-9]{64}$/.test(snapshot.imageSha256||'')&&primary?.contentSha256===snapshot.imageSha256;
 }
 
+// Queueing evidence only: an exact known card may be checked before unknown
+// cheap recommendations. Current candidate description/condition/photo bytes
+// remain unverified here and MUST pass reviewedListingIdentity after fetching.
+export function reviewedListingCandidate({platform,own,ownPrimary,candidate}={}){
+  return reviews.some(row=>row.platform===platform&&snapshotMatches(own,ownPrimary,row.own)&&
+    String(candidate?.id||'')===row.candidate.id&&String(candidate?.sellerId||'')===row.candidate.sellerId&&
+    text(candidate?.title)===text(row.candidate.title)&&candidate?.image===row.candidate.image);
+}
+
 // This only supplies reviewed visual identity. The caller must still enforce
 // live availability/price, global owned sellers, rejection memory and all hard
 // colour, character, version, quantity, packaging and condition constraints.
