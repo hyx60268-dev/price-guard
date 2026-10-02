@@ -445,6 +445,30 @@ function pokemonFigureReleaseContext(value=''){
   return /emutenkai/i.test(heading)&&/(?:ポケモン|pokemon|宝可梦|寶可夢)/i.test(heading)&&/(?:フィギュア|figure|手办|手辦|公仔|盲盒)/i.test(heading);
 }
 
+// Ratios identify physical figure/model size only in a concrete toy heading.
+// Calendar fractions and chapter/page indices are not product dimensions.
+// Description prose can mention other products; read only explicit scale fields.
+function figureScaleFacets(value=''){
+  const lines=normalizedJapanese(value).split(/\r?\n|。/).map(line=>line.trim()).filter(Boolean);
+  const heading=lines[0]||'',scales=new Set();
+  if(!/(?:フィギュア|\bfigures?\b|手办|手辦|模型|ガンプラ|プラモデル|\bmodel\s+kits?\b|ガレージキット)/i.test(heading))return scales;
+  const fields=lines.slice(1).filter(line=>/^(?:【\s*(?:スケール|縮尺|scale|比例)\s*】|(?:スケール|縮尺|scale|比例)\s*[:：])/i.test(line));
+  for(const line of [heading,...fields]){
+    const text=line
+      .replace(/\b\d{4}\s*[/.-]\s*\d{1,2}\s*[/.-]\s*\d{1,2}\b/g,' ')
+      .replace(/\b\d{1,2}\s*\/\s*\d{1,2}\s*\/\s*\d{4}\b/g,' ')
+      .replace(/(?<![\d/])\d{1,2}\s*\/\s*\d{1,2}\s*(?:[-‐‑‒–—―~〜～]|から|至|to)\s*\d{1,2}\s*\/\s*\d{1,2}(?!\d)/gi,' ');
+    for(const match of text.matchAll(/(?<![a-z\d/])1\s*\/\s*([1-9]\d{0,3})(?![a-z\d/.])/gi)){
+      const before=text.slice(0,match.index),after=text.slice(match.index+match[0].length);
+      if(/(?:\d{4}\s*年|発売(?:日|予定)?|発売予定日|発送(?:日|予定)?|発送予定日|予約(?:開始|期間)?|入荷(?:日|予定)?|購入(?:日)?|更新(?:日)?|到着(?:日)?|入手(?:日)?|締切|販売開始|发售|发货|到货|收货|购买|更新|日期|date|released?(?:\s+date)?|shipping|on)\s*(?:[:：]|は|が)?\s*$/i.test(before))continue;
+      if(/^\s*(?:に|より)?\s*(?:発売|発送|入荷|予約|購入|更新|到着|入手|まで|から|以降|時点|当日|付(?:け)?|日(?:曜|付|まで|から)?|月|\([月火水木金土日](?:曜(?:日)?)?\)|发售|发货|到货|收货|购买|更新|release|shipping)/i.test(after))continue;
+      if(/(?:第|章|話|頁|ページ|図|图|chapter|page|part|fig\.?|no\.?)\s*[:：]?\s*$/i.test(before)||/^\s*(?:章|話|頁|ページ|ページ目)/.test(after))continue;
+      scales.add('1/'+Number(match[1]));
+    }
+  }
+  return scales;
+}
+
 export function identityVariantFacets(value=''){
   const upper=normalizedJapanese(value).toUpperCase();
   const prizes=setFromMatches(upper,[
@@ -479,7 +503,7 @@ export function identityVariantFacets(value=''){
     /(?:^|[\s　・:：【】()（）/／_-])(ブルー|青|BLUE|ブラウン|茶|BROWN|ブラック|黒|BLACK|ホワイト|白|WHITE|レッド|赤|RED|ピンク|桃|PINK|グリーン|緑|GREEN|パープル|紫|PURPLE|イエロー|黄|YELLOW|オレンジ|橙|ORANGE|シルバー|銀|SILVER|ゴールド|金|GOLD|グレー|灰|GRAY|GREY|ベージュ|BEIGE|ネイビー|紺|NAVY|クリア|透明|CLEAR)(?=$|[\s　・:：【】()（）/／_-])/g,
     match=>({青:'BLUE',ブルー:'BLUE',BLUE:'BLUE',茶:'BROWN',ブラウン:'BROWN',BROWN:'BROWN',黒:'BLACK',ブラック:'BLACK',BLACK:'BLACK',白:'WHITE',ホワイト:'WHITE',WHITE:'WHITE',赤:'RED',レッド:'RED',RED:'RED',桃:'PINK',ピンク:'PINK',PINK:'PINK',緑:'GREEN',グリーン:'GREEN',GREEN:'GREEN',紫:'PURPLE',パープル:'PURPLE',PURPLE:'PURPLE',黄:'YELLOW',イエロー:'YELLOW',YELLOW:'YELLOW',橙:'ORANGE',オレンジ:'ORANGE',ORANGE:'ORANGE',銀:'SILVER',シルバー:'SILVER',SILVER:'SILVER',金:'GOLD',ゴールド:'GOLD',GOLD:'GOLD',灰:'GRAY',グレー:'GRAY',GRAY:'GRAY',GREY:'GRAY',ベージュ:'BEIGE',BEIGE:'BEIGE',紺:'NAVY',ネイビー:'NAVY',NAVY:'NAVY',クリア:'CLEAR',透明:'CLEAR',CLEAR:'CLEAR'})[match[1]]||match[1]
   ]]);
-  return {prizes,tarot,tarotNames,waves,anniversaries,cardGrades,colors};
+  return {prizes,tarot,tarotNames,waves,anniversaries,cardGrades,colors,figureScales:figureScaleFacets(value)};
 }
 
 function disjointNonEmpty(left,right){return left.size>0&&right.size>0&&![...left].some(value=>right.has(value))}
@@ -537,6 +561,7 @@ export function lotterySeriesNeedsVisualConfirmation(query='',candidate=''){
 
 export function hasIdentityVariantMismatch(query='',candidate=''){
   const left=identityVariantFacets(query),right=identityVariantFacets(candidate);
+  if(left.figureScales.size>1||right.figureScales.size>1||disjointNonEmpty(left.figureScales,right.figureScales))return true;
   // A heading that says both generation 3 and generation 4 is unresolved, even
   // if one of those numbers happens to overlap the other listing.
   if([query,candidate].some(value=>pokemonFigureReleaseContext(value)&&identityVariantFacets(listingHeading(value)).waves.size>1))return true;

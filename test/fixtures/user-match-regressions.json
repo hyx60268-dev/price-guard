@@ -571,5 +571,32 @@
     "candidateDescription": "ご覧いただきありがとうございます。\n\nポケモン30周年記念「夢描点睛」第4弾のフィギュアシリーズです。\n\n【商品情報】\n・簡体字中国語版\n・新品未開封\n・メーカー純正BOX\n・1BOX＝12個入り\n・全13種類（通常12種類＋シークレット1種類）\n・ピカチュウをテーマにしたシリーズ\n\n【1個の内容】\n・ランダムフィギュア 1個\n・対応するポケモンのトレーディングカード 1枚\n・「30周年記念」パック 1パック（6枚入り）\n\n※全13種類のうち、シークレットが1種類含まれています。\n※ブラインド商品ですので、BOXを開封するまで中身は分かりません。\n※シークレットの封入率は非常に低く設定されています。\n\n新品未開封の状態で発送いたします。\n正規品のみ取り扱っております。\n\n海外製品のため、製造上の初期キズ、塗装ムラ、印刷ズレ、外箱の擦れや多少の傷みなどがある場合がございます。\nメーカーによる個体差・初期不良については対応できませんので、あらかじめご了承ください。\n\n完璧な状態をお求めの方、細かな点を気にされる方はご購入をお控えください。\n\nよろしくお願いいたします。",
     "primaryImageScore": 1,
     "expected": "explicit_variant_mismatch"
+  },
+  {
+    "case": "melon：Myethos荒蕪ラップランド1/7不能比1/8手办",
+    "ownTitle": "Myethos 荒蕪ラップランド1/7フィギュア",
+    "ownDescription": "新品未開封 1点",
+    "candidateTitle": "Myethos 荒蕪ラップランド1/8フィギュア",
+    "candidateDescription": "新品未開封 1点",
+    "primaryImageScore": 1,
+    "expected": "explicit_variant_mismatch"
+  },
+  {
+    "case": "local-1789214704376：Myethos荒蕪ラップランド1/7不能比1/8手办",
+    "ownTitle": "Myethos 荒蕪ラップランド1/7フィギュア",
+    "ownDescription": "新品未開封 1点",
+    "candidateTitle": "Myethos 荒蕪ラップランド1/8フィギュア",
+    "candidateDescription": "新品未開封 1点",
+    "primaryImageScore": 1,
+    "expected": "explicit_variant_mismatch"
+  },
+  {
+    "case": "account-p6579087：Myethos荒蕪ラップランド1/7不能比1/8手办",
+    "ownTitle": "Myethos 荒蕪ラップランド1/7フィギュア",
+    "ownDescription": "新品未開封 1点",
+    "candidateTitle": "Myethos 荒蕪ラップランド1/8フィギュア",
+    "candidateDescription": "新品未開封 1点",
+    "primaryImageScore": 1,
+    "expected": "explicit_variant_mismatch"
   }
 ]
