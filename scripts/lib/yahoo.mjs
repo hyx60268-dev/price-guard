@@ -3,9 +3,10 @@ import { extractYahooBundleComponents } from './merchant-bundles.mjs';
 import { merchantNameFromTitle } from './merchant-names.mjs';
 import { imageFingerprints,imageSetSimilarity,primaryProductSimilarity } from './image.mjs';
 import { offerIdentityGuard } from './offer-identity.mjs';
+import { reviewedListingIdentity } from './reviewed-listing-identities.mjs';
 import { rejectedByMemory } from '../../public/match-memory.js';
 import { descriptionColorMismatch } from './rules.mjs';
-import { coherentPrices,collectibleIdentityRequiresVisualProof,conditionCompatible,distinctiveCoverage,exactIdentityTitleEquivalent,hasExplicitDefect,hasExplicitVariantMismatch,isRejected,listingSpecificationEquivalent,listingTextEquivalent,lotterySeriesEquivalent,lotterySeriesNeedsVisualConfirmation,MATCHING_RULES_VERSION,packagedAssortmentEquivalent,sealedSingleBoxEquivalent,productFamily,saleUnitEquivalent,semanticSameItem,titleScore,visualListingEquivalent } from './rules.mjs';
+import { coherentPrices,collectibleIdentityRequiresVisualProof,conditionCompatible,distinctiveCoverage,exactIdentityTitleEquivalent,hasExplicitDefect,hasExplicitVariantMismatch,isRejected,listingSpecificationEquivalent,listingTextEquivalent,lotterySeriesEquivalent,lotterySeriesNeedsVisualConfirmation,MATCHING_RULES_VERSION,packagedAssortmentEquivalent,sealedSingleBoxEquivalent,sealedSingleBoxTextCompatible,productFamily,saleUnitEquivalent,semanticSameItem,titleScore,visualListingEquivalent } from './rules.mjs';
 
 const UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140 Safari/537.36';
 const DEFAULT_REQUEST_INTERVAL_MS=5500;
@@ -417,7 +418,10 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
       const imageThreshold=Math.max(.75,Number(settings.yahooImageMatchThreshold)||.80);
       const visualThreshold=Math.max(imageThreshold,Number(settings.yahooStrongVisualMatchThreshold)||.86);
       const visualEquivalent=visualListingEquivalent({query:ownFullText,candidate:candidateFullText,queryCategory:ownCategory,candidateCategory:detailCategory,imageScore,threshold:visualThreshold});
-      const sealedBoxEquivalent=sealedSingleBoxEquivalent({query:ownFullText,candidate:candidateFullText,primaryImageScore});
+      const reviewedIdentity=sealedSingleBoxTextCompatible({query:ownFullText,candidate:candidateFullText})&&
+        Number.isFinite(Number(detail.price))&&Number(detail.price)>0
+        ?reviewedListingIdentity({platform:'yahoo',own:ownDetail,candidate:detail,ownPrimary:ownImageEvidence[0],candidatePrimary:detailImageEvidence[0]}):null;
+      const sealedBoxEquivalent=Boolean(reviewedIdentity)||sealedSingleBoxEquivalent({query:ownFullText,candidate:candidateFullText,primaryImageScore});
       const identityNeedsVisualProof=collectibleIdentityRequiresVisualProof(
         ownFullText,candidateFullText,ownCategory,detailCategory
       );
@@ -442,7 +446,8 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
       competitors.push({...card,url:`https://paypayfleamarket.yahoo.co.jp/item/${detail.id}`,title:detail.title,
         text:`${detail.title}\n${detail.description||''}`,sellerId:String(detail.seller?.id||card.sellerId||''),image:detailImage,price:Number(detail.price),itemStatus:detail.status,
         titleScore:detailTitleScore,imageScore,primaryImageScore,semantic,queryFamily,candidateFamily,
-        matchMethod:sealedBoxEquivalent?'same_sealed_single_box_primary':lotteryEquivalent?'lottery_release_prize_character':assortmentEquivalent?'same_packaging_assortment':exactTitleEquivalent?'exact_bidirectional_title_identity':visualEquivalent?'strong_visual_primary_product':textEquivalent?'detail_type_quantity_equivalent_text':'detail_type_quantity_text_images'});
+        ...(reviewedIdentity?{identityEvidence:reviewedIdentity}:{}),
+        matchMethod:reviewedIdentity?'reviewed_sealed_box_identity':sealedBoxEquivalent?'same_sealed_single_box_primary':lotteryEquivalent?'lottery_release_prize_character':assortmentEquivalent?'same_packaging_assortment':exactTitleEquivalent?'exact_bidirectional_title_identity':visualEquivalent?'strong_visual_primary_product':textEquivalent?'detail_type_quantity_equivalent_text':'detail_type_quantity_text_images'});
     }catch(error){rejected.push({id:card.id,price:card.price,reason:'detail_error',error:String(error)})}
   }
 

@@ -615,8 +615,7 @@ export function visualListingEquivalent({query='',candidate='',queryCategory='',
 // seller omits the number of inner figures. This never supplies that missing
 // number: it requires the same strongly matched PRIMARY carton, product name,
 // and no contradictory explicit contents. Loose assortments do not qualify.
-export function sealedSingleBoxEquivalent({query='',candidate='',primaryImageScore=null,threshold=.98}={}) {
-  if(!Number.isFinite(primaryImageScore)||primaryImageScore<Math.max(.98,threshold))return false;
+export function sealedSingleBoxTextCompatible({query='',candidate=''}={}) {
   const headings=[query,candidate].map(listingHeading);
   if(headings.some(h=>!/(?:^|[^0-9])1\s*(?:BOX|ボックス)(?=$|[^A-Z])/i.test(h)))return false;
   if(hasExplicitVariantMismatch(headings[0],headings[1])||hasExplicitVariantMismatch(headings[1],headings[0])||!saleUnitEquivalent(query,candidate))return false;
@@ -636,6 +635,14 @@ export function sealedSingleBoxEquivalent({query='',candidate='',primaryImageSco
   }
   if(innerCounts.every(Number.isFinite)&&innerCounts[0]!==innerCounts[1])return false;
   return true;
+}
+
+// Automatic carton evidence keeps the original strict primary-photo threshold.
+// A separately audited exact-listing record may supply visual identity in Yahoo;
+// it calls the same text guard without inventing an image similarity score.
+export function sealedSingleBoxEquivalent({query='',candidate='',primaryImageScore=null,threshold=.98}={}) {
+  return Number.isFinite(primaryImageScore)&&primaryImageScore>=Math.max(.98,threshold)&&
+    sealedSingleBoxTextCompatible({query,candidate});
 }
 
 // A sealed outer blind-box and the seller wording "12 small boxes" describe the

@@ -1,4 +1,5 @@
 import sharp from 'sharp';
+import { createHash } from 'node:crypto';
 
 const cache=new Map();
 
@@ -55,7 +56,7 @@ async function makeFingerprints(url){
     const background=sums.map(value=>Math.round(value/Math.max(1,count)));
     const backgroundSpread=squares.map((value,index)=>Math.round(Math.sqrt(Math.max(0,value/Math.max(1,count)-(sums[index]/Math.max(1,count))**2))));
     const aspectRatio=metadata.width&&metadata.height?metadata.width/metadata.height:null;
-    return {dHash,aHash,centerHash,color,background,backgroundSpread,aspectRatio,colorGrid:[...grid],url};
+    return {dHash,aHash,centerHash,color,background,backgroundSpread,aspectRatio,colorGrid:[...grid],url,contentSha256:createHash('sha256').update(buffer).digest('hex')};
   }catch{return null}
 }
 

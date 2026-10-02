@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { calculateManualFields,discoveryDismissalKey,manualCostFor,manualCostKey,mergeAccountConfigs,mergeDiscoveryReviews,mergeDismissedDiscoveries,mergeManualCosts,reconcileDurableState } from '../scripts/lib/state.mjs';
 import { decrypt } from '../scripts/lib/crypto.mjs';
+import { comparisonAttemptTime } from '../scripts/lib/planner.mjs';
+import { pricingDecision,PRICING_RULES_VERSION } from '../public/pricing-policy.js';
 import { compactDashboardResult,mergePortalUserRecords,portalUsersForResult,portalUsersFromEnv,scopeResultForPortalUser,writeOutputs } from '../scripts/lib/publish.mjs';
 
 const item={accountId:'m',id:'new',title:'中国限定 商品 A 新品',xianyuQuery:'商品A 中国版',ownPrice:5000,recommendedPrice:4500,averageCNY:20};
@@ -107,6 +109,31 @@ test('phone payload removes duplicated items and bulky diagnostics while full ev
   assert.equal(compact.items[0].sourceDetail,undefined);
   assert.equal(compact.items[0].yahoo.candidates[0].text,undefined);
   assert.ok(JSON.stringify(compact).length<JSON.stringify(full).length/10);
+});
+
+test('compact published fallback restores recent comparison attempts without renewing old quotes',async()=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'price-guard-attempt-')),password='restore-test-pass';
+  const checkedAt='2026-10-01T20:05:00.000Z',lastAttemptAt='2026-10-02T06:59:00.000Z',revision='2026-10-02T07:00:00.000Z';
+  const platforms=['yahoo','rakuma','mercari'];
+  const comparisons=Object.fromEntries(platforms.map(platform=>[platform,{
+    status:'cached',evidenceStatus:'ok',rulesVersion:PRICING_RULES_VERSION,checkedAt,lastAttemptAt,cacheReason:'request_error',searchComplete:true,
+    candidates:[{id:'external-'+platform,sellerId:'external',price:9000,url:'https://example.test/item/'+platform,matchMethod:'detail_verified'}]
+  }]));
+  const full={version:6,checkedAt:revision,dataRevision:revision,settings:{},accounts:[{id:'shop'}],items:[{accountId:'shop',id:'own',title:'商品',ownPrice:10000,...comparisons}]};
+  try{
+    await writeOutputs({root,result:full,previous:null,password});
+    // When state.json.enc cannot be loaded, restore uses this compact published file.
+    const fallback=JSON.parse(decrypt(await fs.readFile(path.join(root,'public/data/latest.json.enc')),password).toString('utf8'));
+    for(const cache of [full,{}]){
+      const restored=reconcileDurableState(cache,fallback);
+      for(const platform of platforms){
+        assert.equal(restored.items[0][platform].lastAttemptAt,lastAttemptAt,platform+' attempt survives compact fallback');
+        assert.equal(comparisonAttemptTime(restored.items[0][platform]),Date.parse(lastAttemptAt));
+        assert.equal(restored.items[0][platform].checkedAt,checkedAt,platform+' quote time stays unchanged');
+      }
+      assert.equal(pricingDecision(restored.items[0],{now:Date.parse(revision)}).canRecommend,false);
+    }
+  }finally{await fs.rm(root,{recursive:true,force:true})}
 });
 
 test('encrypted portal records override legacy env users and keep deletion tombstones',()=>{

@@ -19,13 +19,13 @@ const compactCandidate=value=>value&&typeof value==='object'?{
   id:value.id||null,url:value.url||null,title:value.title||null,image:value.image||null,
   price:Number.isFinite(Number(value.price))?Number(value.price):null,platform:value.platform||null,
   isOwn:Boolean(value.isOwn),reason:value.reason||null,titleScore:value.titleScore??null,imageScore:value.imageScore??null,
-  primaryImageScore:value.primaryImageScore??null,matchMethod:value.matchMethod||null,
+  primaryImageScore:value.primaryImageScore??null,matchMethod:value.matchMethod||null,identityEvidence:value.identityEvidence||null,
   detailTitle:value.detailTitle||null,sellerId:value.sellerId||null,itemPrice:value.itemPrice??null,shippingJPY:value.shippingJPY??null,sellerKey:value.sellerKey||null,priceSource:value.priceSource||null,
   titleMatch:value.titleMatch??null,bodyMatch:value.bodyMatch??null
 }:null;
 
 function compactComparison(value={}){
-  const keep=['searchComplete','status','evidenceStatus','raiseGuardMinPrice','plausibleMinPrice','checkedAt','cacheReason','rulesVersion','lowestPrice','lowestUrl','searchUrl','marketMedianPrice','marketMinPrice','marketMaxPrice','marketSampleCount','cardCount','detailCheckedCount','preliminaryCount','unresolvedCandidateCount','uncheckedLowerCandidateCount','unconfirmedLowerCandidateCount','unconfirmedLowerCount','matchLabel','matchConfidence','averageCNY','verifiedCount','sellerCount'];
+  const keep=['searchComplete','status','evidenceStatus','raiseGuardMinPrice','plausibleMinPrice','checkedAt','lastAttemptAt','cacheReason','rulesVersion','lowestPrice','lowestUrl','searchUrl','marketMedianPrice','marketMinPrice','marketMaxPrice','marketSampleCount','cardCount','detailCheckedCount','preliminaryCount','unresolvedCandidateCount','uncheckedLowerCandidateCount','unconfirmedLowerCandidateCount','unconfirmedLowerCount','matchLabel','matchConfidence','averageCNY','verifiedCount','sellerCount'];
   const output={};
   for(const key of keep)if(value[key]!==undefined)output[key]=value[key];
   output.candidates=(value.candidates||[]).slice(0,5).map(compactCandidate).filter(Boolean);
