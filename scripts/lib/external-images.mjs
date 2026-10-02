@@ -1,3 +1,4 @@
+import { createSearchAccess,loadSearchAccess } from './search-access.mjs';
 import { imageFingerprints,primaryProductSimilarity } from './image.mjs';
 import { xianyuQueryFor } from './discovery.mjs';
 import { localizeSearchTerms,searchIdentityAnchorsPresent } from './search-localization.mjs';
@@ -69,20 +70,26 @@ export function parseImageSearchResults(html,provider='bing',query='',{candidate
 export function searchImageLinks(html,provider='bing'){
  return parseImageSearchResults(html,provider).candidates.map(({url})=>({url}));
 }
-const unavailableProviders=new Map();
+let searchAccess=createSearchAccess();
+export async function initializeExternalSearchAccess(options){searchAccess=await loadSearchAccess(options);return searchAccess.snapshot();}
+export const externalSearchAccessSnapshot=()=>searchAccess.snapshot();
 export async function searchExternalImages(query,{provider='bing',deadline=Infinity,candidateSelector}={}){
- if((unavailableProviders.get(provider)||0)>Date.now())throw Error('search_provider_cooldown');
- // Exclude marketplace URLs after parsing. Keep query text about the product.
- const q=encodeURIComponent(query);
- const endpoint=provider==='duckduckgo'?'https://html.duckduckgo.com/html/?q=':provider==='bing_web'?'https://www.bing.com/search?q=':'https://www.bing.com/search?format=rss&q=';
- const html=await publicHtml(endpoint+q,{deadline});
- // A challenge or unexpected HTML is an access failure, not an empty result.
- if(/(?:id|class)=["'][^"']*(?:anomaly|challenge)-form|id=["']b_captcha/i.test(html)){for(const key of provider.startsWith('bing')?['bing','bing_web']:[provider])unavailableProviders.set(key,Date.now()+20*60000);throw Error('search_challenge')}
- if(provider==='bing'&&!/<rss\b/i.test(html)||provider==='bing_web'&&!/b_algo|No results|找不到|没有结果/i.test(html)||provider==='duckduckgo'&&!/result__a|No results found|没有找到|沒有找到/i.test(html)){
-  unavailableProviders.set(provider,Date.now()+20*60000);throw Error('search_response_unavailable: '+searchText(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]).slice(0,100));
- }
+ const html=await searchAccess.request(provider,query,async()=>{
+  // Exclude marketplace URLs after parsing. Keep query text about the product.
+  const q=encodeURIComponent(query);
+  const endpoint=provider==='duckduckgo'?'https://html.duckduckgo.com/html/?q=':provider==='bing_web'?'https://www.bing.com/search?q=':'https://www.bing.com/search?format=rss&q=';
+  const html=await publicHtml(endpoint+q,{deadline});
+  if(/(?:id|class)=["'][^"']*(?:anomaly|challenge)-form|id=["']b_captcha/i.test(html)){await searchAccess.block(provider,'search_challenge');throw Error('search_challenge')}
+  if(provider==='bing'&&!/<rss\b/i.test(html)||provider==='bing_web'&&!/b_algo|No results|找不到|没有结果/i.test(html)||provider==='duckduckgo'&&!/result__a|No results found|没有找到|沒有找到/i.test(html)){
+   await searchAccess.block(provider,'search_response_unavailable');throw Error('search_response_unavailable: '+searchText(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]).slice(0,100));
+  }
+  return html;
+ },{deadline});
+ // Only the public response is reused. Every account applies its own candidate
+ // selector, then separately verifies current detail, identity and source prices.
  return parseImageSearchResults(html,provider,query,{candidateSelector});
 }
+
 export function externalProductImages(html=''){
  const photos=[];
  for(const m of html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)){

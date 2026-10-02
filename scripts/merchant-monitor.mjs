@@ -1,3 +1,4 @@
+import { initializeExternalSearchAccess,externalSearchAccessSnapshot } from './lib/external-images.mjs';
 import { xianyuAccessDiagnostic } from './lib/xianyu-evidence.mjs';
 import { merchantRetryDelay,merchantBudget,merchantXianyuAccess } from './lib/merchant-scheduling.mjs';
 import { curateMerchantProducts,prepareMerchantVisuals } from './lib/merchant-curation.mjs';
@@ -23,6 +24,8 @@ for(const p of ['state','public/data','.auth'])await fs.mkdir(path.join(root,p),
 let previous={};try{previous=JSON.parse(decrypt(await fs.readFile(path.join(root,'state/discovery.json.enc')),password))}catch(e){if(e.code!=='ENOENT')throw e}
 let dashboard={};try{dashboard=JSON.parse(decrypt(await fs.readFile(path.join(root,'state/latest.json.enc')),password))}catch(e){if(e.code!=='ENOENT')throw e}
 cfg.merchants=mergeMerchantConfigs((cfg.merchants||[]).map(raw=>({...merchantProfile(raw),enabled:true})),dashboard.merchantMonitors||[]).filter(m=>m.enabled);
+await initializeExternalSearchAccess({root,password});
+console.log('[公开搜索访问]',JSON.stringify({stage:'merchant',providers:externalSearchAccessSnapshot()}));
 const monitorVersion=19;
 const configDigest=crypto.createHash('sha256').update(JSON.stringify({cfg,monitorVersion})).digest('hex');
 if(process.env.MERCHANT_MONITOR_IF_DUE==='1'&&previous.mode==='merchant_monitor'&&previous.configDigest===configDigest&&Date.now()-Date.parse(previous.checkedAt||'')<merchantRetryDelay(previous)){console.log('商家监控未到下次更新时间，保留已发布记录');process.exit(0)}
@@ -107,7 +110,7 @@ for(const r of Object.values(records)){const source=sources.find(m=>m.key===r.me
 const curated=curateMerchantProducts(merchantProducts(Object.fromEntries(Object.entries(records).filter(([,r])=>configured.has(r.merchant.key)))),dashboard);
 const products=curated.products;
 const checkedAt=new Date().toISOString();
-const result={version:monitorVersion,merchantPrimaryImages,mode:'merchant_monitor',configDigest,checkedAt,codeSha:process.env.GITHUB_SHA||null,merchantListings:records,merchants:sources,products,errors,
+const result={externalSearchAccess:externalSearchAccessSnapshot(),version:monitorVersion,merchantPrimaryImages,mode:'merchant_monitor',configDigest,checkedAt,codeSha:process.env.GITHUB_SHA||null,merchantListings:records,merchants:sources,products,errors,
  stats:{merchants:merchants.length,total:products.length,details,imageLookups,publicImageLookups,images:imageCoverage(products),excludedOwned:curated.excludedOwned,mergedListings:curated.mergedListings},login:{xianyuRequired:!session.access().allowed}};
 const status={version:monitorVersion,mode:result.mode,checkedAt,codeSha:result.codeSha,total:products.length,sourceStats:result.stats,errors,merchants:sources};
 const sealed=encrypt(Buffer.from(JSON.stringify(result)),password);
