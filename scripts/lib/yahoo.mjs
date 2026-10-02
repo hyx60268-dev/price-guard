@@ -327,7 +327,21 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   // title.  Give lower-priced recommendation thumbnails a second chance using the image,
   // then still require the normal full detail/variant/condition validation below.  This is
   // recall only: a thumbnail match can never become a competitor without detail verification.
+  const liveCards=mergeCards([searchCards,recommendationCards]);
+  const liveById=new Map(liveCards.map(card=>[card.id,card]));
   const acceptedIds=new Set(preliminary.map(card=>card.id));
+  // This exact reviewed link may arrive as an image-only recommendation. Its
+  // card is a recall hint, never a substitute for the full live detail below.
+  for(const card of cards){
+    if(acceptedIds.has(card.id)||card.id===item.id||!Number.isFinite(card.price)||
+      rejectedByMemory(settings.matchCorrections,item,'yahoo',card)||isOwnedOffer(settings.ownedOffers,'yahoo',card)||
+      ownSellerId&&card.sellerId===ownSellerId||isRejected(card.title))continue;
+    if(!reviewedListingCandidate({platform:'yahoo',own:ownDetail,ownPrimary:ownImageEvidence[0],candidate:liveById.get(card.id)||card}))continue;
+    preliminary.push({...card,titleScore:titleScore(exactQuery,card.title),recallScore:titleScore(query,card.title),
+      semantic:semanticSameItem({query:item.title,candidate:card.title,queryCategory:ownCategory,candidateCategory:categoryText(null,card)}),
+      fromRecommendation:recommendationEvidence(card),lotterySeriesUnconfirmed:lotterySeriesNeedsVisualConfirmation(item.title,card.title),conditionPriority:1});
+    acceptedIds.add(card.id);
+  }
   const visualRecallLimit=Math.max(0,Math.min(30,Number(settings.yahooRecommendationFallbackMaxCards)||20));
   const visualRecallThreshold=Math.max(.80,Number(settings.yahooRecommendationVisualRecallThreshold)||.84);
   const visualRecallCards=cards.filter(card=>
@@ -354,8 +368,6 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   // the same budget on cheaper unknown offers. Priority is never acceptance:
   // every selected listing still passes current detail, ownership and variant
   // checks below. Six of the default eight slots remain for lower-price recall.
-  const liveCards=mergeCards([searchCards,recommendationCards]);
-  const liveById=new Map(liveCards.map(card=>[card.id,card]));
   const prior=item.yahoo||{},audit=prior.audit||{};
   const eligiblePrior=Boolean(item.accountId)&&Boolean(audit.accountId)&&prior.rulesVersion===MATCHING_RULES_VERSION&&Number.isFinite(Date.parse(prior.checkedAt||''))&&
     ['ok','incomplete'].includes(prior.evidenceStatus||prior.status)&&
@@ -505,7 +517,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
     verifiedMinPrice:market.verifiedMinPrice,plausibleMinPrice:market.plausibleMinPrice,
     raiseGuardMinPrice:market.raiseGuardMinPrice,raiseRoomJPY:market.raiseRoomJPY,ownIsDefiniteLowest:market.ownIsDefiniteLowest,
     matchLabel,matchConfidence:competitors.length?'高':sourceCovered?'覆盖检查':'需复核',checkedAt:new Date().toISOString(),ownImages:[...new Set(ownImages)].slice(0,8),
-    audit:{ownItemId:item.id,accountId:item.accountId||null,ownDetailLoaded:Boolean(ownDetail?.description?.trim()),rulesVersion:MATCHING_RULES_VERSION},
+    audit:{ownItemId:item.id,accountId:item.accountId||null,ownDetailLoaded:Boolean(ownDetail?.description?.trim()),rulesVersion:MATCHING_RULES_VERSION,knownRecheckIds:knownCards.slice(0,recheckLimit).map(card=>card.id)},
     ownDescription:ownDetail?.description||item.yahoo?.ownDescription||'',ownCategory,
     ownListedAt:ownDetail?.openDate||null,ownListingId:item.id,
     searchCheckedAt:search?new Date().toISOString():(item.yahoo?.searchCheckedAt||item.yahoo?.checkedAt||null),

@@ -46,9 +46,13 @@ function snapshotMatches(detail,primary,snapshot){
 // cheap recommendations. Current candidate description/condition/photo bytes
 // remain unverified here and MUST pass reviewedListingIdentity after fetching.
 export function reviewedListingCandidate({platform,own,ownPrimary,candidate}={}){
+  const seller=String(candidate?.sellerId||candidate?.seller?.id||'').trim(),title=text(candidate?.title);
+  // Recommendation cards may omit seller/title and use a CDN thumbnail rather
+  // than the detail's original image. The exact reviewed ID can earn one detail
+  // request; supplied contradictory fields still revoke this queue hint.
   return reviews.some(row=>row.platform===platform&&snapshotMatches(own,ownPrimary,row.own)&&
-    String(candidate?.id||'')===row.candidate.id&&String(candidate?.sellerId||'')===row.candidate.sellerId&&
-    text(candidate?.title)===text(row.candidate.title)&&candidate?.image===row.candidate.image);
+    String(candidate?.id||'')===row.candidate.id&&(!seller||seller===row.candidate.sellerId)&&
+    (!title||title===text(row.candidate.title)));
 }
 
 // This only supplies reviewed visual identity. The caller must still enforce
