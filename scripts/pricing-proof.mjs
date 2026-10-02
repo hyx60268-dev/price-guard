@@ -11,7 +11,7 @@ if(!/^z\d+$/.test(id))throw Error('Invalid Yahoo item ID');
 const settings=JSON.parse(await fs.readFile(new URL('../config/settings.json',import.meta.url)));
 const own=(await fetchYahooItemBundle(id,settings)).detail;
 if(own.status!=='OPEN')throw Error('Source listing is no longer open');
-const item={id,title:own.title,description:own.description,ownPrice:Number(own.price),image:own.images?.[0]?.url||own.images?.[0],url:`https://paypayfleamarket.yahoo.co.jp/item/${id}`,accountId:'public-diagnostic'};
+const item={id,platform:'yahoo',sellerId:String(own.seller?.id||own.sellerId||''),title:own.title,description:own.description,ownPrice:Number(own.price),image:own.images?.[0]?.url||own.images?.[0],url:`https://paypayfleamarket.yahoo.co.jp/item/${id}`,accountId:'public-diagnostic'};
 let browser;
 try{
  for(const platform of ['yahoo','rakuma','mercari']){

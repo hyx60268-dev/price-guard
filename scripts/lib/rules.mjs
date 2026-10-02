@@ -32,7 +32,7 @@ function canonicalProductText(value='') {
     // Yahoo sellers use several Japanese/Chinese spellings (and one common typo)
     // for this same Pokemon collection name.  Keep this product-specific alias
     // here rather than weakening the generic token matcher.
-    .replace(/(?:絵夢点睛|絵夢点晴|绘梦点睛|繪夢點睛|梦点睛|夢点睛)/gi,' emutenkai ')
+    .replace(/(?:絵夢点睛|絵夢点晴|绘梦点睛|繪夢點睛|梦点睛|夢点睛|夢描点睛)/gi,' emutenkai ')
     // Exact bilingual entity aliases. These normalize names, never erase an
     // unknown character, card grade, colour or sale unit to force a match.
     .replace(/(?:星稚夢旅|星稚梦旅)(?:シリーズ|系列)?/g,' 星稚梦旅 ')
@@ -121,7 +121,9 @@ export function semanticQuantity(value='') {
     .map(match=>Number(match[1])).filter(Number.isFinite);
   if(kindSets.length)return Math.max(...kindSets);
   if(explicit.length)return Math.max(...explicit);
-  if(random&&!complete)return 1;
+  // Random contents inside an explicitly sold outer BOX do not mean the
+  // seller offers one loose figure. Unknown inner count stays unknown.
+  if(random&&!complete&&!saleUnitProfile(value).fullBox)return 1;
   const allKinds=text.match(/全\s*(\d+)\s*種/i);
   if(allKinds&&complete)return Number(allKinds[1]);
   if(/(?:ペア|pair|カップル|情侣|一対|1対|男女|男の子.{0,12}女の子|boy.{0,12}girl|girl.{0,12}boy)/i.test(text))return 2;
@@ -184,6 +186,10 @@ export function saleUnitEquivalent(query='',candidate='') {
   if((qContents.restricted||cContents.restricted)&&
     (!Number.isFinite(qCount)||!Number.isFinite(cCount)))return false;
   const left=saleUnitProfile(query),right=saleUnitProfile(candidate);
+  // An explicit single sold unit in the body overrides an apparent BOX heading.
+  // The per-inner-box contents section ("1個の内容") is not such a statement.
+  const singleSale=value=>/(?:^|[\n。])\s*(?:商品|出品(?:内容)?|販売(?:内容)?|こちら)(?:は|:|：)?\s*(?:1|一)\s*(?:個|体|点|枚|小箱)\s*(?:のみ|だけ)/i.test(String(value).normalize('NFKC'));
+  if((left.fullBox||right.fullBox)&&(singleSale(query)||singleSale(candidate)))return false;
   if(left.fullBox||right.fullBox)return left.fullBox&&right.fullBox;
   if(left.completeSet||right.completeSet)return left.completeSet&&right.completeSet;
   if(left.randomUnit||right.randomUnit)return left.randomUnit&&right.randomUnit;
@@ -434,6 +440,11 @@ export function collectibleIdentityRequiresVisualProof(query='',candidate='',que
 
 // 抽選フィギュアの「A賞 / ラストワン賞」やタロットの「V / XX」は、
 // 作品名・角色・商品类型が同じでも商品そのものを特定する識別子。
+function pokemonFigureReleaseContext(value=''){
+  const heading=canonicalProductText(listingHeading(value));
+  return /emutenkai/i.test(heading)&&/(?:ポケモン|pokemon|宝可梦|寶可夢)/i.test(heading)&&/(?:フィギュア|figure|手办|手辦|公仔|盲盒)/i.test(heading);
+}
+
 export function identityVariantFacets(value=''){
   const upper=normalizedJapanese(value).toUpperCase();
   const prizes=setFromMatches(upper,[
@@ -449,6 +460,13 @@ export function identityVariantFacets(value=''){
     [/(愚者|魔術師|女教皇|女帝|皇帝|教皇|恋人|戦車|力|隠者|運命の輪|正義|吊るされた男|死神|節制|悪魔|塔|星|月|太陽|審判|世界|THE\s+FOOL|THE\s+MAGICIAN|THE\s+HIGH\s+PRIESTESS|THE\s+EMPRESS|THE\s+EMPEROR|THE\s+HIEROPHANT|THE\s+LOVERS|THE\s+CHARIOT|STRENGTH|THE\s+HERMIT|WHEEL\s+OF\s+FORTUNE|JUSTICE|THE\s+HANGED\s+MAN|DEATH|TEMPERANCE|THE\s+DEVIL|THE\s+TOWER|THE\s+STAR|THE\s+MOON|THE\s+SUN|JUDGEMENT|JUDGMENT|THE\s+WORLD)/g,match=>match[1].replace(/\s+/g,'_')]
   ]):new Set();
   const waves=setFromMatches(upper,[[/第\s*(\d+)\s*弾/g,match=>match[1]]]);
+  // This Pokemon figure collection uses both "第4弾" and "4代目" for the
+  // release number. Scope that equivalence to the observed toy series; generic
+  // dates, anniversaries, other products and prose are not release evidence.
+  const releaseHeading=canonicalProductText(listingHeading(value));
+  if(pokemonFigureReleaseContext(releaseHeading)){
+    for(const match of releaseHeading.matchAll(/(?:^|[^0-9])(?:第\s*)?([1-9]\d?)\s*代目(?=$|[^0-9])/g))waves.add(String(Number(match[1])));
+  }
   const anniversaries=setFromMatches(upper,[[/(\d+)\s*周年/g,match=>match[1]]]);
   const cardGrades=/(?:カード|CARD|卡片|トレカ)/i.test(upper)?setFromMatches(upper,[[
     /(?:^|[\s　・:：【】()（）])((?:SSP|SSR|SEC|SS|SR|UR|LR|MR|SP|RRR|RR|R|N))(?=$|[\s　・:：【】()（）])/g,
@@ -519,6 +537,9 @@ export function lotterySeriesNeedsVisualConfirmation(query='',candidate=''){
 
 export function hasIdentityVariantMismatch(query='',candidate=''){
   const left=identityVariantFacets(query),right=identityVariantFacets(candidate);
+  // A heading that says both generation 3 and generation 4 is unresolved, even
+  // if one of those numbers happens to overlap the other listing.
+  if([query,candidate].some(value=>pokemonFigureReleaseContext(value)&&identityVariantFacets(listingHeading(value)).waves.size>1))return true;
   return disjointNonEmpty(left.prizes,right.prizes)||disjointNonEmpty(left.tarot,right.tarot)||
     disjointNonEmpty(left.tarotNames,right.tarotNames)||disjointNonEmpty(left.waves,right.waves)||
     disjointNonEmpty(left.anniversaries,right.anniversaries)||disjointNonEmpty(left.cardGrades,right.cardGrades)||
@@ -588,6 +609,40 @@ export function visualListingEquivalent({query='',candidate='',queryCategory='',
   if(!queryFamily||queryFamily!==candidateFamily)return false;
   const forward=distinctiveCoverage(query,candidate),backward=distinctiveCoverage(candidate,query);
   return Math.max(forward.matchedCount,backward.matchedCount)>=2&&Math.max(forward.matchedLength,backward.matchedLength)>=4;
+}
+
+// A single unopened factory BOX is an observable sale unit even when one
+// seller omits the number of inner figures. This never supplies that missing
+// number: it requires the same strongly matched PRIMARY carton, product name,
+// and no contradictory explicit contents. Loose assortments do not qualify.
+export function sealedSingleBoxTextCompatible({query='',candidate=''}={}) {
+  const headings=[query,candidate].map(listingHeading);
+  if(headings.some(h=>!/(?:^|[^0-9])1\s*(?:BOX|ボックス)(?=$|[^A-Z])/i.test(h)))return false;
+  if(hasExplicitVariantMismatch(headings[0],headings[1])||hasExplicitVariantMismatch(headings[1],headings[0])||!saleUnitEquivalent(query,candidate))return false;
+  if(productFamily(query)!=='figure'||productFamily(candidate)!=='figure')return false;
+  const forward=distinctiveCoverage(headings[0],headings[1]),backward=distinctiveCoverage(headings[1],headings[0]);
+  if(Math.min(forward.score,backward.score)<.85||Math.min(forward.matchedCount,backward.matchedCount)<3)return false;
+  const innerCounts=[];
+  for(const text of [query,candidate]){
+    const body=normalizedJapanese(text),condition=conditionProfile(body);
+    if(!condition.sealedNew||condition.openedOrUsed||condition.boxOnly||condition.noBox||hasExplicitDefect(listingHeading(text),text))return false;
+    if(/(?:単品|单品|單品|(?:1|一)\s*(?:個|体|点|小箱|个|只)\s*(?:のみ|だけ|販売|売り|出品)|バラ売り|ばら売り|散装|散裝|小箱\s*(?:セット|まとめ)|(?:[2-9]\d*)\s*(?:体|個|点)\s*(?:セット|まとめ売り)|選べる|選択|任选|任選|选款|選款)/i.test(body))return false;
+    const boxes=[...body.matchAll(/(\d+)\s*(?:box|ボックス)/gi)].map(m=>Number(m[1]));
+    if(!boxes.length||boxes.some(n=>n!==1))return false;
+    const counts=new Set([...body.matchAll(/1\s*(?:box|ボックス)[^\d\n]{0,12}(\d+)\s*(?:個|体|小箱|ピース|个|只)/gi)].map(m=>Number(m[1])));
+    if(counts.size>1)return false;
+    innerCounts.push(counts.size?[...counts][0]:null);
+  }
+  if(innerCounts.every(Number.isFinite)&&innerCounts[0]!==innerCounts[1])return false;
+  return true;
+}
+
+// Automatic carton evidence keeps the original strict primary-photo threshold.
+// A separately audited exact-listing record may supply visual identity in Yahoo;
+// it calls the same text guard without inventing an image similarity score.
+export function sealedSingleBoxEquivalent({query='',candidate='',primaryImageScore=null,threshold=.98}={}) {
+  return Number.isFinite(primaryImageScore)&&primaryImageScore>=Math.max(.98,threshold)&&
+    sealedSingleBoxTextCompatible({query,candidate});
 }
 
 // A sealed outer blind-box and the seller wording "12 small boxes" describe the

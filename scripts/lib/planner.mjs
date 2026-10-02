@@ -47,7 +47,7 @@ export function reconcileLiveItems(catalogItems=[],previousItems=[],liveItems=[]
 export function inventoryDelta(previousItems=[],activeItems=[]){
   const before=new Set(previousItems.map(item=>item.id));
   const after=new Set(activeItems.map(item=>item.id));
-  const relisted=activeItems.filter(item=>item.relistedFrom&&before.has(item.relistedFrom))
+  const relisted=activeItems.filter(item=>!before.has(item.id)&&item.relistedFrom&&before.has(item.relistedFrom))
     .map(item=>({from:item.relistedFrom,to:item.id,title:item.title}));
   const relistedFrom=new Set(relisted.map(item=>item.from)),relistedTo=new Set(relisted.map(item=>item.to));
   return {
@@ -56,6 +56,33 @@ export function inventoryDelta(previousItems=[],activeItems=[]){
     relisted,
     unchanged:[...after].filter(id=>before.has(id)).length
   };
+}
+
+export function currentInventoryAdditions(delta={}){
+  // relistedFrom survives for cost inheritance; only this refresh's delta earns priority.
+  return new Set([...(delta.added||[]),...(delta.relisted||[]).map(item=>item.to)]);
+}
+
+export function parsePriceAuditItemIds(value=''){
+  return new Set([...new Set(String(value).split(',').map(id=>id.trim()).filter(id=>/^[a-zA-Z0-9_-]{1,80}$/.test(id)))].slice(0,20));
+}
+
+export function prioritizePriceAuditItems(tasks=[],itemIds=new Set()){
+  if(!itemIds.size)return tasks;
+  const requested=[],remaining=[];
+  for(const task of tasks)(itemIds.has(task.item?.id)?requested:remaining).push(task);
+  return [...requested,...remaining];
+}
+
+export function comparisonAttemptTime(value={}){
+  const times=[value?.lastAttemptAt,value?.checkedAt].map(value=>Date.parse(value||'')).filter(Number.isFinite);
+  return times.length?Math.max(...times):NaN;
+}
+
+export function retainComparisonAttempt(value={},prior={},attemptedAt){
+  // Retry scheduling must not refresh the timestamp of the price evidence.
+  const times=[attemptedAt,value.lastAttemptAt,prior?.lastAttemptAt,prior?.checkedAt].map(value=>Date.parse(value||'')).filter(Number.isFinite);
+  return times.length?{...value,lastAttemptAt:new Date(Math.max(...times)).toISOString()}:value;
 }
 
 export function shouldScanXianyu(item,yahooResult){

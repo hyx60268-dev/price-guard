@@ -8,6 +8,10 @@ on:
         description: 全量核验所有账号全部商品（Yahoo与Rakuma）
         type: boolean
         default: false
+      priority_item_ids:
+        description: 优先复查的已录入商品ID（逗号分隔，最多20个，不跳过核验）
+        type: string
+        default: ''
   schedule:
     # GitHub 云端约每 20 分钟检查一次；无需电脑或手机保持开机。
     - cron: '*/20 * * * *'
@@ -94,6 +98,7 @@ jobs:
           # explicit maintenance action; its progress is still accumulated by
           # the same encrypted baseline instead of blocking ordinary updates.
           FULL_PRICE_AUDIT: ${{ inputs.full_audit && '1' || '0' }}
+          PRICE_AUDIT_ITEM_IDS: ${{ inputs.priority_item_ids || '' }}
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
           XIANYU_AUTH_PART_1: ${{ secrets.XIANYU_AUTH_PART_1 }}
           XIANYU_AUTH_PART_2: ${{ secrets.XIANYU_AUTH_PART_2 }}
