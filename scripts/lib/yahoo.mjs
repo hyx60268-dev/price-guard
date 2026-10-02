@@ -3,7 +3,7 @@ import { extractYahooBundleComponents } from './merchant-bundles.mjs';
 import { merchantNameFromTitle } from './merchant-names.mjs';
 import { imageFingerprints,imageSetSimilarity,primaryProductSimilarity } from './image.mjs';
 import { offerIdentityGuard } from './offer-identity.mjs';
-import { reviewedListingIdentity } from './reviewed-listing-identities.mjs';
+import { reviewedListingCandidate,reviewedListingIdentity } from './reviewed-listing-identities.mjs';
 import { rejectedByMemory } from '../../public/match-memory.js';
 import { descriptionColorMismatch } from './rules.mjs';
 import { coherentPrices,collectibleIdentityRequiresVisualProof,conditionCompatible,distinctiveCoverage,exactIdentityTitleEquivalent,hasExplicitDefect,hasExplicitVariantMismatch,isRejected,listingSpecificationEquivalent,listingTextEquivalent,lotterySeriesEquivalent,lotterySeriesNeedsVisualConfirmation,MATCHING_RULES_VERSION,packagedAssortmentEquivalent,sealedSingleBoxEquivalent,sealedSingleBoxTextCompatible,productFamily,saleUnitEquivalent,semanticSameItem,titleScore,visualListingEquivalent } from './rules.mjs';
@@ -327,7 +327,21 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   // title.  Give lower-priced recommendation thumbnails a second chance using the image,
   // then still require the normal full detail/variant/condition validation below.  This is
   // recall only: a thumbnail match can never become a competitor without detail verification.
+  const liveCards=mergeCards([searchCards,recommendationCards]);
+  const liveById=new Map(liveCards.map(card=>[card.id,card]));
   const acceptedIds=new Set(preliminary.map(card=>card.id));
+  // This exact reviewed link may arrive as an image-only recommendation. Its
+  // card is a recall hint, never a substitute for the full live detail below.
+  for(const card of cards){
+    if(acceptedIds.has(card.id)||card.id===item.id||!Number.isFinite(card.price)||
+      rejectedByMemory(settings.matchCorrections,item,'yahoo',card)||isOwnedOffer(settings.ownedOffers,'yahoo',card)||
+      ownSellerId&&card.sellerId===ownSellerId||isRejected(card.title))continue;
+    if(!reviewedListingCandidate({platform:'yahoo',own:ownDetail,ownPrimary:ownImageEvidence[0],candidate:liveById.get(card.id)||card}))continue;
+    preliminary.push({...card,titleScore:titleScore(exactQuery,card.title),recallScore:titleScore(query,card.title),
+      semantic:semanticSameItem({query:item.title,candidate:card.title,queryCategory:ownCategory,candidateCategory:categoryText(null,card)}),
+      fromRecommendation:recommendationEvidence(card),lotterySeriesUnconfirmed:lotterySeriesNeedsVisualConfirmation(item.title,card.title),conditionPriority:1});
+    acceptedIds.add(card.id);
+  }
   const visualRecallLimit=Math.max(0,Math.min(30,Number(settings.yahooRecommendationFallbackMaxCards)||20));
   const visualRecallThreshold=Math.max(.80,Number(settings.yahooRecommendationVisualRecallThreshold)||.84);
   const visualRecallCards=cards.filter(card=>
@@ -349,13 +363,36 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   }
   if(acceptedIds.size)for(let index=rejected.length-1;index>=0;index--)if(acceptedIds.has(rejected[index]?.id))rejected.splice(index,1);
   preliminary.sort(candidateEvidenceOrder);
+  const maxDetailChecks=Math.max(1,Number(settings.maxYahooDetailChecks)||8);
+  // Recheck at most two known external listings before spending the rest of
+  // the same budget on cheaper unknown offers. Priority is never acceptance:
+  // every selected listing still passes current detail, ownership and variant
+  // checks below. Six of the default eight slots remain for lower-price recall.
+  const prior=item.yahoo||{},audit=prior.audit||{};
+  const eligiblePrior=Boolean(item.accountId)&&Boolean(audit.accountId)&&prior.rulesVersion===MATCHING_RULES_VERSION&&Number.isFinite(Date.parse(prior.checkedAt||''))&&
+    ['ok','incomplete'].includes(prior.evidenceStatus||prior.status)&&
+    audit.ownItemId===item.id&&audit.accountId===item.accountId;
+  const priorMethods=new Set(['detail_type_quantity_text_images','detail_type_quantity_equivalent_text','strong_visual_primary_product',
+    'exact_bidirectional_title_identity','same_packaging_assortment','lottery_release_prize_character','same_sealed_single_box_primary','reviewed_sealed_box_identity']);
+  const priorById=new Map((eligiblePrior?prior.candidates||[]:[]).filter(card=>!card.isOwn&&card.id&&card.sellerId&&card.title&&card.image&&Number.isFinite(Number(card.price))&&Number(card.price)>0&&priorMethods.has(card.matchMethod)).map(card=>[card.id,card]));
+  const normalized=value=>String(value||'').normalize('NFKC').replace(/\s+/g,' ').trim();
+  const known=card=>{
+    const current=liveById.get(card.id)||card;
+    if(reviewedListingCandidate({platform:'yahoo',own:ownDetail,ownPrimary:ownImageEvidence[0],candidate:current}))return true;
+    const previous=priorById.get(card.id);
+    return Boolean(previous&&['id','sellerId','title','image'].every(key=>normalized(previous[key])===normalized(current[key])));
+  };
+  const recheckLimit=Math.min(2,Math.max(1,Math.floor(maxDetailChecks/4)));
+  const knownCards=preliminary.filter(known),knownIds=new Set(knownCards.map(card=>card.id));
+  // Unselected old links follow new candidates even when their cached price is
+  // lower. Otherwise a third known link could consume a reserved discovery slot.
+  preliminary=[...knownCards.slice(0,recheckLimit),...preliminary.filter(card=>!knownIds.has(card.id)),...knownCards.slice(recheckLimit)];
   const ownCondition=typeof ownDetail?.condition==='string'?ownDetail.condition:
     ownDetail?.condition?.name||ownDetail?.condition?.text||ownDetail?.condition?.label||ownDetail?.condition?.key||'';
   const ownConditionText=`${item.title}\n${ownDetail?.title||''}\n${ownDetail?.description||''}\n${ownCondition}`;
 
   const competitors=[];
   let detailCheckedCount=0;
-  const maxDetailChecks=Math.max(1,Number(settings.maxYahooDetailChecks)||8);
   for(let index=0;index<preliminary.length&&detailCheckedCount<maxDetailChecks;index++){
     const card=preliminary[index];
     detailCheckedCount++;
@@ -366,6 +403,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
         rejected.push({id:card.id,price:Number(detail?.price),reason:'sale_description_unavailable'});continue
       }
       if(detail.status!=='OPEN'){rejected.push({id:card.id,price:card.price,reason:'not_open'});continue}
+      if(!Number.isFinite(Number(detail.price))||Number(detail.price)<=0){rejected.push({id:card.id,price:card.price,reason:'detail_price_unavailable'});continue}
       const detailSellerId=String(detail.seller?.id||detail.sellerId||card.sellerId||'').trim();
       if(isOwnedOffer(settings.ownedOffers,'yahoo',{...card,sellerId:detailSellerId})||ownSellerId&&detailSellerId===ownSellerId){rejected.push({id:card.id,price:Number(detail.price),reason:'own_seller'});continue}
       if(hasExplicitDefect(detail.title,detail.description)){rejected.push({id:card.id,price:Number(detail.price),reason:'defect'});continue}
@@ -461,7 +499,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   const uncheckedLowerCandidates=preliminary.filter(candidate=>Number(candidate.price)<provisionalFloor&&!checkedIds.has(candidate.id));
   const market=marketPriceDecision(item.ownPrice,competitors,settings,{plausibleCompetitors:unresolvedCandidates,ownSellerId});
   const {marketPrices,marketMedianPrice,marketMinPrice,marketMaxPrice,underpriced}=market;
-  const reviewReasons=new Set(['primary_variant_unconfirmed','sale_description_unavailable','collectible_variant_image_unconfirmed','lottery_series_unconfirmed','physical_image_unconfirmed','detail_error']);
+  const reviewReasons=new Set(['detail_price_unavailable','primary_variant_unconfirmed','sale_description_unavailable','collectible_variant_image_unconfirmed','lottery_series_unconfirmed','physical_image_unconfirmed','detail_error']);
   const pendingReviews=rejected.filter(candidate=>reviewReasons.has(candidate.reason));
   const unconfirmedLowerCandidates=rejected.filter(candidate=>reviewReasons.has(candidate.reason)&&Number(candidate.price)<Number(item.ownPrice));
   const verificationIncomplete=Boolean(broadSearchDue&&!search)||uncheckedLowerCandidates.length>0||unconfirmedLowerCandidates.length>0||!competitors.length&&pendingReviews.length>0||!ownDetail?.description?.trim();
@@ -479,7 +517,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
     verifiedMinPrice:market.verifiedMinPrice,plausibleMinPrice:market.plausibleMinPrice,
     raiseGuardMinPrice:market.raiseGuardMinPrice,raiseRoomJPY:market.raiseRoomJPY,ownIsDefiniteLowest:market.ownIsDefiniteLowest,
     matchLabel,matchConfidence:competitors.length?'高':sourceCovered?'覆盖检查':'需复核',checkedAt:new Date().toISOString(),ownImages:[...new Set(ownImages)].slice(0,8),
-    audit:{ownItemId:item.id,accountId:item.accountId||null,ownDetailLoaded:Boolean(ownDetail?.description?.trim()),rulesVersion:MATCHING_RULES_VERSION},
+    audit:{ownItemId:item.id,accountId:item.accountId||null,ownDetailLoaded:Boolean(ownDetail?.description?.trim()),rulesVersion:MATCHING_RULES_VERSION,knownRecheckIds:knownCards.slice(0,recheckLimit).map(card=>card.id)},
     ownDescription:ownDetail?.description||item.yahoo?.ownDescription||'',ownCategory,
     ownListedAt:ownDetail?.openDate||null,ownListingId:item.id,
     searchCheckedAt:search?new Date().toISOString():(item.yahoo?.searchCheckedAt||item.yahoo?.checkedAt||null),

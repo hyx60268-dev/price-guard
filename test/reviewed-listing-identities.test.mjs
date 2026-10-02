@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
-import { reviewedListingIdentity } from '../scripts/lib/reviewed-listing-identities.mjs';
+import { reviewedListingCandidate,reviewedListingIdentity } from '../scripts/lib/reviewed-listing-identities.mjs';
 import { yahooCompare } from '../scripts/lib/yahoo.mjs';
-import { semanticQuantity,sealedSingleBoxEquivalent,sealedSingleBoxTextCompatible } from '../scripts/lib/rules.mjs';
+import { MATCHING_RULES_VERSION,semanticQuantity,sealedSingleBoxEquivalent,sealedSingleBoxTextCompatible } from '../scripts/lib/rules.mjs';
 import { buildOwnedOffers } from '../public/owned-offers.js';
+import { pricingDecision } from '../public/pricing-policy.js';
 import { imageFingerprints } from '../scripts/lib/image.mjs';
 
 const prose=JSON.parse(fs.readFileSync(new URL('./fixtures/user-match-regressions.json',import.meta.url),'utf8')).find(row=>row.case==='2026-10-02 宝可梦梦点睛与实际41999商品夢描点睛别名');
@@ -82,4 +83,129 @@ test('fingerprint SHA is the exact already-downloaded byte digest',async()=>{
   const bytes=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="red"/></svg>');
   const value=await imageFingerprints('data:image/svg+xml;base64,'+bytes.toString('base64'));
   assert.equal(value.contentSha256,createHash('sha256').update(bytes).digest('hex'));
+});
+
+const productionSettings=JSON.parse(fs.readFileSync(new URL('../config/settings.json',import.meta.url),'utf8'));
+async function crowdedReplay({prior=false,knownCount=1,change=()=>{},settings={}}={}){
+  const record=observed(),calls=[];
+  if(prior){record.candidate={...record.candidate,id:'z-prior-known',title:record.own.title,description:record.own.description};}
+  const target=record.candidate;
+  const known=Array.from({length:knownCount},(_,index)=>({...target,id:index?target.id+'-'+index:target.id,price:41999+index*100}));
+  const cardFor=detail=>({id:detail.id,title:detail.title,sellerId:detail.seller.id,price:detail.price,image:detail.images[0],source:'recommendation',recommendationScore:.999});
+  const cheap=Array.from({length:10},(_,index)=>({...cardFor(target),id:'z-cheap-'+index,price:6000+index*100,image:'https://example.test/cheap-'+index+'.jpg'}));
+  const cards=[...cheap,...known.map(cardFor)];
+  const details=new Map([...known.map(detail=>[detail.id,detail]),...cheap.map(card=>[card.id,{...target,id:card.id,price:card.price,images:[card.image],condition:'開封済み',description:'中古 開封済み 2BOXをまとめて販売します。'}])]);
+  const item={id:record.own.id,accountId:'melon',platform:'yahoo_fleamarket',sellerId:record.own.seller.id,title:record.own.title,ownPrice:44499,image:ownImage,
+    yahoo:{searchCheckedAt:new Date().toISOString(),...(prior?{status:'ok',rulesVersion:MATCHING_RULES_VERSION,checkedAt:'2026-01-01T00:00:00Z',audit:{ownItemId:record.own.id,accountId:'melon'},
+      candidates:known.map(detail=>({...cardFor(detail),matchMethod:'strong_visual_primary_product'}))}:{})}};
+  change({record,item,cards,details,known});
+  const result=await yahooCompare(null,item,{...productionSettings,...settings},{
+    fetchYahooItemBundle:async id=>{if(id===item.id)return {detail:record.own,recommendations:cards};calls.push(id);return {detail:details.get(id)}},
+    fetchYahooResult:async()=>({items:[]}),
+    imageFingerprints:async url=>url===ownImage?fingerprint(record.ownPrimary,100):fingerprint({...record.candidatePrimary,url},prior?100:200)
+  });
+  return {result,calls,targetId:target.id};
+}
+
+test('production eight-detail budget reaches the reviewed eleventh offer before ten cheaper wrong lots',async()=>{
+  assert.equal(productionSettings.maxYahooDetailChecks,8);
+  const {result,calls,targetId}=await crowdedReplay();
+  assert.equal(calls[0],targetId);assert.equal(calls.length,8);
+  assert.equal(calls.filter(id=>id.startsWith('z-cheap-')).length,7);
+  assert.equal(result.candidates[0]?.id,targetId);assert.equal(result.candidates[0]?.price,41999);
+  const decision=pricingDecision({id:'z685606778',ownPrice:44499,yahoo:result});
+  assert.equal(decision.recommendedPrice,41998);assert.equal(decision.canRecommend,true);assert.equal(decision.complete,false);
+  assert.equal(result.candidates[0]?.matchMethod,'reviewed_sealed_box_identity');
+  const checkedWrongLots=result.rejected.filter(row=>calls.includes(row.id)&&row.id.startsWith('z-cheap-'));
+  assert.equal(checkedWrongLots.length,7);
+  assert.ok(checkedWrongLots.every(row=>['sale_unit_mismatch','explicit_variant_mismatch','condition_or_packaging_mismatch'].includes(row.reason)),JSON.stringify(checkedWrongLots));
+});
+
+test('manual candidate queue hint binds current own snapshot and exact card identity only',()=>{
+  const record=observed(),card={id:record.candidate.id,sellerId:record.candidate.seller.id,title:record.candidate.title,image:otherImage};
+  const options={platform:'yahoo',own:record.own,ownPrimary:record.ownPrimary,candidate:card};
+  assert.equal(reviewedListingCandidate(options),true);
+  for(const key of ['id','sellerId','title'])assert.equal(reviewedListingCandidate({...options,candidate:{...card,[key]:card[key]+'changed'}}),false,key);
+  assert.equal(reviewedListingCandidate({...options,own:{...record.own,description:record.own.description+'変更'}}),false);
+  assert.equal(reviewedListingCandidate({...options,ownPrimary:{...record.ownPrimary,contentSha256:null}}),false);
+});
+
+const proxyThumbnail='https://auc-pctr.c.yimg.jp/i/auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0210/users/6aa9cce46b086b8efaedf39aa01c3fb136c1c313/i-img1027x1200-1790874923313ge6mu7.jpg?pri=l&w=600&h=600&up=0&nf_src=sy&nf_path=images/auc/pc/top/image/1.0.3/na_170x170.png&nf_st=200';
+function imageOnlyCard({cards}){cards.at(-1).sellerId='';cards.at(-1).image=proxyThumbnail;}
+
+test('real recommendation shape with missing seller and proxy thumbnail still reaches exact live detail within eight checks',async()=>{
+  for(const missingTitle of [false,true]){
+    const {result,calls,targetId}=await crowdedReplay({change:state=>{imageOnlyCard(state);if(missingTitle)state.cards.at(-1).title='';}});
+    assert.equal(calls[0],targetId);assert.equal(calls.length,8);
+    assert.deepEqual(result.audit.knownRecheckIds,[targetId]);
+    assert.equal(result.candidates[0]?.id,targetId);assert.equal(result.candidates[0]?.sellerId,'p59959877');
+    assert.equal(result.candidates[0]?.image,otherImage);assert.equal(result.candidates[0]?.price,41999);
+    const decision=pricingDecision({id:'z685606778',ownPrice:44499,yahoo:result});
+    assert.equal(decision.recommendedPrice,41998);assert.equal(decision.canRecommend,true);
+  }
+});
+
+test('image-only queue hints never override changed live detail or current own snapshot',async()=>{
+  for(const change of [x=>x.known[0].seller.id='other-seller',x=>x.known[0].title+=' 別柄',x=>x.known[0].description+='\n2BOXを販売します。',
+    x=>x.known[0].condition='開封済み',x=>x.known[0].status='SOLD',x=>x.known[0].images=[otherImage+'?changed'],x=>x.known[0].price=NaN]){
+    const {result,calls,targetId}=await crowdedReplay({change:state=>{imageOnlyCard(state);change(state);}});
+    assert.equal(calls[0],targetId);assert.equal(result.competitorCount,0,String(change));
+  }
+  const changedOwn=await crowdedReplay({change:state=>{imageOnlyCard(state);state.record.own.description+='変更';}});
+  assert.equal(changedOwn.calls.includes(changedOwn.targetId),false);
+  const ownedOffers=buildOwnedOffers([{id:'managed-elsewhere',platform:'yahoo_fleamarket',sellerId:'p59959877'}]);
+  const owned=await crowdedReplay({change:imageOnlyCard,settings:{ownedOffers}});
+  assert.equal(owned.calls[0],owned.targetId);assert.equal(owned.result.competitorCount,0);assert.ok(owned.result.rejected.some(row=>row.reason==='own_seller'));
+  const rejected=await crowdedReplay({change:imageOnlyCard,settings:{matchCorrections:[{accountId:'melon',itemId:'z685606778',platform:'yahoo',candidateId:'z696507894',updatedAt:new Date().toISOString(),deleted:false}]}});
+  assert.equal(rejected.calls.includes(rejected.targetId),false);assert.equal(rejected.result.competitorCount,0);
+});
+
+test('known prior competitors get at most two rechecks and leave six default slots for cheaper discoveries',async()=>{
+  const {result,calls,targetId}=await crowdedReplay({prior:true,knownCount:3});
+  assert.deepEqual(calls.slice(0,2),[targetId,targetId+'-1']);
+  assert.equal(calls.length,8);assert.equal(calls.filter(id=>id.startsWith('z-cheap-')).length,6);
+  assert.equal(calls.includes(targetId+'-2'),false);assert.equal(result.competitorCount,2);
+});
+
+test('cheap old competitors cannot consume the six reserved new-candidate slots',async()=>{
+  const {calls,targetId}=await crowdedReplay({prior:true,knownCount:3,change:({cards,details})=>{
+    cards.forEach((card,index)=>{card.price=card.id.startsWith('z-cheap-')?10000+index*100:5000+(index-10)*100;details.get(card.id).price=card.price});
+  }});
+  assert.deepEqual(calls.slice(0,2),[targetId,targetId+'-1']);
+  assert.equal(calls.length,8);assert.equal(calls.filter(id=>id.startsWith('z-cheap-')).length,6);
+  assert.equal(calls.includes(targetId+'-2'),false);
+  const sparse=await crowdedReplay({prior:true,knownCount:3,change:({cards})=>cards.splice(0,9)});
+  assert.deepEqual(sparse.calls,[sparse.targetId,sparse.targetId+'-1','z-cheap-9',sparse.targetId+'-2']);
+});
+
+test('prior priority requires the same account, own listing, current rules and unchanged live card fields',async()=>{
+  for(const change of [
+    x=>x.item.yahoo.audit.accountId='other-account',x=>x.item.yahoo.audit.ownItemId='other-item',
+    x=>{delete x.item.accountId;delete x.item.yahoo.audit.accountId},x=>{x.item.accountId='';x.item.yahoo.audit.accountId=''},
+    x=>x.item.yahoo.rulesVersion=MATCHING_RULES_VERSION-1,x=>x.item.yahoo.status='error',
+    x=>x.item.yahoo.checkedAt=null,x=>x.item.yahoo.candidates[0].price=0,
+    x=>x.item.yahoo.candidates[0].matchMethod='unknown_method',
+    x=>x.cards.at(-1).title+=' 別柄',x=>x.cards.at(-1).image+='?changed',x=>x.cards.at(-1).sellerId='other-seller'
+  ]){
+    const {result,calls,targetId}=await crowdedReplay({prior:true,change});
+    assert.equal(calls.includes(targetId),false,String(change));assert.equal(result.competitorCount,0);
+  }
+});
+
+test('priority never bypasses live stock, description, ownership or saved rejection gates',async()=>{
+  for(const prior of [false,true])for(const change of [
+    x=>x.known[0].status='SOLD',x=>x.known[0].description+='\n2BOXを販売します。',
+    x=>x.known[0].condition='開封済み',x=>x.known[0].price=NaN
+  ]){
+    const {result,calls,targetId}=await crowdedReplay({prior,change});
+    assert.equal(calls[0],targetId);assert.equal(result.competitorCount,0,String(change));
+    assert.equal(result.recommendedPrice,44499);
+  }
+  for(const prior of [false,true]){
+    const candidateId=prior?'z-prior-known':'z696507894';
+    const ownedOffers=buildOwnedOffers([{id:'managed-elsewhere',platform:'yahoo_fleamarket',sellerId:'p59959877'}]);
+    const owned=await crowdedReplay({prior,settings:{ownedOffers}});assert.equal(owned.calls.includes(candidateId),false);assert.equal(owned.result.competitorCount,0);
+    const rejected=await crowdedReplay({prior,settings:{matchCorrections:[{accountId:'melon',itemId:'z685606778',platform:'yahoo',candidateId,updatedAt:new Date().toISOString(),deleted:false}]}});
+    assert.equal(rejected.calls.includes(candidateId),false);assert.equal(rejected.result.competitorCount,0);
+  }
 });
