@@ -3,11 +3,15 @@
 export function localizeSearchTerms(value=''){
  return String(value).normalize('NFKC')
   .replace(/トイ[・·\s]*ストーリー|Toy\s*Story/gi,'玩具总动员')
-  .replace(/クレヨンしんちゃん|Crayon\s*Shin[ -]?chan/gi,'蜡笔小新')
-  .replace(/小新の衣橱(?:系列)?/g,'小新衣橱')
-  .replace(/蜡笔小新\s*小新衣橱/g,'蜡笔小新衣橱')
+  .replace(/クレヨンしんちゃん|Crayon\s*Shin[ -]?chan|蠟筆小新/gi,'蜡笔小新')
+  .replace(/(52TOYS)\s*×\s*(?=玩具总动员|蜡笔小新)/gi,'$1 ')
+  // 52TOYS official naming: 小新的衣橱系列 / Wardrobe Series. OOTD is a different line.
+  .replace(/小新の衣[橱櫥](?:系列)?/g,'小新的衣橱系列')
+  .replace(/蜡笔小新\s*(?:小新的?衣[橱櫥]|衣[橱櫥])(?:系列)?/g,'蜡笔小新 小新的衣橱系列')
+  .replace(/蜡笔小新\s*[-—·]?\s*(?:Wardrobe(?:\s+Series)?|ワードローブシリーズ)/gi,'蜡笔小新 小新的衣橱系列')
   .replace(/ロッツォ|\bLOTSO\b|熊抱哥/gi,'草莓熊')
-  .replace(/(?:\bMINIME|ミニミー)\s*(\d+)\b/gi,'MINIME$1')
+  // JD and the official store spell the same numbered line Minime系列2 / Series 2.
+  .replace(/(?:\bMINI\s*ME|ミニミー)\s*(?:系列|series|シリーズ)?\s*(\d+)(?![a-z\d])/gi,'MINIME$1')
   .replace(/ゼンレスゾーンゼロ|ゼンゼロ/g,'绝区零')
   .replace(/アークナイツ/gi,'明日方舟')
   .replace(/鳴上嵐/g,'鸣上岚')
@@ -28,5 +32,6 @@ export function localizeSearchTerms(value=''){
 export function searchIdentityAnchorsPresent(query='',candidate=''){
  // Shared brands and packaging are insufficient for these observed product
  // families. Keep the named character and wardrobe/series in search recall.
- return [/蜡笔小新/,/衣橱/,/草莓熊/,/WARM\s*EMBRACE/i].every(anchor=>!anchor.test(query)||anchor.test(candidate));
+ const editions=query.match(/MINIME\d+[a-z\d]*/gi)||[],otherEditions=new Set((candidate.match(/MINIME\d+[a-z\d]*/gi)||[]).map(value=>value.toLowerCase()));
+ return editions.every(value=>otherEditions.has(value.toLowerCase()))&&[/蜡笔小新/,/衣橱/,/草莓熊/,/WARM\s*EMBRACE/i].every(anchor=>!anchor.test(query)||anchor.test(candidate));
 }

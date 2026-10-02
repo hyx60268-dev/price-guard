@@ -16,7 +16,7 @@ test('cloud wardrobe and LOTSO candidates survive equivalent Chinese/Japanese se
   assert.ok(imageSearchRelevance(query+' 购买 现货',{title})>=.35);
   assert.equal(parseImageSearchResults(rss([['https://shop.test/item',title]]),'bing',query+' 购买 现货').candidates.length,1);
  }
- assert.match(externalSearchQueries(wardrobe)[0],/蜡笔小新衣橱/);
+ assert.match(externalSearchQueries(wardrobe)[0],/蜡笔小新 小新的衣橱系列/);
  assert.match(externalSearchQueries(lotso)[0],/草莓熊 MINIME2/);
 });
 
@@ -56,8 +56,39 @@ test('better search recall still rejects unverified detail quotes and unsupporte
  const result=await alternativeProcurementCost(subject,{fingerprint:async()=>fp,search:async(query,options)=>{
   seen.push(query);return parseImageSearchResults(rss([['https://item.jd.com/123456.html',wardrobeCandidate],['https://www.taobao.com/list/item/product',wardrobeCandidate]]),'bing',query,options);
  },detail:async url=>{read.push(url);return {status:'incomplete',reason:'sku_unconfirmed'}}});
- assert.match(seen[0],/蜡笔小新衣橱/);assert.deepEqual(read,['https://item.jd.com/123456.html']);
+ assert.match(seen[0],/蜡笔小新 小新的衣橱系列/);assert.deepEqual(read,['https://item.jd.com/123456.html']);
  assert.equal(result.detailCheckedCount,1);assert.equal(result.sellerCount,0);assert.equal(result.averageCNY,null);assert.ok(result.diagnostics.some(row=>row.reason==='sku_unconfirmed'));
  assert.equal(procurementSource('https://www.taobao.com/list/item/product'),null);
  assert.equal(procurementSource('https://world.taobao.com/item/123456'),null);
+});
+
+test('real JD Minime series 2 search title is recall evidence only and keeps edition boundaries',async()=>{
+ // Cloud proof 36980721935 rejected this actual JD title before the alias fix.
+ const url='https://item.jd.com/100362919034.html';
+ const title='【52TOYS草莓熊Minime系列2-整盒6包】52TOYS草莓熊Minime系列2 萌粒盲盒潮玩手办玩具整盒6包（内含18只）【行情 报价 ...';
+ const query=externalSearchQueries(lotso)[0];
+ assert.equal((query.match(/草莓熊/g)||[]).length,1);
+ assert.match(query,/MINIME2/);assert.match(query,/1BOX 6个装/);
+ const found=parseImageSearchResults(rss([[url,title]]),'bing',query);
+ assert.equal(found.candidates[0]?.url,url);
+ assert.ok(imageSearchRelevance(query,{title:'Disney Lotso Minime Series 2 Blind Box | 52toys'})>=.35);
+ for(const wrong of [title.replaceAll('系列2','系列3'),title.replaceAll('系列2','系列20'),title.replaceAll('草莓熊','巴斯光年'),title.replaceAll('Minime系列2','WARM EMBRACE')])assert.equal(imageSearchRelevance(query,{title:wrong}),0,wrong);
+ // Six packs containing 18 figures is not accepted as six figures from a search card.
+ const fp={dHash:'123456789abcdef0',aHash:'123456789abcdef0',centerHash:'123456789abcdef0',colorGrid:[1,80,150,60,180,240]},seen=[];
+ const result=await alternativeProcurementCost({accountId:'a',id:'lotso',title:lotso,image:'https://images.test/source'}, {
+  fingerprint:async()=>fp,search:async(q,options)=>parseImageSearchResults(rss([[url,title]]),'bing',q,options),
+  detail:async u=>{seen.push(u);return {status:'incomplete',reason:'selected_sku_unsettled'}}
+ });
+ assert.deepEqual(seen,[url]);assert.equal(result.sellerCount,0);assert.equal(result.averageCNY,null);assert.equal(result.samples.length,0);
+ assert.ok(result.diagnostics.some(row=>row.reason==='selected_sku_unsettled'));
+});
+
+test('official wardrobe naming improves queries without mapping OOTD or dropping sale units',()=>{
+ // Official 52TOYS post: https://www.sina.cn/news/detail/5308591897840148.html
+ // Store link: /ja/products/crayon-shinchan-wardrobe-series-plush-keychain-blind-box
+ const query=externalSearchQueries(wardrobe)[0];
+ assert.match(query,/蜡笔小新 小新的衣橱系列 毛绒盲盒挂件 1BOX 4个装/);
+ for(const title of ['52TOYS 蜡笔小新小新的衣橱系列毛绒盲盒挂件玩偶潮玩礼物整盒4只','52TOYS 蠟筆小新 小新的衣櫥系列 毛絨盲盒 整盒4只','CRAYON SHINCHAN WARDROBE SERIES Plush Keychain Blind Box 52TOYS'])assert.ok(imageSearchRelevance(query,{title})>=.35,title);
+ for(const title of ['52TOYS蜡笔小新早古毛绒公仔OOTD毛绒盲盒挂件玩偶整盒4只','52TOYS CRAYON SHINCHAN VINTAGE PLUSH OOTD SERIES 1BOX 4个装','52TOYS Official Store | Blind Boxes, Figures & Plush','52toys蜡笔小新毛绒搪胶盲盒 书包挂件手办送礼首选'])assert.equal(imageSearchRelevance(query,{title}),0,title);
+ assert.match(externalSearchQueries(wardrobe+' レッド ブラック 10cm 2BOX')[0],/1BOX 4个装 红色 黑色 10cm 2BOX$/);
 });

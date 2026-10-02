@@ -98,7 +98,10 @@ export function externalImageQueries(title='',purpose=''){
 // Keep externalImageQueries unchanged: the procurement identity score still
 // uses its existing text. These expanded variants are only search requests.
 export function externalSearchQueries(title='',purpose=''){
- const full=xianyuQueryFor(localizeSearchTerms(title),{maxLength:Infinity});
+ // Repeated LOTSO/ロッツォ aliases describe one character, not extra sale units.
+ const aliases=new Set(),full=xianyuQueryFor(localizeSearchTerms(title),{maxLength:Infinity})
+  .replace(/(小新的衣橱系列\s+)毛绒挂件/g,'$1毛绒盲盒挂件')
+  .split(' ').filter(word=>word!=='草莓熊'||!aliases.has(word)&&aliases.add(word)).join(' ');
  const localized=full.replace(/歯医者/g,'牙医').replace(/初期衣装/g,'初始服装').replace(/エドガー[・·\s]*ワルデン/g,'艾格 瓦尔登').replace(/張凌赫/g,'张凌赫').replace(/コラボ/g,'联名').replace(/レッド/g,'红色').replace(/ギフトボックス(?:セット)?/g,'礼盒');
  const suffix=purpose==='official'?' 官方 商品图':purpose==='physical'?' 实拍 开箱 多角度':'';
  return [...new Set([localized&&localized+suffix,...externalImageQueries(title,purpose)])].filter(Boolean);
