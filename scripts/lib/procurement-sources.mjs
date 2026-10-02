@@ -1,4 +1,4 @@
-import { publicHtml,searchExternalImages,externalImageQueries,externalPublicUrl } from './external-images.mjs';
+import { publicHtml,searchExternalImages,externalImageQueries,externalSearchQueries,externalPublicUrl } from './external-images.mjs';
 import { imageFingerprints,primaryProductSimilarity } from './image.mjs';
 import { offerIdentityGuard } from './offer-identity.mjs';
 import { normalize,titleScore } from './rules.mjs';
@@ -222,7 +222,7 @@ export async function alternativeProcurementCost(item,{deadline=Date.now()+90000
  }};
  const known=/Anker/i.test(item.title)&&/AeroClip\s*2/i.test(item.title)&&/張凌赫|张凌赫/.test(item.title)?[{url:'https://detail.youzan.com/show/goods?alias=2osy35s5abbdhtd'}]:[];
  await consume(selectCandidates([...known,...(item.procurementSource?.samples||[])]));
- for(const query of externalImageQueries(item.title).slice(0,2))for(const provider of ['duckduckgo','bing']){
+ for(const query of externalSearchQueries(item.title).slice(0,2))for(const provider of ['duckduckgo','bing']){
   if(Date.now()>=deadline||seen.size>=maxDetails||verifiedPublicCostEvidence(report.samples,{target}).ready)break;
   const summary={provider,query:diagnosticText(query+' 购买 现货'),returned:0,rejected:0,accepted:0,unsupportedTargets:0,duplicateUrls:0,rejectedExamples:[]};
   report.searchResults.push(summary);
