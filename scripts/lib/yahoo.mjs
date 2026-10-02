@@ -357,7 +357,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   const liveCards=mergeCards([searchCards,recommendationCards]);
   const liveById=new Map(liveCards.map(card=>[card.id,card]));
   const prior=item.yahoo||{},audit=prior.audit||{};
-  const eligiblePrior=prior.rulesVersion===MATCHING_RULES_VERSION&&Number.isFinite(Date.parse(prior.checkedAt||''))&&
+  const eligiblePrior=Boolean(item.accountId)&&Boolean(audit.accountId)&&prior.rulesVersion===MATCHING_RULES_VERSION&&Number.isFinite(Date.parse(prior.checkedAt||''))&&
     ['ok','incomplete'].includes(prior.evidenceStatus||prior.status)&&
     audit.ownItemId===item.id&&audit.accountId===item.accountId;
   const priorMethods=new Set(['detail_type_quantity_text_images','detail_type_quantity_equivalent_text','strong_visual_primary_product',
@@ -371,8 +371,10 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
     return Boolean(previous&&['id','sellerId','title','image'].every(key=>normalized(previous[key])===normalized(current[key])));
   };
   const recheckLimit=Math.min(2,Math.max(1,Math.floor(maxDetailChecks/4)));
-  const rechecks=preliminary.filter(known).slice(0,recheckLimit),recheckIds=new Set(rechecks.map(card=>card.id));
-  preliminary=[...rechecks,...preliminary.filter(card=>!recheckIds.has(card.id))];
+  const knownCards=preliminary.filter(known),knownIds=new Set(knownCards.map(card=>card.id));
+  // Unselected old links follow new candidates even when their cached price is
+  // lower. Otherwise a third known link could consume a reserved discovery slot.
+  preliminary=[...knownCards.slice(0,recheckLimit),...preliminary.filter(card=>!knownIds.has(card.id)),...knownCards.slice(recheckLimit)];
   const ownCondition=typeof ownDetail?.condition==='string'?ownDetail.condition:
     ownDetail?.condition?.name||ownDetail?.condition?.text||ownDetail?.condition?.label||ownDetail?.condition?.key||'';
   const ownConditionText=`${item.title}\n${ownDetail?.title||''}\n${ownDetail?.description||''}\n${ownCondition}`;

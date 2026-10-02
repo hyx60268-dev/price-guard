@@ -137,9 +137,21 @@ test('known prior competitors get at most two rechecks and leave six default slo
   assert.equal(calls.includes(targetId+'-2'),false);assert.equal(result.competitorCount,2);
 });
 
+test('cheap old competitors cannot consume the six reserved new-candidate slots',async()=>{
+  const {calls,targetId}=await crowdedReplay({prior:true,knownCount:3,change:({cards,details})=>{
+    cards.forEach((card,index)=>{card.price=card.id.startsWith('z-cheap-')?10000+index*100:5000+(index-10)*100;details.get(card.id).price=card.price});
+  }});
+  assert.deepEqual(calls.slice(0,2),[targetId,targetId+'-1']);
+  assert.equal(calls.length,8);assert.equal(calls.filter(id=>id.startsWith('z-cheap-')).length,6);
+  assert.equal(calls.includes(targetId+'-2'),false);
+  const sparse=await crowdedReplay({prior:true,knownCount:3,change:({cards})=>cards.splice(0,9)});
+  assert.deepEqual(sparse.calls,[sparse.targetId,sparse.targetId+'-1','z-cheap-9',sparse.targetId+'-2']);
+});
+
 test('prior priority requires the same account, own listing, current rules and unchanged live card fields',async()=>{
   for(const change of [
     x=>x.item.yahoo.audit.accountId='other-account',x=>x.item.yahoo.audit.ownItemId='other-item',
+    x=>{delete x.item.accountId;delete x.item.yahoo.audit.accountId},x=>{x.item.accountId='';x.item.yahoo.audit.accountId=''},
     x=>x.item.yahoo.rulesVersion=MATCHING_RULES_VERSION-1,x=>x.item.yahoo.status='error',
     x=>x.item.yahoo.checkedAt=null,x=>x.item.yahoo.candidates[0].price=0,
     x=>x.item.yahoo.candidates[0].matchMethod='unknown_method',
