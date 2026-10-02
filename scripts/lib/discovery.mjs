@@ -257,12 +257,12 @@ const chineseNames=new Map([
   ['ポストカード','明信片'],['タンブラー','随行杯'],['ボトル','水杯'],['マグカップ','马克杯']
 ]);
 
-export function xianyuQueryFor(title=''){
+export function xianyuQueryFor(title='',{maxLength=80}={}){
   let query=canonicalSaleTitle(title);
   // Longest names first: カード must not consume フォトカード or コレクションカード.
   for(const [japanese,chinese] of [...chineseNames].sort((a,b)=>b[0].length-a[0].length))query=query.replaceAll(japanese,chinese);
   return query.replace(/(?:セット|全\d+種|\d+点|限定品)/gi,match=>match.replace('セット','套装').replace('点','件').replace('限定品','限定'))
-    .replace(/\s+/g,' ').trim().slice(0,80);
+    .replace(/\s+/g,' ').trim().slice(0,maxLength);
 }
 
 function compactTitle(value,max=40){

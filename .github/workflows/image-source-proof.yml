@@ -1,9 +1,16 @@
 name: 站外找图搜索实测
 on:
   workflow_dispatch:
+    inputs:
+      query_set:
+        description: 公共搜索实测商品组（仅核对召回，不代表照片或成本验收）
+        type: choice
+        options: [baseline, procurement]
+        default: baseline
   pull_request:
     paths:
       - scripts/lib/external-images.mjs
+      - scripts/lib/search-localization.mjs
       - scripts/prove-image-search.mjs
       - .github/workflows/image-source-proof.yml
 permissions:
@@ -21,3 +28,5 @@ jobs:
       - run: npm ci
       - name: 核对真实搜索是否返回相关商品
         run: node scripts/prove-image-search.mjs
+        env:
+          IMAGE_SOURCE_PROOF_SET: ${{ inputs.query_set || 'baseline' }}

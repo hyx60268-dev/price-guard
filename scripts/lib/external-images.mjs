@@ -1,5 +1,6 @@
 import { imageFingerprints,primaryProductSimilarity } from './image.mjs';
 import { xianyuQueryFor } from './discovery.mjs';
+import { localizeSearchTerms,searchIdentityAnchorsPresent } from './search-localization.mjs';
 import { allowedMerchantPhotoSource } from '../../public/merchant-records.js';
 import { hasExplicitVariantMismatch,titleScore,normalize } from './rules.mjs';
 import { reviewedProductImages } from './reviewed-product-images.mjs';
@@ -25,9 +26,10 @@ export async function publicHtml(url,{deadline=Infinity,request=fetch}={}){
 const searchText=value=>decode(String(value||'').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,'$1')).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
 export function imageSearchRelevance(query='',result={}){
  // Search recall only: final variant and primary-image checks stay mandatory.
- const aliases=value=>xianyuQueryFor(value).replace(/Identity\s*V/gi,'第五人格').replace(/Edgar\s*Valden|Painter/gi,'画家').replace(/Dentist|歯医者/gi,'牙医').replace(/初期衣装/g,'初始服装').replace(/張凌赫/g,'张凌赫').replace(/コラボ/g,'联名').replace(/レッド/g,'红色').replace(/ギフトボックス(?:セット)?/g,'礼盒');
- const wanted=aliases(query).replace(/官方|官网|商品图|实拍|开箱|多角度|official|photos|unboxing/gi,' ').replace(/毛绒玩偶|ぬいぐるみ|plush(?:\s+toy)?|初始服装|中国限定|海外限定/gi,' ').replace(/AeroClip\s*2/gi,'AeroClip2');
+ const aliases=value=>xianyuQueryFor(localizeSearchTerms(value),{maxLength:Infinity}).replace(/Identity\s*V/gi,'第五人格').replace(/Edgar\s*Valden|Painter/gi,'画家').replace(/Dentist|歯医者/gi,'牙医').replace(/初期衣装/g,'初始服装').replace(/張凌赫/g,'张凌赫').replace(/コラボ/g,'联名').replace(/レッド/g,'红色').replace(/ギフトボックス(?:セット)?/g,'礼盒');
+ const wanted=aliases(query).replace(/官方|官网|商品图|实拍|开箱|多角度|购买|现货|official|photos|unboxing/gi,' ').replace(/毛绒玩偶|ぬいぐるみ|plush(?:\s+toy)?|初始服装|中国限定|海外限定/gi,' ').replace(/AeroClip\s*2/gi,'AeroClip2');
  const candidate=aliases(result.title||'').replace(/AeroClip\s*2/gi,'AeroClip2');
+ if(!searchIdentityAnchorsPresent(wanted,candidate))return 0;
  const models=wanted.match(/\b[a-z]+\d+[a-z\d]*\b/gi)||[];
  if(models.some(model=>!normalize(candidate).includes(normalize(model))))return 0;
  return titleScore(wanted,candidate);
@@ -93,10 +95,21 @@ export function externalImageQueries(title='',purpose=''){
  const suffix=purpose==='official'?' 官方 商品图':purpose==='physical'?' 实拍 开箱 多角度':'';
  return [...new Set([localized,original])].filter(Boolean).map(q=>q+suffix);
 }
+// Keep externalImageQueries unchanged: the procurement identity score still
+// uses its existing text. These expanded variants are only search requests.
+export function externalSearchQueries(title='',purpose=''){
+ // Repeated LOTSO/ロッツォ aliases describe one character, not extra sale units.
+ const aliases=new Set(),full=xianyuQueryFor(localizeSearchTerms(title),{maxLength:Infinity})
+  .replace(/(小新的衣橱系列\s+)毛绒挂件/g,'$1毛绒盲盒挂件')
+  .split(' ').filter(word=>word!=='草莓熊'||!aliases.has(word)&&aliases.add(word)).join(' ');
+ const localized=full.replace(/歯医者/g,'牙医').replace(/初期衣装/g,'初始服装').replace(/エドガー[・·\s]*ワルデン/g,'艾格 瓦尔登').replace(/張凌赫/g,'张凌赫').replace(/コラボ/g,'联名').replace(/レッド/g,'红色').replace(/ギフトボックス(?:セット)?/g,'礼盒');
+ const suffix=purpose==='official'?' 官方 商品图':purpose==='physical'?' 实拍 开箱 多角度':'';
+ return [...new Set([localized&&localized+suffix,...externalImageQueries(title,purpose)])].filter(Boolean);
+}
 export function externalImagePlan(item={}){
  const set=merchantImageSet(item),queries=[];
  // Search both gaps independently. Generic matching images cannot close either.
- for(const purpose of [set.officialCount?null:'official',set.photoCount>=2?null:'physical'].filter(Boolean))for(const query of externalImageQueries(item.sourceTitle||item.title||'',purpose))queries.push({purpose,query});
+ for(const purpose of [set.officialCount?null:'official',set.photoCount>=2?null:'physical'].filter(Boolean))for(const query of externalSearchQueries(item.sourceTitle||item.title||'',purpose))queries.push({purpose,query});
  return queries;
 }
 // Images and procurement are separate evidence paths. Each returned image is
