@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { publicProcurementItem } from './fixtures/procurement-reference.mjs';
 import { procurementTarget } from '../scripts/lib/procurement-evidence.mjs';
 import { runPublicProcurement } from '../scripts/lib/procurement-runner.mjs';
 const now=Date.parse('2026-10-01T17:00:00Z');
@@ -37,4 +38,21 @@ test('public procurement cloud log includes top-level cause and bounded query/de
 test('public procurement logs target identity failures and sanitizes lookup exceptions',async()=>{
  const logged=[];await runPublicProcurement([[make('a','1'),make('a','2')]],{now:()=>now,deadline:now+60000,lookup:async item=>{if(item.id==='1')return {status:'incomplete',reason:'target_identity_missing',samples:[]};throw Error('HTTP 503 https://example.test/login?token=secret <html>cookie=secret</html>');},log:row=>logged.push(row)});
  assert.equal(logged[0].reason,'target_identity_missing');assert.equal(logged[1].reason,'lookup_exception');assert.ok(logged[1].diagnostics[0].message.startsWith('HTTP 503'));const output=JSON.stringify(logged);assert.equal(output.includes('secret'),false);assert.equal(output.includes('/login'),false);assert.equal(output.includes('<html>'),false);
+});
+
+
+test('configured audit IDs move existing public tasks ahead of the fair queue without increasing admission or workers',async()=>{
+ const buckets=[Array.from({length:6},(_,n)=>make('a','a'+n)),Array.from({length:6},(_,n)=>make('b','b'+n))],seen=[];let active=0,peak=0;
+ const values=await runPublicProcurement(buckets,{priorityItemIds:['b5','a4','not-recorded'],now:()=>now,deadline:now+60000,lookup:async item=>{active++;peak=Math.max(peak,active);seen.push(item.accountId+':'+item.id);await new Promise(r=>setImmediate(r));active--;return {status:'incomplete',samples:[]}}});
+ assert.deepEqual(seen,['a:a4','b:b5','a:a0','b:b0','a:a1','b:b1','a:a2','b:b2']);assert.equal(peak,2);assert.equal(values.size,12);assert.equal(values.get('a:a3').cacheStatus,'deferred_budget');assert.equal(seen.some(k=>k.includes('not-recorded')),false);
+});
+
+test('public priority preserves verified cache, retry windows, deadline and account-bound evidence',async()=>{
+ const cached=publicProcurementItem(now),retry=make('a','retry'),due=make('a','due');
+ retry.prior.procurementSource={status:'incomplete',checkedAt:new Date(now-1000).toISOString(),target:procurementTarget(retry.item)};
+ const task={item:cached,prior:{procurementSource:cached.procurementSource}},seen=[];
+ const values=await runPublicProcurement([[due,retry,task]],{priorityItemIds:[cached.id,'retry'],now:()=>now,deadline:now+60000,limit:1,lookup:async item=>{seen.push(item.id);return {status:'incomplete',samples:[]}}});
+ assert.deepEqual(seen,['due']);assert.equal(values.get(cached.accountId+':'+cached.id).cacheStatus,'fresh_verified');assert.equal(values.get('a:retry').cacheStatus,'awaiting_retry');
+ const expired=await runPublicProcurement([[due]],{priorityItemIds:['due'],now:()=>now,deadline:now,lookup:async()=>{throw Error('must not run')}});assert.equal(expired.get('a:due').attempted,false);
+ const changed={...cached,accountId:'different-account'};let reads=0;await runPublicProcurement([[{item:changed,prior:task.prior}]],{priorityItemIds:[cached.id],now:()=>now,deadline:now+60000,lookup:async()=>{reads++;return {status:'incomplete',samples:[]}}});assert.equal(reads,1);
 });
