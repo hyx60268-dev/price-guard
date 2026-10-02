@@ -1,5 +1,8 @@
 # Price Guard maintenance contract
 
+- The current product scope is the six outcomes in `docs/product-requirements.md`. Read it before changing behavior. Dated repair notes and old automation summaries are historical evidence, not additional product requirements.
+- Keep the solution simple. Scan budgets, queue structure, cache durations and source choices are replaceable implementation decisions; do not treat them as customer-approved limits. Verify replacements before removing identity, price or data-preservation protections.
+
 - Execution stays in the cloud. Do not replace it with a requirement for the user's computer or phone to remain powered on.
 - A user's observed past success is evidence. Current failures do not establish that a feature never worked. Separate source access, matching accuracy, tests, scan coverage, and publication status.
 - Shared physical-offer constraints live in `scripts/lib/offer-identity.mjs`. Yahoo pricing, Xianyu procurement and discovery must retain quantity, sale-content, colour, version and condition exclusions. Titles, recommendation cards, common character names and shared secondary images are not sufficient evidence.
