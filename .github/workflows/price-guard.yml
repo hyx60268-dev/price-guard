@@ -20,12 +20,29 @@ permissions:
   issues: write
   pages: write
   id-token: write
-concurrency:
-  group: pages
-  # Do not discard scans or sync inputs while a publication is in flight.
-  cancel-in-progress: false
 jobs:
+  update-health:
+    # This independent check must run even when a writer never starts.
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 检查已发布数据与阻塞任务
+        run: node scripts/check-update-health.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PUBLISHED_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data
   scan-and-publish:
+    # Hold the shared state/session lock for the entire restore-to-publish transaction.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 360
     environment:

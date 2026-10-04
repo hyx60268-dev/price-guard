@@ -11,6 +11,7 @@ import { mergeAccounts,resolveCostRecord,createCostResolver } from './durable-st
 import { FRONTEND_VERSION } from './build-version.js';
 import { candidateId, correctionKey, mergeMatchCorrections, rejectedByMemory, invalidateCorrectedMatches } from './match-memory.js';
 import { parseShopProfile } from './shop-profile.js';
+import { snapshotFreshness,elapsedLabel } from './dashboard-freshness.js';
 const $=selector=>document.querySelector(selector);
 const money=value=>Number.isFinite(value)?`¥${Math.round(value).toLocaleString()}`:'—';
 const cny=value=>Number.isFinite(value)?`¥${Number(value).toFixed(1)}`:'—';
@@ -27,6 +28,7 @@ const matchCorrectionKey='priceGuard.matchCorrections.v1';
 
 let data,discoveryData,password,currentUsername='admin',dataPrefix='data',installPrompt,currentAccountId,cloudStatus,discoveryCloudStatus,refreshingData=false,pricingPage=1,imageSearchState=null;
 const PAGE_SIZE=10;
+let refreshDetailPrices=null;
 const getJson=(key,fallback)=>{try{return JSON.parse(localStorage.getItem(key)||JSON.stringify(fallback))}catch{return fallback}};
 const scopedKey=key=>currentUsername==='admin'?key:`${key}.${currentUsername}`;
 const getLocal=()=>getJson(scopedKey(accountKey),currentUsername==='admin'?getJson(legacyAccountKey,[]):[]);
@@ -165,7 +167,7 @@ function currentOwnership(){
 function effective(item,temporary){
   item=excludeOwnedOffers(item,currentOwnership());
   item=invalidateCorrectedMatches(item,matchCorrections);
-  const decision=pricingDecision(item);item={...item,...decision,comparisonIncomplete:!decision.complete};
+  const decision=pricingDecision(item);item={...item,...decision,lowestPrice:decision.lowest?.price??null,comparisonIncomplete:!decision.complete};
   const saved=temporary||manualFor(item),manualPurchaseCNY=numberOrNull(saved.purchaseCNY),purchaseCNY=manualPurchaseCNY??numberOrNull(item.averageCNY);
   const manualFeeCNY=numberOrNull(saved.manualFeeCNY),shippingJPY=numberOrNull(saved.shippingJPY);
   const complete=[purchaseCNY,manualFeeCNY,shippingJPY].every(Number.isFinite);
@@ -320,20 +322,29 @@ function renderAccountOptions(){
   $('#accountSelect').innerHTML=cloud+local;$('#accountSelect').value=currentAccountId;
 }
 
+function renderFreshness(){
+  // Once unlocked, describe the snapshot actually on screen, even if a newer status exists.
+  const checkedAt=data?data.checkedAt:cloudStatus?.checkedAt,state=snapshotFreshness(checkedAt);
+  const stamp=state.timestamp?new Date(state.timestamp).toLocaleString('zh-CN'):'尚无成功扫描时间';
+  $('#stamp').textContent=`最近成功扫描：${stamp}${state.ageMs!==null?' · 距今 '+elapsedLabel(state.ageMs):''}`;
+  $('#freshnessNotice').hidden=state.state==='fresh';
+  $('#freshnessTitle').textContent=state.state==='delayed'?'云端更新异常':'扫描时间待确认';
+  $('#freshnessText').textContent=state.state==='delayed'?`已经 ${elapsedLabel(state.ageMs)} 没有新的扫描结果。当前展示保存的库存；各商品报价按自己的核验时间判断，过期报价不提供调价建议。`:'暂未取得有效扫描时间。已保存的账号和人工费用保留，等待云端扫描结果。';
+}
 function render(){
+  renderFreshness();
   const local=localOnlyAccounts().find(item=>item.id===currentAccountId);
   if(local){
     $('#profileLink').href=local.profileUrl;$('#accountSync').textContent='已在本机保存 · 点“同步云端”后加入自动扫描';
     $('#statusGrid').innerHTML=statusCard('店铺主页','等待云端同步','warn')+statusCard('Yahoo比价','未运行','warn')+statusCard('闲鱼成本','未运行','warn')+statusCard('手工成本','可先录入已有商品','good');
-    $('#pricingProgress').hidden=true;$('#kpis').innerHTML='';$('#rows').innerHTML='';$('#cards').innerHTML='';$('#pagination').innerHTML='';$('#empty').hidden=false;return;
+    $('#pricingProgress').hidden=true;$('#kpis').innerHTML='';$('#rows').innerHTML='';$('#cards').innerHTML='';$('#pagination').innerHTML='';$('#empty').hidden=false;$('#emptyText').textContent='当前店铺尚未完成云端同步，请先同步已保存的店铺。';$('#showAllItems').hidden=true;return;
   }
   const current=account();if(!current){
     $('#profileLink').removeAttribute('href');$('#accountSync').textContent='还没有绑定店铺';
     $('#statusGrid').innerHTML=statusCard('店铺','等待你添加','warn')+statusCard('自动比价','绑定后启用','warn')+statusCard('GitHub通知','已启用','good')+statusCard('账号隔离','已启用','good');
-    $('#pricingProgress').hidden=true;$('#kpis').innerHTML='';$('#rows').innerHTML='';$('#cards').innerHTML='';$('#pagination').innerHTML='';$('#empty').hidden=false;$('#empty').textContent='还没有商品。点“账号管理”添加你的 Yahoo!フリマ / Rakuma 卖家主页并同步。';return;
+    $('#pricingProgress').hidden=true;$('#kpis').innerHTML='';$('#rows').innerHTML='';$('#cards').innerHTML='';$('#pagination').innerHTML='';$('#empty').hidden=false;$('#emptyText').textContent='还没有商品。点“账号管理”添加你的 Yahoo!フリマ / Rakuma 卖家主页并同步。';$('#showAllItems').hidden=true;return;
   }
-  const list=items(),scan=current.scanStats||{},date=new Date(data.checkedAt);
-  $('#stamp').textContent=`最近检查：${Number.isNaN(date.valueOf())?'等待首次扫描':date.toLocaleString('zh-CN')} · 页面会自动接收新结果`;
+  const list=items(),scan=current.scanStats||{};
   const login=data.login||{},accessCooling=login.xianyuAccess?.allowed===false;$('#loginNotice').hidden=!(accessCooling||login.xianyuRequired||login.xianyuAuthExpired);
   $('#loginTitle').textContent=accessCooling?'闲鱼访问受阻，已暂停重复请求':login.xianyuAuthExpired?'闲鱼目标详情需要重新登录':'闲鱼目标详情验证受阻';
   $('#loginText').textContent=accessCooling?`闲鱼将在 ${new Date(login.xianyuAccess.retryAt).toLocaleString('zh-CN')} 之后重新检查；其他国内采购渠道与三平台比价独立运行。各渠道核验结果见采购依据。已填写的采购成本保留。`:'已停止本轮闲鱼检查，不使用下方推荐商品代替目标详情。人工采购成本保留；不符合新版详情、实价及独立卖家证据的历史自动参考需重新核验。';
@@ -346,10 +357,10 @@ function render(){
   if(allAccountsSelected()){
     const accounts=cloudAccounts(),totals=accounts.reduce((sum,value)=>({yahooLive:sum.yahooLive+(value.scanStats?.yahooLive||0),yahooCached:sum.yahooCached+(value.scanStats?.yahooCached||0),yahooDeferred:sum.yahooDeferred+(value.scanStats?.yahooDeferred||0),rakumaLive:sum.rakumaLive+(value.scanStats?.rakumaLive||0),rakumaCached:sum.rakumaCached+(value.scanStats?.rakumaCached||0),rakumaDeferred:sum.rakumaDeferred+(value.scanStats?.rakumaDeferred||0),xianyuScanned:sum.xianyuScanned+(value.scanStats?.xianyuScanned||0),xianyuVerifiedNew:sum.xianyuVerifiedNew+(value.scanStats?.xianyuVerifiedNew||0),xianyuCached:sum.xianyuCached+(value.scanStats?.xianyuCached||0)}),{yahooLive:0,yahooCached:0,yahooDeferred:0,rakumaLive:0,rakumaCached:0,rakumaDeferred:0,xianyuScanned:0,xianyuVerifiedNew:0,xianyuCached:0});
     $('#profileLink').removeAttribute('href');$('#accountSync').textContent=`总览 ${accounts.length} 个账号 · 每个账号的数据、成本和利润单独保存`;
-    $('#statusGrid').innerHTML=statusCard('账号',`${accounts.length} 个账号 / ${list.length} 件在售`,accounts.every(value=>value.profileStatus==='live')?'good':'warn')+statusCard('Yahoo比价',`实时 ${totals.yahooLive} / 缓存 ${totals.yahooCached} / 延后 ${totals.yahooDeferred}`,totals.yahooDeferred?'warn':'good')+statusCard('乐天Rakuma比价',`实时 ${totals.rakumaLive} / 缓存 ${totals.rakumaCached} / 延后 ${totals.rakumaDeferred}`,totals.rakumaDeferred?'warn':'good')+statusCard('闲鱼采购参考',`尝试 ${totals.xianyuScanned} / 本轮新增 ${totals.xianyuVerifiedNew} / 历史 ${totals.xianyuCached}`,accessCooling||data.login?.xianyuRequired||data.login?.xianyuAuthExpired?'bad':totals.xianyuVerifiedNew+totals.xianyuCached>0?'good':'warn')+statusCard('低价异常',`${list.filter(item=>item.priceSignal==='raise').length} 件`,'warn');
+    $('#statusGrid').innerHTML=statusCard('账号',`${accounts.length} 个账号 / ${list.length} 件在售`,accounts.every(value=>value.profileStatus==='live')?'good':'warn')+statusCard('Yahoo比价',`上次扫描新查 ${totals.yahooLive} / 缓存 ${totals.yahooCached} / 延后 ${totals.yahooDeferred}`,totals.yahooDeferred?'warn':'good')+statusCard('乐天Rakuma比价',`上次扫描新查 ${totals.rakumaLive} / 缓存 ${totals.rakumaCached} / 延后 ${totals.rakumaDeferred}`,totals.rakumaDeferred?'warn':'good')+statusCard('闲鱼采购参考',`尝试 ${totals.xianyuScanned} / 本轮新增 ${totals.xianyuVerifiedNew} / 历史 ${totals.xianyuCached}`,accessCooling||data.login?.xianyuRequired||data.login?.xianyuAuthExpired?'bad':totals.xianyuVerifiedNew+totals.xianyuCached>0?'good':'warn')+statusCard('低价异常',`${list.filter(item=>item.priceSignal==='raise').length} 件`,'warn');
   }else $('#statusGrid').innerHTML=statusCard('店铺主页',current.profileStatus==='live'?`${list.length} 件在售`:'使用保存清单',current.profileStatus==='live'?'good':'warn')+
-    statusCard('Yahoo比价',`实时 ${scan.yahooLive??0} / 缓存 ${scan.yahooCached??0} / 延后 ${scan.yahooDeferred??0}`,(scan.yahooDeferred||0)?'warn':'good')+
-    statusCard('乐天Rakuma比价',`实时 ${scan.rakumaLive??0} / 缓存 ${scan.rakumaCached??0} / 延后 ${scan.rakumaDeferred??0}`,(scan.rakumaDeferred||0)?'warn':'good')+
+    statusCard('Yahoo比价',`上次扫描新查 ${scan.yahooLive??0} / 缓存 ${scan.yahooCached??0} / 延后 ${scan.yahooDeferred??0}`,(scan.yahooDeferred||0)?'warn':'good')+
+    statusCard('乐天Rakuma比价',`上次扫描新查 ${scan.rakumaLive??0} / 缓存 ${scan.rakumaCached??0} / 延后 ${scan.rakumaDeferred??0}`,(scan.rakumaDeferred||0)?'warn':'good')+
     statusCard('闲鱼采购参考',`尝试 ${scan.xianyuScanned??0} / 本轮新增 ${scan.xianyuVerifiedNew??0} / 历史 ${scan.xianyuCached??0}`,accessCooling||data.login?.xianyuRequired||data.login?.xianyuAuthExpired?'bad':(scan.xianyuVerifiedNew||0)+(scan.xianyuCached||0)>0?'good':'warn')+
     statusCard('成本数据',`已完整 ${savedCosts}/${list.length}`,savedCosts===list.length?'good':'warn');
   const publicAccounts=allAccountsSelected()?cloudAccounts():[current],publicAttempts=publicAccounts.reduce((n,a)=>n+(a.scanStats?.procurementScanned||0),0),publicReady=list.filter(i=>i.referenceProvider==='public_cn').length;
@@ -365,8 +376,11 @@ function render(){
   $('#kpis').innerHTML=stats().map(([label,value])=>`<div class="kpi"><strong>${value}</strong><span>${label}</span></div>`).join('');
   const filtered=selected(),pageCount=Math.max(1,Math.ceil(filtered.length/PAGE_SIZE));pricingPage=Math.min(Math.max(1,pricingPage),pageCount);
   const shown=filtered.slice((pricingPage-1)*PAGE_SIZE,pricingPage*PAGE_SIZE);$('#empty').hidden=filtered.length>0;
+  const waitingPrices=$('#filter').value==='reprice'&&summary.stale>0;
+  $('#emptyText').textContent=waitingPrices?'已保存的库存仍在，但部分报价已过期，当前没有符合筛选条件的有效调价建议。等待云端重新核验。':list.length?'没有符合筛选条件的商品。':'当前账号尚无商品扫描结果。';
+  $('#showAllItems').hidden=!list.length;
   const accountLabel=item=>allAccountsSelected()?`<small class="accountname">${escapeHtml(item.accountName||item.accountId||'')}</small>`:'';
-  $('#rows').innerHTML=shown.map(item=>`<tr data-id="${escapeHtml(item.id)}"><td><div class="product"><img src="${escapeHtml(item.image)}" alt=""><b>${accountLabel(item)}${escapeHtml(item.title)}</b></div></td><td class="money">${money(item.ownPrice)}</td><td class="money">${money(item.lowestPrice)}</td><td class="money">${money(item.recommendedPrice)}</td><td>${cny(item.automaticReferenceCNY)}${Number.isFinite(item.manualPurchaseCNY)?`<small>实际采购 ${cny(item.manualPurchaseCNY)}</small>`:''}</td><td class="money">${money(item.costJPY)}</td><td class="money ${item.currentUnder1500?'bad':''}">${money(item.currentProfitJPY)}</td><td class="money ${item.afterUnder1500?'bad':''}">${money(item.afterProfitJPY)}</td><td>${pill(item)}</td></tr>`).join('');
+  $('#rows').innerHTML=shown.map(item=>`<tr data-id="${escapeHtml(item.id)}"><td><div class="product"><img src="${escapeHtml(item.image)}" alt=""><b>${accountLabel(item)}${escapeHtml(item.title)}</b></div></td><td class="money">${money(item.ownPrice)}</td><td class="money">${item.lowest?money(item.lowest.price):'待核验'}</td><td class="money">${item.canRecommend?money(item.recommendedPrice):'暂无建议'}</td><td>${cny(item.automaticReferenceCNY)}${Number.isFinite(item.manualPurchaseCNY)?`<small>实际采购 ${cny(item.manualPurchaseCNY)}</small>`:''}</td><td class="money">${money(item.costJPY)}</td><td class="money ${item.currentUnder1500?'bad':''}">${money(item.currentProfitJPY)}</td><td class="money ${item.afterUnder1500?'bad':''}">${money(item.afterProfitJPY)}</td><td>${pill(item)}</td></tr>`).join('');
   $('#resultCount').textContent=`共 ${filtered.length} 件 · 本页 ${shown.length} 件`;
   $('#cards').innerHTML=shown.map(item=>`<article class="inventory-card"><div class="inventory-image"><img loading="lazy" src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title)}"><span class="inventory-badge ${!pricingReady(item)?'badge-'+pricingStatus(item).state:actionablePrice(item)?item.priceSignal==='raise'?'badge-raise':'badge-lower':item.needsPurchaseReference?'badge-cost':'badge-live'}">${!pricingReady(item)?pricingStatus(item).label:actionablePrice(item)?item.priceSignal==='raise'?'↑ 建议提价':'↓ 建议降价':item.needsPurchaseReference?'成本待核验':'在售'}</span></div><div class="inventory-body"><small class="accountname">${escapeHtml(item.accountName||item.accountId||'')}</small><h3 title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</h3><div class="inventory-numbers"><div><small>当前售价 · JPY</small><strong>${money(item.ownPrice)}</strong></div><div><small>建议售价 · JPY</small><strong class="${actionablePrice(item)?'accent':''}">${!pricingReady(item)?'暂无建议':money(item.recommendedPrice)}</strong></div><div><small>${costLabel(item)}</small><b>${cny(item.purchaseCNY)}</b></div><div><small>当前利润 · JPY</small><b class="${item.currentUnder1500?'bad':''}">${money(item.currentProfitJPY)}</b></div></div><div class="inventory-footer"><span>${item.needsCostInput?'成本待完善':item.currentProfitJPY<0?'当前亏损':'成本已完整'}</span><button class="soft" data-id="${escapeHtml(item.id)}" data-account="${escapeHtml(item.accountId)}" aria-label="查看 ${escapeHtml(item.title)} 的价格与成本">查看详情 ↗</button></div></div></article>`).join('');
   $('#pagination').innerHTML=filtered.length>PAGE_SIZE?`<button class="soft" data-page="${pricingPage-1}" ${pricingPage===1?'disabled':''}>上一页</button><span>第 ${pricingPage} / ${pageCount} 页 · 共 ${filtered.length} 件</span><button class="soft" data-page="${pricingPage+1}" ${pricingPage===pageCount?'disabled':''}>下一页</button>`:'';
@@ -374,6 +388,12 @@ function render(){
   document.querySelectorAll('[data-id]').forEach(element=>element.onclick=()=>detail(element.dataset.id,element.dataset.account));
 }
 
+function pricingCoverageText(item){
+  return pricingStatus(item).platforms.map(row=>{
+    const stamp=Date.parse(item[row.platform]?.checkedAt||''),time=Number.isFinite(stamp)?new Date(stamp).toLocaleString('zh-CN'):'尚未核验';
+    return `${row.name}：${row.label}${row.state==='ready'?'':'（'+row.reason+'）'} · 商品核验时间 ${time}`;
+  }).join('；');
+}
 function detail(id,accountId){
   const raw=rawItems().find(item=>item.id===id&&(!accountId||item.accountId===accountId));if(!raw)return;
   const item=effective(raw),saved=manualFor(raw),samples=raw.xianyu?.samples||[],rejected=raw.xianyu?.rejected||[];
@@ -383,12 +403,12 @@ function detail(id,accountId){
   const marketMedian=marketIncomplete?'核验未完成，暂不建议改价':marketSamples?`${money(item.marketMedianPrice??item.yahoo?.marketMedianPrice)} <small>${marketSamples} 个核验样本</small>`:marketChecked?'未找到可比样本':'等待本轮核验';
   const marketRange=marketIncomplete?`仍有 ${unchecked} 个低价候选待核验`:marketSamples?`${money(item.marketMinPrice??item.yahoo?.marketMinPrice)} ～ ${money(item.marketMaxPrice??item.yahoo?.marketMaxPrice)}`:marketChecked?'—':'尚未核验';
   const decision=pricingDecision(item),lowest=decision.lowest;
-  const coverageText=pricingStatus(item).platforms.map(row=>`${row.name}：${row.label}${row.state==='ready'?'':'（'+row.reason+'）'}`).join('；');
+  const coverageText=pricingCoverageText(item);
   const matchLabel=decision.complete?(lowest?'在售同款已核验，最低来自 '+PLATFORM_LABELS[lowest.platform]:'本轮未发现可比同款'):decision.canRecommend?'已有核验同款低价，可参考降价；其他平台仍在更新':'其他平台仍在更新，暂无可靠调价依据';
   $('#detailBody').innerHTML=`
     <p class="muted">${escapeHtml(item.listingAge?.message||'上架时长待云端确认')} · ${item.listingAge?.source==='platform_open_date'?'平台上架时间':item.listingAge?.source==='first_observed'?'系统首次确认在售时间':'尚无时间依据'}</p>
-    <div class="detailhead"><img src="${escapeHtml(item.image)}" alt=""><div><h2>${escapeHtml(item.title)}</h2><p>${pill(item)}　同款匹配：${escapeHtml(matchLabel)}</p></div></div>
-    <div class="detailgrid"><div><small>我的售价</small><br><b>${money(item.ownPrice)}</b></div><div class="lowest-offer"><small>已核验最低同款${lowest?' · '+escapeHtml(PLATFORM_LABELS[lowest.platform]):''}</small><br><b>${lowest?money(lowest.price):'待核验'}</b>${lowest?`<a target="_blank" rel="noopener" href="${escapeHtml(lowest.url)}">查看商品 ↗</a>`:''}</div><div><small>建议售价</small><br><b>${decision.canRecommend?money(decision.recommendedPrice):'暂无建议'}</b></div><div><small>当前成本</small><br><b id="previewCost">${money(item.costJPY)}</b></div><div><small>当前利润</small><br><b id="previewCurrentProfit">${money(item.currentProfitJPY)}</b></div><div><small>建议价利润</small><br><b id="previewAfterProfit">${decision.canRecommend?money(item.afterProfitJPY):'—'}</b></div></div><p class="coverage-note">${escapeHtml(coverageText)}。比价统一核对在售状态、规格与运费；最低同款仅代表已取得的有效样本。</p>
+    <div class="detailhead"><img src="${escapeHtml(item.image)}" alt=""><div><h2>${escapeHtml(item.title)}</h2><p id="detailMatch">${pill(item)}　同款匹配：${escapeHtml(matchLabel)}</p></div></div>
+    <div class="detailgrid"><div><small>我的售价</small><br><b>${money(item.ownPrice)}</b></div><div id="detailLowest" class="lowest-offer"><small>已核验最低同款${lowest?' · '+escapeHtml(PLATFORM_LABELS[lowest.platform]):''}</small><br><b>${lowest?money(lowest.price):'待核验'}</b>${lowest?`<a target="_blank" rel="noopener" href="${escapeHtml(lowest.url)}">查看商品 ↗</a>`:''}</div><div><small>建议售价</small><br><b id="detailRecommendation">${decision.canRecommend?money(decision.recommendedPrice):'暂无建议'}</b></div><div><small>当前成本</small><br><b id="previewCost">${money(item.costJPY)}</b></div><div><small>当前利润</small><br><b id="previewCurrentProfit">${money(item.currentProfitJPY)}</b></div><div><small>建议价利润</small><br><b id="previewAfterProfit">${decision.canRecommend?money(item.afterProfitJPY):'—'}</b></div></div><p id="detailCoverage" class="coverage-note">${escapeHtml(coverageText)}。比价统一核对在售状态、规格与运费；最低同款仅代表已取得的有效样本。</p>
     <section class="manualbox"><h3>补充人工费用</h3><p class="muted">实际采购价优先用于计算利润；留空时采用已核验的采购参考价。人肉费和日本物流费需填写。</p>
       <form id="manualCostForm" class="costform"><label><span>实际采购价（人民币，可选）</span><input id="purchaseCNY" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(saved.purchaseCNY??'')}" placeholder="留空则使用已核验参考价"><small>${escapeHtml(procurementLabel(item))}：${cny(item.automaticReferenceCNY)}</small></label><label><span>人肉费（人民币）</span><input id="manualFeeCNY" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(saved.manualFeeCNY??'')}" placeholder="由你填写"></label><label><span>日本物流费（日元）</span><input id="shippingJPY" type="number" min="0" step="1" inputmode="numeric" value="${escapeHtml(saved.shippingJPY??'')}" placeholder="由你填写"></label><div class="costactions"><button type="submit">保存本机并计算</button><button type="button" id="saveAndSync">保存并同步云端</button><button type="button" id="clearCost" class="soft">清空</button><span id="costSaveStatus"></span></div></form>
       <p><small>公式：((采购价 + 人肉费) × ${data.settings.exchangeRate} + 日本物流费) × ${data.settings.costMultiplier}，向上取整。</small></p></section>
@@ -412,7 +432,8 @@ function detail(id,accountId){
   document.querySelectorAll('[data-undo-correction]').forEach(button=>button.onclick=()=>{const key=button.dataset.undoCorrection;matchCorrections[key]={...matchCorrections[key],deleted:true,updatedAt:new Date().toISOString()};saveMatchCorrections();render();detail(id,raw.accountId)});
   $('#syncCorrections').onclick=()=>startCloudSync();
   const temporary=()=>({purchaseCNY:$('#purchaseCNY').value,manualFeeCNY:$('#manualFeeCNY').value,shippingJPY:$('#shippingJPY').value});
-  const preview=()=>{const next=effective(raw,temporary());$('#previewCost').textContent=money(next.costJPY);$('#previewCurrentProfit').textContent=money(next.currentProfitJPY);$('#previewAfterProfit').textContent=pricingReady(next)?money(next.afterProfitJPY):'—';$('#previewCurrentProfit').className=next.currentUnder1500?'bad':'';$('#previewAfterProfit').className=next.afterUnder1500?'bad':''};
+  const currentDetailItem=()=>(data.items||[]).find(value=>value.id===raw.id&&value.accountId===raw.accountId)||raw;
+  const preview=()=>{const next=effective(currentDetailItem(),temporary());$('#previewCost').textContent=money(next.costJPY);$('#previewCurrentProfit').textContent=money(next.currentProfitJPY);$('#previewAfterProfit').textContent=pricingReady(next)?money(next.afterProfitJPY):'—';$('#previewCurrentProfit').className=next.currentUnder1500?'bad':'';$('#previewAfterProfit').className=next.afterUnder1500?'bad':''};
   ['#purchaseCNY','#manualFeeCNY','#shippingJPY'].forEach(selector=>$(selector).addEventListener('input',preview));
   const save=()=>{const record=fullRecord(raw,temporary());manualCosts[itemKey(raw)]=record;saveManualCosts();render();return record};
   $('#manualCostForm').onsubmit=event=>{event.preventDefault();save();detail(id,raw.accountId);$('#costSaveStatus').textContent='已保存在本机，等待云端同步'};
@@ -420,6 +441,16 @@ function detail(id,accountId){
   $('#clearCost').onclick=()=>{manualCosts[itemKey(raw)]=fullRecord(raw,{deleted:true,updatedAt:new Date().toISOString()});saveManualCosts();render();detail(id,raw.accountId);$('#costSaveStatus').textContent='已在本机清空；点同步云端后其他设备也会清空'};
   $('#searchMainXianyu').onclick=()=>openImageSearch({kind:'item',id:item.id,title:item.title,image:item.image},'xianyu');
   $('#searchMainXhs').onclick=()=>openImageSearch({kind:'item',id:item.id,title:item.title,image:item.image},'xhs');
+  refreshDetailPrices=()=>{
+    if(!$('#detail').open)return;
+    const next=effective(currentDetailItem(),temporary()),decision=pricingDecision(next),lowest=decision.lowest;
+    const label=decision.complete?(lowest?'在售同款已核验，最低来自 '+PLATFORM_LABELS[lowest.platform]:'本轮未发现可比同款'):decision.canRecommend?'已有核验同款低价，可参考降价；其他平台仍在更新':'暂无可靠调价依据，请查看各平台的核验时间与状态';
+    $('#detailMatch').innerHTML=pill(next)+'　同款匹配：'+escapeHtml(label);
+    $('#detailLowest').innerHTML=`<small>已核验最低同款${lowest?' · '+escapeHtml(PLATFORM_LABELS[lowest.platform]):''}</small><br><b>${lowest?money(lowest.price):'待核验'}</b>${lowest?`<a target="_blank" rel="noopener" href="${escapeHtml(lowest.url)}">查看商品 ↗</a>`:''}`;
+    $('#detailRecommendation').textContent=decision.canRecommend?money(decision.recommendedPrice):'暂无建议';
+    $('#detailCoverage').textContent=pricingCoverageText(next)+'。比价统一核对在售状态、规格与运费；最低同款仅代表已取得的有效样本。';
+    preview();
+  };
   if(!$('#detail').open)$('#detail').showModal();
 }
 
@@ -532,17 +563,28 @@ async function checkCloudStatus(reload=true){
       await navigator.serviceWorker?.getRegistration().then(registration=>registration?.update()).catch(()=>{});
       location.reload();return;
     }
-    if(!data){const date=new Date(status.checkedAt);$('#stamp').textContent=`云端检查：${Number.isNaN(date.valueOf())?'等待首次检查':date.toLocaleString('zh-CN')} · 约每 20 分钟`;return}
+    if(!data)return;
     if(reload&&status.dataRevision&&status.dataRevision!==data.dataRevision){
-      refreshingData=true;await loadDashboard();renderAccountOptions();render();if(!$('#discoveryView').hidden){await loadDiscovery();renderDiscovery()}$('#refreshNotice').hidden=false;$('#refreshText').textContent='云端数据已自动更新，无需重新打开页面。';setTimeout(()=>$('#refreshNotice').hidden=true,8000);
+      refreshingData=true;await loadDashboard();renderAccountOptions();if(!$('#discoveryView').hidden){await loadDiscovery();renderDiscovery()}$('#refreshNotice').hidden=false;$('#refreshText').textContent='云端数据已自动更新，无需重新打开页面。';setTimeout(()=>$('#refreshNotice').hidden=true,8000);
     }else if(reload&&nextDiscoveryStatus?.checkedAt&&nextDiscoveryStatus.checkedAt!==discoveryCloudStatus?.checkedAt){
       refreshingData=true;await loadDiscovery();if(!$('#discoveryView').hidden)renderDiscovery();$('#refreshNotice').hidden=false;$('#refreshText').textContent='云端选品数据已自动更新。';setTimeout(()=>$('#refreshNotice').hidden=true,8000);
     }
     discoveryCloudStatus=nextDiscoveryStatus;
   }catch{
     if(data){$('#refreshNotice').hidden=false;$('#refreshText').textContent='暂时无法刷新云端数据，当前显示上次成功读取的结果；稍后会自动重试。'}
-  }finally{refreshingData=false}
+  }finally{
+    refreshingData=false;renderFreshness();
+    // Re-evaluate expiry even when the server returns the same revision. Neither render
+    // nor this detail callback replaces a user form, changes a filter, or resets the page.
+    if(data){
+      const focused=document.activeElement,action=focused?.closest('#cards [data-id],#rows [data-id],#pagination [data-page]');
+      const identity=action?{id:action.dataset.id,account:action.dataset.account,page:action.dataset.page}:null;
+      render();refreshDetailPrices?.();
+      if(identity){const replacement=[...document.querySelectorAll('#cards [data-id],#rows [data-id],#pagination [data-page]')].find(node=>node.dataset.id===identity.id&&node.dataset.account===identity.account&&node.dataset.page===identity.page);replacement?.focus({preventScroll:true})}
+    }
+  }
 }
+$('#showAllItems').onclick=()=>{$('#filter').value='all';$('#search').value='';pricingPage=1;render()};
 setInterval(()=>checkCloudStatus(true),60_000);addEventListener('focus',()=>checkCloudStatus(true));addEventListener('pageshow',()=>checkCloudStatus(true));document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkCloudStatus(true)});
 
 addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPrompt=event;$('#install').hidden=false});$('#install').onclick=async()=>{await installPrompt?.prompt();$('#install').hidden=true};

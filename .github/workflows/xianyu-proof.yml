@@ -10,11 +10,12 @@ on:
   # Do not launch a second authenticated Xianyu reader for the same push.
 permissions:
   contents: read
-concurrency:
-  group: pages
-  cancel-in-progress: false
 jobs:
   proof:
+    # Hold the shared state/session lock for the entire restore-to-publish transaction.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
