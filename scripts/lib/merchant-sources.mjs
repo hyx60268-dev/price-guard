@@ -70,6 +70,6 @@ export async function merchantDetail(merchant,card,{settings={},page,deadline=In
  }
  if(merchant.platform==='rakuma')return {...card,...await fetchRakumaItem(card,settings)};
  const detail=await mercariDetail(page,card.url);
- if(detail.sellerId!==`/user/profile/${merchant.id}`)throw Error('商品卖家与监控主页不一致');
+ if(detail.sellerId!==`/user/profile/${merchant.id}`)throw Error('商品卖家与监控主页不一致 '+JSON.stringify({itemId:detail.id,expectedSeller:`/user/profile/${merchant.id}`,observedSeller:detail.sellerId,scope:detail.sellerDiagnostic?.scope}));
  return {...card,...detail,status:detail.status==='UNKNOWN'?card.status:detail.status};
 }

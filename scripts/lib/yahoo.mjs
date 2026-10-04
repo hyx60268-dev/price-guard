@@ -1,4 +1,5 @@
 import { isOwnedOffer } from '../../public/owned-offers.js';
+import {planYahooDetailQueue} from './yahoo-detail-queue.mjs';
 import { knownYahooCandidates,yahooTargetShipping } from './yahoo-known-refresh.mjs';
 import { extractYahooBundleComponents } from './merchant-bundles.mjs';
 import { merchantNameFromTitle } from './merchant-names.mjs';
@@ -254,17 +255,21 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   const query=queryFor(item.title);
   const exactQuery=exactQueryFor(item.title);
   const searchUrl=`https://paypayfleamarket.yahoo.co.jp/search/${encodeURIComponent(query)}?open=1`;
-  let search=null,ownBundle=null,searchError='',itemPageError='';
+  let search=null,searchObservedAt=null,ownBundle=null,searchError='',itemPageError='';
   // 商品页里的 vector 推荐正是 App 展示的「この商品に似ている商品」。它比宽泛
   // 搜索更容易召回标题译名不同、但首图和本体相同的商品，因此每轮以商品页为主。
-  // 宽泛搜索按小时轮转，避免账号增多后每件商品每 20 分钟都扫描约 100 张无关卡片。
+  // 已有有效竞品由快查更新，广搜沿用较低频率；尚无匹配的商品按正常复查资格继续找。
+  // 仅推荐页/详情检查不得充当广搜时间，否则未搜索也会反复推迟下一次广搜。
   if(externalOwn){if(item.sourceDetail)ownBundle={detail:item.sourceDetail,recommendations:[]};else itemPageError='ラクマ自有商品详情未读取'}
   else try{ownBundle=await getBundle(item.id,settings)}catch(error){itemPageError=String(error)}
   const broadSearchHours=Math.max(1,Number(settings.yahooBroadSearchHours)||6);
-  const lastBroadSearch=Date.parse(item.yahoo?.searchCheckedAt||item.yahoo?.checkedAt||'');
-  const broadSearchDue=!knownOnly&&(settings.forceYahooBroadSearch===true||!Number.isFinite(lastBroadSearch)||Date.now()-lastBroadSearch>=broadSearchHours*3_600_000);
+  const lastBroadSearch=Date.parse(item.yahoo?.searchCheckedAt||'');
+  const quoteAge=Date.now()-Date.parse(item.yahoo?.checkedAt||'');
+  const hasCurrentKnownOffer=item.yahoo?.cacheReason!=='request_error'&&Number.isFinite(quoteAge)&&quoteAge>=-60_000&&quoteAge<=6*3_600_000&&knownYahooCandidates(item,settings).length>0;
+  const broadSearchInterval=hasCurrentKnownOffer?broadSearchHours*3_600_000:Math.max(1,Number(settings.yahooFreshMinutes)||20)*60_000;
+  const broadSearchDue=!knownOnly&&(settings.forceYahooBroadSearch===true||!Number.isFinite(lastBroadSearch)||lastBroadSearch>Date.now()+60_000||Date.now()-lastBroadSearch>=broadSearchInterval);
   if(!knownOnly&&(externalOwn||broadSearchDue||!ownBundle)){
-    try{search=await getResult(searchUrl,settings)}catch(error){searchError=String(error)}
+    try{search=await getResult(searchUrl,settings);searchObservedAt=search?new Date().toISOString():null}catch(error){searchError=String(error)}
   }
   if(!search&&!ownBundle)throw new Error(`搜索与商品页均失败：${searchError}; ${itemPageError}`);
   if(knownOnly){
@@ -400,6 +405,8 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   // Unselected old links follow new candidates even when their cached price is
   // lower. Otherwise a third known link could consume a reserved discovery slot.
   preliminary=[...knownCards.slice(0,recheckLimit),...preliminary.filter(card=>!knownIds.has(card.id)),...knownCards.slice(recheckLimit)];
+  const detailQueue=knownOnly?null:planYahooDetailQueue({item,detail:ownDetail,candidates:preliminary,knownIds,knownLimit:recheckLimit,limit:maxDetailChecks,prior:item.yahoo?.detailQueue});
+  if(detailQueue)preliminary=detailQueue.cards;
   const ownCondition=typeof ownDetail?.condition==='string'?ownDetail.condition:
     ownDetail?.condition?.name||ownDetail?.condition?.text||ownDetail?.condition?.label||ownDetail?.condition?.key||'';
   const ownConditionText=`${item.title}\n${ownDetail?.title||''}\n${ownDetail?.description||''}\n${ownCondition}`;
@@ -410,8 +417,10 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
     const card=preliminary[index];
     if(knownOnly&&Date.now()>=settings.yahooKnownRefreshDeadline)break;
     detailCheckedCount++;
+    let currentDetailRead=false,currentPrimaryImageScore=null;
     try{
       const bundle=await getBundle(card.id,settings),detail=bundle.detail;
+      currentDetailRead=detail?.id===card.id&&Boolean(detail?.title?.trim()&&detail?.description?.trim()&&detail?.status)&&Number.isFinite(Number(detail?.price))&&Number(detail.price)>0;
       if(knownOnly&&detail?.id!==card.id){rejected.push({id:card.id,reason:'detail_id_mismatch'});continue}
       if(knownOnly&&(!Array.isArray(detail?.images)||!detail.images.length)){rejected.push({id:card.id,reason:'detail_images_unavailable'});continue}
       if(knownOnly&&(!bundle.shipping?.shippingKnown||bundle.shipping.currency!=='JPY'||bundle.shipping.shippingJPY!==0)){rejected.push({id:card.id,reason:'shipping_unconfirmed'});continue}
@@ -462,6 +471,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
       const detailFingerprints=detailImageEvidence.filter(Boolean);
       const imageScore=imageSetSimilarity(ownFingerprints,detailFingerprints);
       const primaryImageScore=primaryProductSimilarity(ownImageEvidence[0],detailImageEvidence[0]);
+      currentPrimaryImageScore=primaryImageScore;
       const sharedIdentity=offerIdentityGuard({ownTitle:ownDetail.title||item.title,ownDescription:ownDetail.description,candidateTitle:detail.title||'',candidateDescription:detail.description,ownCategory,candidateCategory:detailCategory,primaryImageScore});
       if(!sharedIdentity.accepted){rejected.push({id:card.id,price:Number(detail.price),reason:sharedIdentity.reason,imageScore,primaryImageScore});continue}
       // Generic character/type titles identify neither the artwork nor colour.
@@ -506,6 +516,12 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
         ...(knownOnly?{checkedAt:new Date().toISOString(),shippingJPY:0,shippingSource:bundle.shipping.shippingSource,priceSource:'current_target_detail'}:{}),
         matchMethod:reviewedIdentity?'reviewed_sealed_box_identity':sealedBoxEquivalent?'same_sealed_single_box_primary':lotteryEquivalent?'lottery_release_prize_character':assortmentEquivalent?'same_packaging_assortment':exactTitleEquivalent?'exact_bidirectional_title_identity':visualEquivalent?'strong_visual_primary_product':textEquivalent?'detail_type_quantity_equivalent_text':'detail_type_quantity_text_images'});
     }catch(error){rejected.push({id:card.id,price:card.price,reason:'detail_error',error:String(error)})}
+    finally{
+      const rejection=[...rejected].reverse().find(row=>row.id===card.id);
+      const inspectedImageMismatch=['collectible_variant_image_unconfirmed','primary_variant_unconfirmed','physical_image_unconfirmed','lottery_series_unconfirmed'].includes(rejection?.reason)&&Number.isFinite(currentPrimaryImageScore);
+      const incompleteRead=/unavailable|error/.test(rejection?.reason||'')||/unconfirmed/.test(rejection?.reason||'')&&!inspectedImageMismatch;
+      if(currentDetailRead&&!incompleteRead)detailQueue?.record(card);
+    }
   }
 
   competitors.sort((a,b)=>a.price-b.price);
@@ -530,6 +546,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
     query,searchUrl,lowestPrice:lowest?.price??item.ownPrice,lowestUrl:lowest?.url??item.url,
     ...(knownOnly?{evidenceStatus:'incomplete',searchComplete:false,ownObservedPrice:item.ownPrice,knownRefresh:{mode:'details_only',reason:competitors.length?'verified_known_offers':'no_verified_known_offer'}}:{}),
     recommendedPrice:recommended,candidates:competitors.slice(0,5),cardCount:cards.length,
+    detailQueue:knownOnly?item.yahoo?.detailQueue:detailQueue?.snapshot(),
     searchCardCount:searchCards.length,recommendationCardCount:recommendationCards.length,
     preliminaryCount:preliminary.length,unresolvedCandidateCount:unresolvedCandidates.length,uncheckedLowerCandidateCount:uncheckedLowerCandidates.length,unconfirmedLowerCandidateCount:unconfirmedLowerCandidates.length,detailCheckedCount,rejected:rejected.slice(-30),
     competitorCount:competitors.length,status:verificationIncomplete?'incomplete':'ok',comparisonStatus:verificationIncomplete?'verification_incomplete':lowest?.isOwn?(underpriced?'underpriced':'no_lower_found'):'competitor_lower',
@@ -540,7 +557,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
     audit:{ownItemId:item.id,accountId:item.accountId||null,ownDetailLoaded:Boolean(ownDetail?.description?.trim()),rulesVersion:MATCHING_RULES_VERSION,knownRecheckIds:knownCards.slice(0,recheckLimit).map(card=>card.id)},
     ownDescription:ownDetail?.description||item.yahoo?.ownDescription||'',ownCategory,
     ownListedAt:ownDetail?.openDate||null,ownListingId:item.id,
-    searchCheckedAt:search?new Date().toISOString():(item.yahoo?.searchCheckedAt||(knownOnly?null:item.yahoo?.checkedAt)||null),
+    searchCheckedAt:search?searchObservedAt:(item.yahoo?.searchCheckedAt||null),
     sourceStatus:{search:knownOnly?'not_requested_known_refresh':search?'ok':broadSearchDue?'error':'rotating_cache',itemPage:ownBundle?'ok':'error'},searchError,itemPageError
   };
 }

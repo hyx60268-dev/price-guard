@@ -26,7 +26,7 @@ let dashboard={};try{dashboard=JSON.parse(decrypt(await fs.readFile(path.join(ro
 cfg.merchants=mergeMerchantConfigs((cfg.merchants||[]).map(raw=>({...merchantProfile(raw),enabled:true})),dashboard.merchantMonitors||[]).filter(m=>m.enabled);
 await initializeExternalSearchAccess({root,password});
 console.log('[公开搜索访问]',JSON.stringify({stage:'merchant',providers:externalSearchAccessSnapshot()}));
-const monitorVersion=20;
+const monitorVersion=21;
 const configDigest=crypto.createHash('sha256').update(JSON.stringify({cfg,monitorVersion})).digest('hex');
 if(process.env.MERCHANT_MONITOR_IF_DUE==='1'&&previous.mode==='merchant_monitor'&&previous.configDigest===configDigest&&Date.now()-Date.parse(previous.checkedAt||'')<merchantRetryDelay(previous)){console.log('商家监控未到下次更新时间，保留已发布记录');process.exit(0)}
 const merchants=[...new Map((cfg.merchants||[]).map(raw=>{const m=merchantProfile(raw);return [m.key,m]})).values()];
