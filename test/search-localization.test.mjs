@@ -92,3 +92,28 @@ test('official wardrobe naming improves queries without mapping OOTD or dropping
  for(const title of ['52TOYS蜡笔小新早古毛绒公仔OOTD毛绒盲盒挂件玩偶整盒4只','52TOYS CRAYON SHINCHAN VINTAGE PLUSH OOTD SERIES 1BOX 4个装','52TOYS Official Store | Blind Boxes, Figures & Plush','52toys蜡笔小新毛绒搪胶盲盒 书包挂件手办送礼首选'])assert.equal(imageSearchRelevance(query,{title}),0,title);
  assert.match(externalSearchQueries(wardrobe+' レッド ブラック 10cm 2BOX')[0],/1BOX 4个装 红色 黑色 10cm 2BOX$/);
 });
+
+test('observed Pikachu series names use 绘梦点睛 for recall without inventing a release or box contents',()=>{
+ const own='海外限定 ポケモン30周年 梦点睛 ピカチュウ フィギュア 1BOX';
+ const ownQuery=externalSearchQueries(own)[0];
+ assert.equal(ownQuery,'宝可梦30周年 绘梦点睛 皮卡丘 手办 1BOX');
+ assert.doesNotMatch(ownQuery,/12|第4|4代/);
+ assert.equal(externalImageQueries(own)[0],'宝可梦30周年 梦点睛 ピカチュウ 手办 1BOX','final-match query is unchanged');
+ for(const alias of ['梦点睛','夢点晴','夢描点睛','絵夢点睛','絵夢点晴','繪夢點睛','绘梦点睛']){
+  const title='新品未開封 ポケモン 30周年 '+alias+' 第4弾 4代目 ピカチュウ フィギュア 1BOX 12個入り 正規品';
+  const query=externalSearchQueries(title)[0];
+  assert.match(query,/未拆封 宝可梦 30周年 绘梦点睛 第4弹 4代目 皮卡丘 手办 1BOX 12个装$/);
+  assert.match(externalSearchQueries(title,'official')[0],/官方 商品图$/);
+  assert.match(externalSearchQueries(title,'physical')[0],/实拍 开箱 多角度$/);
+ }
+ const third=externalSearchQueries('ポケモン 梦点睛 第3弾 3代目 ピカチュウ 2BOX 24個入り BOX未開封')[0];
+ assert.match(third,/绘梦点睛 第3弹 3代目 皮卡丘 2BOX 24个装 BOX未拆封$/);
+ assert.doesNotMatch(third,/第4|4代|12个/);
+});
+
+test('Pokemon search aliases do not add this series to another Pikachu line or rewrite unrelated titles',()=>{
+ for(const title of ['ポケモン ピカチュウ おやすみシリーズ 1BOX 6個入り','ポケモン ピカチュウ 25周年 カード 1枚','ピカチュウ ぬいぐるみ 20cm']){
+  const query=externalSearchQueries(title)[0];assert.match(query,/皮卡丘/);assert.doesNotMatch(query,/绘梦点睛/);
+ }
+ assert.equal(localizeSearchTerms('夢描点睛 第4弾 文庫 未開封'),'夢描点睛 第4弾 文庫 未開封');
+});
