@@ -103,7 +103,9 @@ export async function mercariDetail(page,url){
  if(!/^https:\/\/jp\.mercari\.com\/(?:item\/m\d+|shops\/product\/[A-Za-z0-9]+)$/.test(url))throw Error('煤炉商品链接无效');
  await page.goto(url,{waitUntil:'domcontentloaded',timeout:60000});
  await page.locator('main article h1').waitFor({timeout:30000});
- await page.waitForFunction('() => { const d=('+readMercariDetail.toString()+')(document); return Boolean(d&&d.price&&d.description&&d.shippingText&&d.sellerId); }',{},{timeout:30000}).catch(()=>{});
+ // Playwright evaluates string expressions without invoking returned functions.
+ // Invoke this predicate so a not-yet-hydrated seller cannot pass as truthy.
+ await page.waitForFunction('(() => { const d=('+readMercariDetail.toString()+')(document); return Boolean(d&&d.price&&d.description&&d.shippingText&&d.sellerId); })()',{},{timeout:30000}).catch(()=>{});
  const result=await page.evaluate('('+readMercariDetail.toString()+')(document)');
  if(!result?.title||!result.price||!result.description)throw Error('煤炉目标详情字段不完整 '+JSON.stringify({title:Boolean(result?.title),price:result?.price,description:Boolean(result?.description),status:result?.status,diagnostic:result?.priceDiagnostic}));
  if(!result.sellerId)throw Error('煤炉目标卖家尚未确认 '+JSON.stringify({itemId:url.split('/').at(-1),...result.sellerDiagnostic}));

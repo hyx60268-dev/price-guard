@@ -47,19 +47,37 @@ test('profile URL normalization preserves origin and cannot let hidden or descri
 });
 
 function pageFor(dom,{lateSeller,timeout=false}={}){
- const observed={waits:[],readyBefore:null,readyAfter:null};
+ const observed={waits:[],readyBefore:null,readyAfter:null,checks:0};
  return {observed,goto:async requested=>assert.equal(requested,url),locator:selector=>({waitFor:async options=>{assert.equal(selector,'main article h1');assert.equal(options.timeout,30000)}}),
   waitForFunction:async(source,args,options)=>{
-   observed.waits.push(options.timeout);const ready=new Function('document','return ('+source+')()');
+   // Match Playwright string-expression semantics: evaluate, do not invoke a
+   // returned function. The previous mock silently fixed the broken predicate.
+   observed.waits.push(options.timeout);const ready=new Function('document','return ('+source+')');
    observed.readyBefore=ready(dom.window.document);
-   if(lateSeller)dom.window.document.querySelector('article').insertAdjacentHTML('beforeend',lateSeller);
-   observed.readyAfter=ready(dom.window.document);if(timeout)throw Error('simulated timeout');
+   if(timeout)throw Error('simulated timeout');
+   let timer;
+   try{
+    if(lateSeller)timer=setTimeout(()=>dom.window.document.querySelector('article').insertAdjacentHTML('beforeend',lateSeller),20);
+    const deadline=Date.now()+options.timeout;
+    do{observed.checks++;observed.readyAfter=ready(dom.window.document);if(observed.readyAfter)return;await new Promise(resolve=>setTimeout(resolve,1))}while(Date.now()<deadline);
+    throw Error('simulated timeout');
+   }finally{clearTimeout(timer)}
   },evaluate:async()=>readMercariDetail(dom.window.document)};
 }
 
+test('Playwright string expressions must call the predicate rather than return a truthy function',()=>{
+ const dom=new JSDOM(product('<h2>出品者</h2>'),{url});
+ try{
+  const oldExpression='() => { const d=('+readMercariDetail.toString()+')(document); return Boolean(d&&d.price&&d.description&&d.shippingText&&d.sellerId); }';
+  const result=new Function('document','return ('+oldExpression+')')(dom.window.document);
+  assert.equal(typeof result,'function');assert.equal(Boolean(result),true);
+  assert.equal(result(),false,'the old expression was truthy even while its predicate would fail');
+ }finally{dom.window.close()}
+});
+
 test('detail waits for delayed seller in the original single 30-second readiness window',async()=>{
  const dom=new JSDOM(product('<h2>出品者</h2>'),{url}),page=pageFor(dom,{lateSeller:profile(seller)});
- try{const detail=await mercariDetail(page,url);assert.equal(detail.sellerId,seller);assert.equal(page.observed.readyBefore,false);assert.equal(page.observed.readyAfter,true);assert.deepEqual(page.observed.waits,[30000])}finally{dom.window.close()}
+ try{const detail=await mercariDetail(page,url);assert.equal(detail.sellerId,seller);assert.equal(page.observed.readyBefore,false);assert.equal(page.observed.readyAfter,true);assert.ok(page.observed.checks>1,'seller arrived asynchronously after the first readiness check');assert.deepEqual(page.observed.waits,[30000])}finally{dom.window.close()}
 });
 
 test('timed-out or ambiguous seller never becomes a priced detail or an accepted bundle parent',async()=>{
