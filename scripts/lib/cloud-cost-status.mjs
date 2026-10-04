@@ -63,7 +63,7 @@ export function cloudCostStatus(result={},now=Date.now()){
  const publicStatus=failed?'source_failed':verified.length?(coverage.complete?'verified':'partial'):attempted?'no_verified_cost':'not_verified';
  const publicSource={execution:'cloud',status:publicStatus,accepted:publicStatus==='verified',attempted,newlyVerified,
   verifiedReferences:verified.length,coverage,statuses,reasons,
-  message:failed?'国内采购渠道本轮访问未完成':verified.length?'已取得国内采购渠道同款、运费与独立卖家证据':attempted?'已检查国内采购渠道，尚无合格参考':'国内采购渠道尚无已核验参考'};
+  message:failed?'国内采购渠道本轮访问未完成':verified.length?'已取得同款供应商的可购实价、库存与运费证据':attempted?'已检查国内采购渠道，尚无合格参考':'国内采购渠道尚无已核验参考'};
  const sources={xianyu,public_cn:publicSource};
  const hours=Number(result.settings?.xianyuFreshHours)||168;
  // Check each selected reference, not just whether at least one amount matches.

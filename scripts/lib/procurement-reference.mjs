@@ -34,9 +34,11 @@ export function verifiedPublicProcurementCache(item={}, {now=Date.now(),maxAgeHo
   !fresh(cost.checkedAt,hours,now)||!positive(cost.averageCNY)||!Array.isArray(cost.samples)||
   !cost.samples.length||!cost.samples.every(sample=>sameProcurementTarget(sample.target,item)))return null;
  const evidence=verifiedPublicCostEvidence(cost.samples,{now,maxAgeHours:hours});
- if(!evidence.ready||Math.abs(cost.averageCNY-evidence.median)>=.01)return null;
- return {...cost,averageCNY:evidence.median,samples:evidence.samples,referenceProvider:'public_cn',
-  sourceLabel:'国内采购渠道',checkedAt:cost.checkedAt};
+ if(!evidence.ready||Math.abs(cost.averageCNY-evidence.referenceCNY)>=.01||
+  cost.checkedAt!==evidence.selectedQuote.checkedAt||cost.selectionMode!==evidence.selectionMode||
+  !cost.selectedQuote||Object.keys(evidence.selectedQuote).some(key=>JSON.stringify(cost.selectedQuote[key])!==JSON.stringify(evidence.selectedQuote[key])))return null;
+ return {...cost,averageCNY:evidence.referenceCNY,selectedQuote:evidence.selectedQuote,selectionMode:evidence.selectionMode,
+  samples:evidence.samples,referenceProvider:'public_cn',sourceLabel:'国内采购渠道',checkedAt:evidence.selectedQuote.checkedAt};
 }
 
 export function chooseProcurementReference(item={},options={}){
@@ -44,7 +46,7 @@ export function chooseProcurementReference(item={},options={}){
  if(xianyu)return xianyu;
  const other=verifiedPublicProcurementCache(item,{now:options.now,maxAgeHours:options.maxPublicAgeHours});
  if(!other)return null;
- return {averageCNY:other.averageCNY,referenceProvider:'public_cn',sourceLabel:other.sourceLabel,checkedAt:other.checkedAt,samples:other.samples};
+ return {averageCNY:other.averageCNY,referenceProvider:'public_cn',sourceLabel:other.sourceLabel,checkedAt:other.checkedAt,samples:other.samples,selectedQuote:other.selectedQuote,selectionMode:other.selectionMode};
 }
 
 export function hasCompletedPublicProcurementReview(item={}, {now=Date.now(),maxAgeHours=24}={}){

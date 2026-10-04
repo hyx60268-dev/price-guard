@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { parseImageSearchResults } from '../scripts/lib/external-images.mjs';
-import { PUBLIC_PROCUREMENT_VERIFICATION,procurementSource,canonicalProcurementUrl,embeddedPublicJSON,procurementSellerIdentity,chooseYouzanSku,youzanQuoteFromPublicState,parsePublicProcurementDetail,readYouzanPublicDOM,readPublicProcurementDetail,settleYouzanSelection,ensureYouzanSelection,verifiedPublicCostEvidence,alternativeProcurementCost } from '../scripts/lib/procurement-sources.mjs';
+import { PUBLIC_PROCUREMENT_VERIFICATION,procurementSource,canonicalProcurementUrl,embeddedPublicJSON,procurementSellerIdentity,chooseYouzanSku,youzanQuoteFromPublicState,parsePublicProcurementDetail,readYouzanPublicDOM,readPublicProcurementDetail,settleYouzanSelection,ensureYouzanSelection,verifiedPublicCostEvidence,alternativeProcurementCost,knownProcurementUrls } from '../scripts/lib/procurement-sources.mjs';
 const url='https://detail.youzan.com/show/goods?alias=2osy35s5abbdhtd';
 const title='Anker AeroClip 2 张凌赫 联名 礼盒 白色';
 const target={accountId:'owner',id:'z1',title,image:'https://images.example.org/own.jpg',description:title,condition:''};
@@ -59,7 +59,7 @@ test('two independent seller evidence is target-bound, fresh, complete and numer
 test('fallback executes public detail sources independently and never reads X cooldown',async()=>{
  const at=new Date().toISOString();let searchCalls=0,detailCalls=0;
  const run=await alternativeProcurementCost(item,{search:async()=>{searchCalls++;return [{url:'https://item.jd.com/1.html'},{url:'https://item.jd.com/2.html'}]},detail:async link=>{detailCalls++;if(link.includes('youzan'))return {status:'incomplete',reason:'test_no_youzan'};return {...sample(link.includes('/1.')?1:2,{checkedAt:at}),status:'quoted'}},fingerprint:async()=>fp});
- assert.equal(run.status,'ok');assert.equal(run.sellerCount,2);assert.ok(searchCalls);assert.ok(detailCalls>=2);assert.equal(run.averageCNY,101.5);
+ assert.equal(run.status,'ok');assert.equal(run.sellerCount,2);assert.ok(searchCalls);assert.ok(detailCalls>=2);assert.equal(run.averageCNY,101);
 });
 test('fallback respects account-scoped corrections, rejects wrong images, and does not invent second seller',async()=>{
  const deps={search:async()=>[{url:'https://item.jd.com/1.html'},{url:'https://item.jd.com/2.html'}],detail:async link=>link.includes('youzan')?{status:'incomplete',reason:'not_supported'}:{...sample(link.includes('/1.')?1:2),status:'quoted'},fingerprint:async()=>fp};
@@ -280,3 +280,30 @@ test('JD mobile product identities still require exact detail SKU and an identif
  const product=JSON.parse(ld().replace(/^.*?>/,'').replace(/<\/script>$/,''));
  assert.equal(parsePublicProcurementDetail(ld({url:mobile,offers:{...product.offers,seller:{name:'unidentified'}}}),canonical).reason,'seller_unconfirmed');
 });
+
+
+test('a complete reviewed Youzan supplier reaches the normal reference path with one actual payable offer',async()=>{
+ const quote=youzanQuoteFromPublicState(youzan,item,url,chosen);let searches=0;
+ const run=await alternativeProcurementCost(item,{fingerprint:async()=>fp,search:async()=>{searches++;return []},detail:async()=>quote});
+ assert.equal(run.status,'ok');assert.equal(run.averageCNY,999);assert.equal(run.sellerCount,1);assert.equal(searches,0);
+ assert.equal(run.selectionMode,'reviewed_supplier_offer');assert.equal(run.selectedQuote.sellerKey,'youzan:41125317');
+ assert.equal(run.selectedQuote.skuId,'15099721490');assert.equal(run.selectedQuote.shippingCNY,0);
+ assert.equal(run.checkedAt,run.samples[0].checkedAt);
+ const rejected=await alternativeProcurementCost(item,{fingerprint:async()=>fp,search:async()=>[],detail:async()=>quote,
+  matchCorrections:{r:{accountId:item.accountId,itemId:item.id,candidateId:quote.id,platform:'procurement',deleted:false}}});
+ assert.equal(rejected.averageCNY,null);assert.ok(rejected.diagnostics.some(row=>row.reason==='rejected_by_memory'));
+ const changedImage=await alternativeProcurementCost(item,{fingerprint:async link=>link===item.image?fp:{...fp,dHash:'ffffffffffffffff',aHash:'ffffffffffffffff',centerHash:'ffffffffffffffff'},search:async()=>[],detail:async()=>quote});
+ assert.equal(changedImage.averageCNY,null);
+});
+
+
+
+test('known procurement detail links prioritize recall without creating products or accepting a variant',()=>{
+ assert.deepEqual(knownProcurementUrls(item),[url]);
+ assert.deepEqual(knownProcurementUrls({...item,title:'Anker AeroClip 2 張凌赫 レッド ギフトボックス'}),[url]);
+ assert.deepEqual(knownProcurementUrls({...item,title:'Anker AeroClip 2 イヤホン'}),[]);
+ assert.deepEqual(knownProcurementUrls({...item,title:'Anker AeroClip 3 張凌赫 礼盒'}),[]);
+ assert.deepEqual(knownProcurementUrls({}),[]);
+ assert.equal(youzanQuoteFromPublicState(youzan,{...item,title:'Anker AeroClip 2 張凌赫 レッド ギフトボックス'},url,chosen).reason,'out_of_stock');
+});
+

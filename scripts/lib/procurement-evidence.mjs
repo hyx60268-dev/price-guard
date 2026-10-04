@@ -1,4 +1,5 @@
-export const PUBLIC_PROCUREMENT_VERIFICATION='public_procurement_detail_v2';
+import { verifiedProcurementAuthority } from './procurement-authority.mjs';
+export const PUBLIC_PROCUREMENT_VERIFICATION='public_procurement_detail_v3';
 const identityFields=['accountId','id','title','image'];
 const semanticFields=['description','condition'];
 const normalizedText=value=>typeof value==='string'?value.replace(/\s+/g,' ').trim():'';
@@ -69,6 +70,10 @@ export function canonicalProcurementUrl(value){
   const key=source==='weidian'?'itemID':'id';return u.origin+u.pathname+'?'+key+'='+u.searchParams.get(key);
  }catch{return null}
 }
+export function procurementQuoteSelection(sample){
+ const keys=['source','canonicalUrl','skuId','sellerKey','sellerIdentityKey','selectedVariant','unitCNY','shippingCNY','landedCNY','checkedAt'];
+ return {...Object.fromEntries(keys.map(key=>[key,sample[key]])),authority:verifiedProcurementAuthority(sample)};
+}
 export function verifiedPublicCostEvidence(samples=[],{now=Date.now(),maxAgeHours=24,target}={}){
  const valid=[],urls=new Set(),sellers=new Set(),identities=new Set(),evidenceTarget=target||samples[0]?.target;const time=typeof now==='number'?now:Date.parse(now);
  for(const s of samples){
@@ -81,5 +86,14 @@ export function verifiedPublicCostEvidence(samples=[],{now=Date.now(),maxAgeHour
  }
  const prices=valid.map(s=>s.price).sort((a,b)=>a-b),mid=Math.floor(prices.length/2),median=prices.length?prices.length%2?prices[mid]:(prices[mid-1]+prices[mid])/2:null;
  const priceSpread=prices.length>=2?(prices.at(-1)-prices[0])/median:Infinity;
- return {ready:valid.length>=2&&priceSpread<=.30,median,sellerCount:valid.length,samples:valid,priceSpread};
+ // A reference must be an offer someone actually sells. The median is retained
+ // only as a comparison statistic, never as the payable amount.
+ const compared=valid.length>=2&&priceSpread<=.30;
+ const eligible=compared?valid:valid.filter(sample=>verifiedProcurementAuthority(sample));
+ const selectedSample=[...eligible].sort((a,b)=>a.price-b.price||a.canonicalUrl.localeCompare(b.canonicalUrl))[0]||null;
+ const authority=selectedSample&&verifiedProcurementAuthority(selectedSample);
+ const selectionMode=selectedSample?(authority?(authority.type==='verified_official_store'?'verified_official_offer':'reviewed_supplier_offer'):'compared_seller_offer'):null;
+ return {ready:Boolean(selectedSample),referenceCNY:selectedSample?.price??null,selectedSample,
+  selectedQuote:selectedSample?procurementQuoteSelection(selectedSample):null,selectionMode,
+  median,sellerCount:valid.length,samples:valid,priceSpread};
 }

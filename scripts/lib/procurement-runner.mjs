@@ -1,5 +1,6 @@
 import { mapLimit } from './worker-pool.mjs';
 import { bindProcurementTarget,verifiedPublicProcurementCache,sameProcurementTarget } from './procurement-reference.mjs';
+import { knownProcurementUrls } from './procurement-sources.mjs';
 
 const logText=value=>String(value??'').replace(/<[^>]*>/g,' ').replace(/https?:\/\/[^\s"'<>]+/gi,'[url omitted]').replace(/\b(?:set-cookie|cookie|authorization|token|password|session)\s*[:=][^,;\n]*/gi,'[sensitive omitted]').replace(/\s+/g,' ').trim().slice(0,160);
 
@@ -11,7 +12,7 @@ export async function runPublicProcurement(buckets,{lookup,hydrate=async item=>i
  // Priorities reorder only existing, account-bound tasks. The cache, retry and
  // admission checks below apply unchanged to every prioritized task.
  const priorities=new Set(priorityItemIds);
- tasks.sort((a,b)=>Number(priorities.has(b.item.id))-Number(priorities.has(a.item.id)));
+ tasks.sort((a,b)=>Number(priorities.has(b.item.id))-Number(priorities.has(a.item.id))||Number(knownProcurementUrls(b.item).length>0)-Number(knownProcurementUrls(a.item).length>0));
  let admitted=0;
  await mapLimit(tasks,Math.max(1,Math.min(2,concurrency)),async task=>{
   const {item,prior={}}=task,key=item.accountId+':'+item.id;

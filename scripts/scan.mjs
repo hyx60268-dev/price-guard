@@ -4,6 +4,7 @@ import { chooseProcurementReference,mergeXianyuCostEvidence } from './lib/procur
 import { runPublicProcurement } from './lib/procurement-runner.mjs';
 import { xianyuAccessDiagnostic } from './lib/xianyu-evidence.mjs';
 import { mapLimit } from './lib/worker-pool.mjs';
+import { knownYahooRefreshTasks,runKnownYahooRefresh,yahooFullAttemptTime } from './lib/yahoo-known-refresh.mjs';
 import { buildOwnedOffers } from '../public/owned-offers.js';
 import { createOwnSourceLoader } from './lib/own-source.mjs';
 import { xianyuReviewPlan,mergeXianyuReview } from './lib/xianyu-review-plan.mjs';
@@ -130,7 +131,7 @@ const yahooBuckets=contexts.map(context=>{
   const rulesChanged=Number(prior.yahoo?.rulesVersion)!==MATCHING_RULES_VERSION;
   const activePriceSignal=prior.yahoo?.underpriced===true||prior.yahoo?.comparisonStatus==='competitor_lower'||
     Number.isFinite(Number(prior.recommendedPrice))&&Number(prior.recommendedPrice)!==Number(item.ownPrice);
-  const checked=comparisonAttemptTime(prior.yahoo);
+  const checked=yahooFullAttemptTime(prior.yahoo);
   // 规则升级后先撤销/重核验所有正在触发调价的结果（降价和提价都包括），
   // 避免旧误判在数百件商品的普通轮转队尾继续显示多个周期。
   return {context,item,itemIndex,prior,priority:added?0:priceChanged?1:rulesChanged&&activePriceSignal?1:rulesChanged?2:Number.isFinite(checked)?3:2,lastChecked:Number.isFinite(checked)?checked:0};
@@ -143,14 +144,37 @@ const yahooTasks=prioritizePriceAuditItems(fairPriorityRoundRobin(yahooBuckets),
 // A deferred Yahoo task must not deprive Rakuma/Mercari/Xianyu of the sale description.
 const {hydrate:hydratedItem,yahooBundle:ownBundle}=createOwnSourceLoader({fetchYahooBundle:id=>fetchYahooItemBundle(id,settings),fetchRakumaItem:item=>fetchRakumaItem(item,settings)});
 const yahooConcurrency=Math.max(1,Math.min(4,Number(settings.yahooConcurrency)||3));
-const yahooWork=mapLimit(yahooTasks,yahooConcurrency,async(task,taskIndex)=>{
+const yahooWork=(async()=>{
+  // A small, separately bounded lane checks known external details before any
+  // broad Yahoo search. The majority of this cycle remains for new candidates.
+  const quickStarted=Date.now(),quickBudget=Math.max(0,Math.min(2*60_000,(deadline-quickStarted)*.2));
+  const knownTasks=knownYahooRefreshTasks(contexts,{...settings,matchCorrections},quickStarted);
+  const knownResults=await runKnownYahooRefresh(knownTasks,{
+    deadline:quickStarted+quickBudget,concurrency:2,
+    lookup:async({context,item,prior,candidates},{deadline:knownDeadline})=>{
+      const profileSellerId=String(context.account.profileUrl||'').match(/\/user\/([^/?#]+)/i)?.[1]||'';
+      return yahooCompare(null,{...item,yahoo:prior.yahoo},{...settings,matchCorrections,ownSellerId:item.sellerId||profileSellerId,
+        yahooKnownOnly:true,yahooKnownCandidateIds:candidates.slice(0,1).map(value=>value.id),yahooKnownRefreshDeadline:knownDeadline},
+        {fetchYahooItemBundle:id=>ownBundle(id)});
+    },
+    log:record=>console.log('[已知竞品复核]',JSON.stringify(record))
+  });
+  console.log('[已知竞品进度]',JSON.stringify({eligible:knownTasks.length,attempted:knownResults.size,remaining:knownTasks.length-knownResults.size,budgetSeconds:Math.round(quickBudget/1000),durationSeconds:Math.round((Date.now()-quickStarted)/1000)}));
+  for(const {task,value} of knownResults.values()){
+    task.context.yahooById.set(task.item.id,value);
+    if(value.knownRefresh?.mode==='details_only'&&Number.isFinite(value.ownObservedPrice))task.item.ownPrice=value.ownObservedPrice;
+  }
+  return mapLimit(yahooTasks,yahooConcurrency,async(task,taskIndex)=>{
   const {context,item,prior}=task;
-  const fresh=cachedYahoo(prior,item);
-  if(!forceYahoo&&fresh&&prior.ownPrice===item.ownPrice&&isFreshMinutes(fresh.checkedAt,yahooFreshMinutes)){
+  const fresh=cachedYahoo(prior,item),known=context.yahooById.get(item.id);
+  const lastBroad=Date.parse(prior.yahoo?.searchCheckedAt||''),broadDue=!Number.isFinite(lastBroad)||Date.now()-lastBroad>=Math.max(1,Number(settings.yahooBroadSearchHours)||6)*3_600_000;
+  if(known?.knownRefresh?.mode==='details_only'&&!forceYahoo&&task.priority>1&&!broadDue)return;
+  if(!forceYahoo&&fresh&&prior.ownPrice===item.ownPrice&&isFreshMinutes(fresh.checkedAt,yahooFreshMinutes)&&!(prior.yahoo?.knownRefresh?.mode==='details_only'&&broadDue)){
+    if(known)return;
     context.yahooById.set(item.id,fresh);return;
   }
   if(Date.now()>=deadline){
-    context.yahooById.set(item.id,cachedYahoo(prior,item,'scan_budget')||{status:'deferred_budget',cacheReason:'rules_changed',rulesVersion:prior.yahoo?.rulesVersion??MATCHING_RULES_VERSION,checkedAt:null,lowestPrice:item.ownPrice,lowestUrl:item.url,recommendedPrice:item.ownPrice,candidates:[]});return;
+    context.yahooById.set(item.id,known||cachedYahoo(prior,item,'scan_budget')||{status:'deferred_budget',cacheReason:'rules_changed',rulesVersion:prior.yahoo?.rulesVersion??MATCHING_RULES_VERSION,checkedAt:null,lowestPrice:item.ownPrice,lowestUrl:item.url,recommendedPrice:item.ownPrice,candidates:[]});return;
   }
   try{
     if(item.platform==='rakuma'){
@@ -159,16 +183,18 @@ const yahooWork=mapLimit(yahooTasks,yahooConcurrency,async(task,taskIndex)=>{
       item.ownPrice=item.sourceDetail.price;
     }
     const profileSellerId=String(context.account.profileUrl||'').match(/\/user\/([^/?#]+)/i)?.[1]||'';
-    const result=await yahooCompare(null,item,{...settings,matchCorrections,ownSellerId:item.sellerId||profileSellerId,forceYahooBroadSearch:forceYahoo||task.priority<=1},{fetchYahooItemBundle:(id)=>id===item.id?ownBundle(id):fetchYahooItemBundle(id,settings)});context.yahooById.set(item.id,result);
+    const result=await yahooCompare(null,known?.knownRefresh?.mode==='details_only'?{...item,yahoo:known}:item,{...settings,matchCorrections,ownSellerId:item.sellerId||profileSellerId,forceYahooBroadSearch:forceYahoo||task.priority<=1},{fetchYahooItemBundle:id=>ownBundle(id)});context.yahooById.set(item.id,{...result,knownLastAttemptAt:known?.knownLastAttemptAt||prior.yahoo?.knownLastAttemptAt||null});
     console.log(`[Yahoo ${taskIndex+1}/${yahooTasks.length}] ${context.account.name} ${item.id} cards=${result.cardCount} matches=${result.competitorCount} lowest=${result.lowestPrice} source=${result.sourceStatus?.search||'unknown'}`);
   }catch(error){
     console.error(`[Yahoo ERROR][${context.account.id}:${item.id}]`,String(error));
-    context.yahooById.set(item.id,cachedYahoo(prior,item,'request_error')||{status:'error',error:String(error),rulesVersion:MATCHING_RULES_VERSION,checkedAt:new Date().toISOString(),candidates:[],lowestPrice:item.ownPrice,lowestUrl:item.url,recommendedPrice:item.ownPrice});
+    context.yahooById.set(item.id,known?.knownRefresh?.mode==='details_only'?{...known,fullSearchError:true}:cachedYahoo(prior,item,'request_error')||{status:'error',error:String(error),rulesVersion:MATCHING_RULES_VERSION,checkedAt:new Date().toISOString(),candidates:[],lowestPrice:item.ownPrice,lowestUrl:item.url,recommendedPrice:item.ownPrice});
   }finally{
-    context.yahooById.set(item.id,retainComparisonAttempt(context.yahooById.get(item.id)||{},prior.yahoo,new Date().toISOString()));
+    const attemptedAt=new Date().toISOString();
+    context.yahooById.set(item.id,retainComparisonAttempt({...context.yahooById.get(item.id),lastFullAttemptAt:attemptedAt,knownLastAttemptAt:known?.knownLastAttemptAt||prior.yahoo?.knownLastAttemptAt||null},prior.yahoo,attemptedAt));
     await wait(550+Math.floor(Math.random()*350));
   }
-});
+  });
+})();
 
 // Bounded product workers share the run deadline and the platform request gate.
 const rakumaFreshHours=Math.max(1/60,Number(settings.rakumaFreshHours)||1/3);

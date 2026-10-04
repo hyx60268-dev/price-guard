@@ -5,6 +5,8 @@ on:
     paths:
       - scripts/lib/procurement-sources.mjs
       - scripts/lib/procurement-evidence.mjs
+      - scripts/lib/procurement-authority.mjs
+      - scripts/lib/procurement-reference.mjs
       - scripts/prove-public-procurement.mjs
       - .github/workflows/public-procurement-proof.yml
 permissions:
