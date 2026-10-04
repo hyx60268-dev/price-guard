@@ -240,6 +240,12 @@ function diagnosticText(value,limit=160){
  return String(value??'').replace(/<[^>]*>/g,' ').replace(/https?:\/\/[^\s"'<>]+/gi,'[url omitted]').replace(/\b(?:set-cookie|cookie|authorization|token|password|session)\s*[:=][^,;\n]*/gi,'[sensitive omitted]').replace(/\s+/g,' ').trim().slice(0,limit);
 }
 function searchExample(row,reason){let host='';try{host=new URL(row.url).hostname.slice(0,100)}catch{}return {host,title:diagnosticText(row.title,100),reason};}
+// Direct detail recall only. Every returned page still passes SKU, availability,
+// target identity and price verification; an entry is never an accepted quote.
+export function knownProcurementUrls(item={}){
+ return /Anker/i.test(item.title||'')&&/AeroClip\s*2/i.test(item.title||'')&&/張凌赫|张凌赫/.test(item.title||'')
+  ?['https://detail.youzan.com/show/goods?alias=2osy35s5abbdhtd']:[];
+}
 export async function alternativeProcurementCost(item,{deadline=Date.now()+90000,maxDetails=8,search=searchExternalImages,detail=readPublicProcurementDetail,fingerprint=imageFingerprints,matchCorrections={},context,getContext}={}){
  const target=procurementTarget(item),checkedAt=new Date().toISOString(),report={status:'incomplete',averageCNY:null,samples:[],sellerCount:0,verification:PUBLIC_PROCUREMENT_VERIFICATION,checkedAt,target,diagnostics:[],searched:0,detailCheckedCount:0,searchResults:[],unsupportedTargets:0,duplicateUrls:0};
  const diagnose=row=>{if(report.diagnostics.length<16)report.diagnostics.push({...row,source:row.source?diagnosticText(row.source,32):undefined,url:row.url&&row.url.length<=512?canonicalProcurementUrl(row.url)||undefined:undefined,reason:diagnosticText(row.reason)})};
@@ -281,7 +287,7 @@ export async function alternativeProcurementCost(item,{deadline=Date.now()+90000
    if(verifiedPublicCostEvidence(report.samples,{target}).ready)return;
   }catch(e){sourceFailure=true;diagnose({source:procurementSource(url),reason:String(e?.message||e).slice(0,160),url})}
  }};
- const known=/Anker/i.test(item.title)&&/AeroClip\s*2/i.test(item.title)&&/張凌赫|张凌赫/.test(item.title)?[{url:'https://detail.youzan.com/show/goods?alias=2osy35s5abbdhtd'}]:[];
+ const known=knownProcurementUrls(item).map(url=>({url}));
  await consume(selectCandidates([...known,...(item.procurementSource?.samples||[])]));
  for(const query of externalSearchQueries(item.title).slice(0,2))for(const provider of ['duckduckgo','bing']){
   if(Date.now()>=deadline||seen.size>=maxDetails||verifiedPublicCostEvidence(report.samples,{target}).ready)break;
@@ -298,7 +304,7 @@ export async function alternativeProcurementCost(item,{deadline=Date.now()+90000
   }catch(e){sourceFailure=true;summary.error=diagnosticText(e?.message||e);diagnose({stage:'search',source:provider,reason:summary.error})}
  }
  const evidence=verifiedPublicCostEvidence(report.samples,{target});Object.assign(report,{samples:evidence.samples,sellerCount:evidence.sellerCount,priceSpread:evidence.priceSpread});
- if(evidence.ready)return {...report,status:'ok',averageCNY:evidence.median,reviewedAt:new Date().toISOString(),reviewVersion:1};
+ if(evidence.ready)return {...report,status:'ok',averageCNY:evidence.referenceCNY,selectedQuote:evidence.selectedQuote,selectionMode:evidence.selectionMode,checkedAt:evidence.selectedQuote.checkedAt,reviewedAt:new Date().toISOString(),reviewVersion:1};
  if(Date.now()>=deadline)return {...report,status:'deferred',reason:'budget_exhausted'};
  if(sourceFailure||!sourcesCompleted&&!report.detailCheckedCount)return {...report,status:report.samples.length?'incomplete':'unavailable',reason:'source_unavailable'};
  return {...report,reason:evidence.sellerCount?'independent_sellers_insufficient':'no_verified_detail',reviewedAt:new Date().toISOString(),reviewVersion:1};

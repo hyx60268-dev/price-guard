@@ -12,7 +12,7 @@ const withXianyu=item=>({...item,xianyu:{averageCNY:95,verification:XIANYU_VERIF
 test('fresh public procurement chooses an independently verified landed amount without mutating Xianyu',()=>{
  const item=publicProcurementItem(now);item.xianyu={status:'deferred_access',averageCNY:null,samples:[]};
  const before=structuredClone(item),selected=chooseProcurementReference(item,{now});
- assert.equal(selected.referenceProvider,'public_cn');assert.equal(selected.averageCNY,105);
+ assert.equal(selected.referenceProvider,'public_cn');assert.equal(selected.averageCNY,100);
  assert.equal(selected.sourceLabel,'国内采购渠道');assert.deepEqual(item,before);
  assert.equal(verifiedXianyuReference(item,{now}),null);
 });
@@ -22,7 +22,7 @@ test('valid Xianyu reference stays preferred and cannot borrow a public top-leve
  assert.equal(chooseProcurementReference(item,{now}).averageCNY,95);
  delete item.xianyu.averageCNY;
  assert.equal(verifiedXianyuReference(item,{now}),null);
- assert.equal(chooseProcurementReference(item,{now}).averageCNY,105);
+ assert.equal(chooseProcurementReference(item,{now}).averageCNY,100);
  delete item.referenceProvider;item.averageCNY=95;
  assert.equal(verifiedXianyuReference(item,{now}).averageCNY,95);
 });

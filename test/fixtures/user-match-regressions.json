@@ -1,5 +1,14 @@
 [
   {
+    "case": "2026-10-04 叶瞬光SS相同标题的不同卡面照片不能仅按文字泛化比价",
+    "ownTitle": "ゼンゼロ 閃魂コラボ 中国限定 仲夏幻夢 コレクションカード 葉瞬光 SS",
+    "ownDescription": "未使用 コレクションカード1枚",
+    "candidateTitle": "ゼンゼロ 閃魂コラボ 中国限定 仲夏幻夢 コレクションカード 葉瞬光 SS",
+    "candidateDescription": "未使用 コレクションカード1枚",
+    "primaryImageScore": null,
+    "expected": "primary_variant_unconfirmed"
+  },
+  {
     "case": "Fan Ho 三本和简介限定两本",
     "ownTitle": "FAN HO 香港三部作 写真集",
     "ownDescription": "新品 3冊セット",

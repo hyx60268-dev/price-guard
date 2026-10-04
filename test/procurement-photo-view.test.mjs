@@ -27,3 +27,13 @@ test('public procurement corrections persist, isolate accounts and invalidate on
  assert.equal(invalidateCorrectedMatches({...item,accountId:'b'},corrections).averageCNY,999);
  assert.equal(invalidateCorrectedMatches(item,{[correctionKey(r)]:{...r,deleted:true}}).averageCNY,999);
 });
+
+test('the displayed procurement reference names the actual selected seller, variant and payable amount',()=>{
+ const a={canonicalUrl:'https://detail.youzan.com/show/goods?alias=white',url:'https://detail.youzan.com/show/goods?alias=white',skuId:'white-1',sellerKey:'youzan:1',sellerName:'Supplier A',selectedVariant:'白色礼盒',unitCNY:999,shippingCNY:0,landedCNY:999};
+ const b={...a,canonicalUrl:'https://detail.youzan.com/show/goods?alias=other',url:'https://detail.youzan.com/show/goods?alias=other',skuId:'white-2',sellerKey:'youzan:2',sellerName:'Supplier B',unitCNY:1099,landedCNY:1099};
+ const item={referenceProvider:'public_cn',procurementSource:{status:'ok',selectedQuote:{...a},samples:[a,b]}};
+ const dom=new JSDOM(publicProcurementMarkup(item));
+ try{const adopted=dom.window.document.querySelectorAll('strong');assert.equal(adopted.length,1);assert.match(adopted[0].parentElement.textContent,/Supplier A.*白色礼盒.*¥999/s);assert.equal(adopted[0].parentElement.querySelector('a').href,a.url);assert.doesNotMatch(dom.window.document.body.textContent,/至少两家|中位数/);}finally{dom.window.close()}
+ const stale=new JSDOM(publicProcurementMarkup({...item,referenceProvider:null}));
+ try{assert.equal(stale.window.document.querySelectorAll('strong').length,0);}finally{stale.window.close()}
+});

@@ -26,7 +26,7 @@ let dashboard={};try{dashboard=JSON.parse(decrypt(await fs.readFile(path.join(ro
 cfg.merchants=mergeMerchantConfigs((cfg.merchants||[]).map(raw=>({...merchantProfile(raw),enabled:true})),dashboard.merchantMonitors||[]).filter(m=>m.enabled);
 await initializeExternalSearchAccess({root,password});
 console.log('[公开搜索访问]',JSON.stringify({stage:'merchant',providers:externalSearchAccessSnapshot()}));
-const monitorVersion=19;
+const monitorVersion=20;
 const configDigest=crypto.createHash('sha256').update(JSON.stringify({cfg,monitorVersion})).digest('hex');
 if(process.env.MERCHANT_MONITOR_IF_DUE==='1'&&previous.mode==='merchant_monitor'&&previous.configDigest===configDigest&&Date.now()-Date.parse(previous.checkedAt||'')<merchantRetryDelay(previous)){console.log('商家监控未到下次更新时间，保留已发布记录');process.exit(0)}
 const merchants=[...new Map((cfg.merchants||[]).map(raw=>{const m=merchantProfile(raw);return [m.key,m]})).values()];
@@ -108,6 +108,7 @@ for(const expanded of visualProducts){const target=expanded.bundleParentId?recor
 const configured=new Set(merchants.map(m=>m.key));
 for(const r of Object.values(records)){const source=sources.find(m=>m.key===r.merchant.key);if(source?.name&&source.name!==source.id)r.merchant={...r.merchant,name:source.name}}
 const curated=curateMerchantProducts(merchantProducts(Object.fromEntries(Object.entries(records).filter(([,r])=>configured.has(r.merchant.key)))),dashboard);
+for(const excluded of curated.reviewedOwnedExclusions)console.log('[已核对自有卡面排除]',JSON.stringify(excluded));
 const products=curated.products;
 const checkedAt=new Date().toISOString();
 const result={externalSearchAccess:externalSearchAccessSnapshot(),version:monitorVersion,merchantPrimaryImages,mode:'merchant_monitor',configDigest,checkedAt,codeSha:process.env.GITHUB_SHA||null,merchantListings:records,merchants:sources,products,errors,

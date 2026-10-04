@@ -1,4 +1,4 @@
-import { PUBLIC_PROCUREMENT_VERIFICATION } from '../../scripts/lib/procurement-evidence.mjs';
+import { PUBLIC_PROCUREMENT_VERIFICATION, procurementQuoteSelection } from '../../scripts/lib/procurement-evidence.mjs';
 export function publicProcurementItem(now=Date.parse('2026-10-01T17:00:00Z')){
  const checkedAt=new Date(now).toISOString();
  const target={accountId:'shop-a',id:'z123456789',title:'Anker AeroClip 2 张凌赫 红色礼盒 1套',image:'https://inventory.example/anker-red.jpg',description:'红色整套礼盒 1 套，含 AeroClip 2 耳机。',condition:'新品、未使用'};
@@ -9,6 +9,6 @@ export function publicProcurementItem(now=Date.parse('2026-10-01T17:00:00Z')){
   priceSource:'target_detail',detailTitle:target.title,detailDescription:'红色整套礼盒 1 套，含 AeroClip 2 耳机。',
   detailImages:['https://pictures.example/shop'+i+'/red-box.jpg'],checkedAt,verification:PUBLIC_PROCUREMENT_VERIFICATION,
   identity:{primaryImageScore:.99,titleScore:.8,accepted:true},target:{...target}}));
- return {...target,sourceDetail:{description:target.description,condition:target.condition},averageCNY:105,referenceProvider:'public_cn',procurementSource:{status:'ok',averageCNY:105,
-  verification:PUBLIC_PROCUREMENT_VERIFICATION,checkedAt,reviewedAt:checkedAt,reviewVersion:1,target:{...target},samples}};
+ return {...target,sourceDetail:{description:target.description,condition:target.condition},averageCNY:100,referenceProvider:'public_cn',procurementSource:{status:'ok',averageCNY:100,
+  verification:PUBLIC_PROCUREMENT_VERIFICATION,checkedAt,reviewedAt:checkedAt,reviewVersion:1,target:{...target},samples,selectedQuote:procurementQuoteSelection(samples[0]),selectionMode:'compared_seller_offer'}};
 }

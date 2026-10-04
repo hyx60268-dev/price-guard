@@ -5,6 +5,13 @@ import { procurementTarget } from '../scripts/lib/procurement-evidence.mjs';
 import { runPublicProcurement } from '../scripts/lib/procurement-runner.mjs';
 const now=Date.parse('2026-10-01T17:00:00Z');
 const make=(accountId,id)=>({item:{accountId,id,title:'同款测试',image:'https://photos.test/'+id},prior:{}});
+
+test('an existing inventory item with a direct supplier is checked before another blind search, without injecting inventory',async()=>{
+ const ordinary=make('a','ordinary'),direct=make('a','direct'),forced=make('b','forced'),seen=[];
+ direct.item.title='Anker AeroClip 2 張凌赫 ホワイト ギフトボックス';
+ const result=await runPublicProcurement([[ordinary,direct],[forced]],{priorityItemIds:['forced','not-in-inventory'],now:()=>now,deadline:now+60000,limit:2,lookup:async item=>{seen.push(item.id);return {status:'incomplete',samples:[]}}});
+ assert.deepEqual(seen,['forced','direct']);assert.equal(result.get('a:ordinary').attempted,false);assert.equal(result.size,3);
+});
 test('public procurement runs during Xianyu cooldown with bounded concurrency and fair account admission',async()=>{
  const buckets=[[make('a','1'),make('a','2')],[make('b','3'),make('b','4')]],seen=[];let active=0,peak=0;
  const values=await runPublicProcurement(buckets,{now:()=>now,deadline:now+60000,limit:3,lookup:async item=>{active++;peak=Math.max(peak,active);seen.push(item.accountId+':'+item.id);await new Promise(r=>setImmediate(r));active--;return {status:'incomplete',samples:[],averageCNY:null}}});
