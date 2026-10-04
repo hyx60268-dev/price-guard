@@ -1,7 +1,14 @@
 // Search recall vocabulary only. This is never sufficient product/SKU evidence.
 // Translate observed words without deleting model numbers, colours or sale units.
 export function localizeSearchTerms(value=''){
- return String(value).normalize('NFKC')
+ const original=String(value).normalize('NFKC');
+ // Observed Japanese listings abbreviate/misspell the printed series name.
+ // Limit this recall alias to Pokemon context; never infer a release or box size.
+ const pokemon=/(?:ポケ(?:ット)?モンスター|ポケモン|宝可梦|寶可夢|ピカチュウ|皮卡丘|\bPok[eé]mon\b)/i.test(original);
+ const localized=pokemon?original.replace(/(?:[绘繪絵]?[梦夢](?:描)?[点點][睛晴])/g,'绘梦点睛')
+  .replace(/未開封/g,'未拆封').replace(/第(\d+)弾/g,'第$1弹'):original;
+ return localized
+  .replace(/ピカチュウ/g,'皮卡丘')
   .replace(/トイ[・·\s]*ストーリー|Toy\s*Story/gi,'玩具总动员')
   .replace(/クレヨンしんちゃん|Crayon\s*Shin[ -]?chan|蠟筆小新/gi,'蜡笔小新')
   .replace(/(52TOYS)\s*×\s*(?=玩具总动员|蜡笔小新)/gi,'$1 ')
