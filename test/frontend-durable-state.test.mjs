@@ -1,3 +1,4 @@
+import { snapshotFreshness,elapsedLabel } from '../public/dashboard-freshness.js';
 import { merchantProductKey,merchantDismissed,postedMerchantRecord } from '../public/merchant-records.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,7 +14,7 @@ test('browser migration respects cloud tombstones and sync preserves relisted co
   const source=await fs.readFile(new URL('../public/app.js',import.meta.url),'utf8');
   const dom=new JSDOM(html,{url:'https://example.test',runScripts:'outside-only'});
   try{
-    Object.assign(dom.window,{merchantProductKey,merchantDismissed,postedMerchantRecord,mergeAccounts,resolveCostRecord,createCostResolver,candidateId,correctionKey,mergeMatchCorrections,rejectedByMemory,invalidateCorrectedMatches,parseShopProfile,FRONTEND_VERSION,
+    Object.assign(dom.window,{snapshotFreshness,elapsedLabel,merchantProductKey,merchantDismissed,postedMerchantRecord,mergeAccounts,resolveCostRecord,createCostResolver,candidateId,correctionKey,mergeMatchCorrections,rejectedByMemory,invalidateCorrectedMatches,parseShopProfile,FRONTEND_VERSION,
       fetch:async()=>{throw Error('offline fixture')}});
     dom.window.eval(source.replace(/^import .*;\r?\n/gm,'')+`
       window.fixture={set(value,costs){data=value;manualCosts=costs},migrateLocalData,getLocal,manualFor,syncCosts};`);

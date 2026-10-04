@@ -5,6 +5,7 @@
 </head><body>
 <header><div class="brand"><img class="brandmark" src="favicon.svg" alt=""><div><p class="eyebrow">EQUORA</p><h1>衡序</h1></div></div><div class="header-status"><p id="stamp">读取最近一次云端检查…</p></div><div class="headeractions"><button id="cloudSync" class="ghost" hidden>同步云端</button><button id="help" class="ghost">手机与通知</button><button id="install" class="ghost" hidden>安装到桌面</button></div></header>
 <main>
+ <section id="freshnessNotice" class="notice" role="status" hidden><strong id="freshnessTitle"></strong><span id="freshnessText"></span></section>
  <section id="unlock" class="unlock"><img class="lockmark" src="favicon.svg" alt="衡序"><h2>登录衡序</h2><p>每位使用者只会解锁自己负责的店铺；密码只在本机浏览器中使用。</p><form id="unlockForm"><input id="username" autocomplete="username" value="admin" placeholder="用户名" required><input id="password" type="password" minlength="8" autocomplete="current-password" placeholder="密码" required><button>打开仪表盘</button></form><p id="unlockError" class="error"></p></section>
  <div id="dashboard" hidden>
   <nav class="viewtabs" aria-label="功能"><button id="showPricing" class="active">价格检查</button><button id="showDiscovery">商家追踪</button></nav>
@@ -22,7 +23,7 @@
   </section>
   <details class="scan-details"><summary>数据来源与扫描进度</summary><section id="statusGrid" class="statusgrid"></section></details>
 <section class="toolbar"><label class="search"><span>⌕</span><input id="search" placeholder="搜索商品名称"></label><select id="filter"><option value="all">全部商品</option><option value="reprice">建议调价</option><option value="stale">30天未售，建议评估删除</option><option value="low">调价后利润低于 ¥1,500</option><option value="input">待补完整成本</option><option value="manual">同款需复核</option></select><select id="sort" aria-label="商品排序"><option value="priority">优先处理</option><option value="price">售价从高到低</option><option value="title">按商品名称</option></select><button id="excel" class="ghost">下载 Excel</button></section>
-  <section class="tablewrap"><table><thead><tr><th>商品</th><th>我的售价</th><th>在售最低</th><th>建议价</th><th>采购参考</th><th>成本</th><th>不改价利润</th><th>改价后利润</th><th>判断</th></tr></thead><tbody id="rows"></tbody></table><div id="cards"></div><p id="empty" hidden>没有符合筛选条件的商品。</p><nav id="pagination" class="pagination" aria-label="商品分页"></nav></section>
+  <section class="tablewrap"><table><thead><tr><th>商品</th><th>我的售价</th><th>在售最低</th><th>建议价</th><th>采购参考</th><th>成本</th><th>不改价利润</th><th>改价后利润</th><th>判断</th></tr></thead><tbody id="rows"></tbody></table><div id="cards"></div><div id="empty" hidden><p id="emptyText">没有符合筛选条件的商品。</p><button type="button" id="showAllItems" class="soft" hidden>查看全部商品</button></div><nav id="pagination" class="pagination" aria-label="商品分页"></nav></section>
   </div>
   <section id="discoveryView" hidden>
    <div class="discoveryhead"><div><p class="eyebrow dark">MERCARI × YAHOO!フリマ × 闲鱼</p><h2>指定商家追踪</h2><p id="discoveryStamp" class="muted">读取最近一次选品扫描…</p></div><div class="discoverystats" id="discoveryStats"></div></div>
@@ -42,5 +43,5 @@
 <dialog id="detail"><button class="close" aria-label="关闭">×</button><div id="detailBody"></div></dialog>
 <dialog id="imageSearchDialog"><button class="close" aria-label="关闭">×</button><h2>手机以图搜索</h2><div class="imagehandoff"><img id="imageSearchPreview" alt="待搜索图片"><div><b id="imageSearchTitle"></b><p id="imageSearchStatus" class="muted">先把图片保存到手机，再打开 App 选择刚保存的图片。</p></div></div><div class="imagehandoffactions"><button id="saveSearchImage">① 保存图片到手机</button><button id="openXianyu" class="soft">② 打开闲鱼</button><button id="openXhs" class="soft">② 打开小红书</button></div><p class="muted">iPhone/Android 会先出现系统分享面板，请点“存储图像/保存图片”。网页受手机系统限制，不能代替你点击 App 内的相机按钮；打开 App 后选择相册里最新一张即可。</p></dialog>
 <dialog id="helpDialog"><button class="close" aria-label="关闭">×</button><h2>手机使用、同步与通知</h2><ol class="helpsteps"><li><b>打开仪表盘</b><span>手机 Safari 或 Chrome 打开当前网址，输入管理员给你的用户名和密码。</span></li><li><b>放到手机桌面</b><span>iPhone：Safari“分享 → 添加到主屏幕”；Android：浏览器菜单“安装应用/添加到主屏幕”。</span></li><li><b>绑定自己的店铺</b><span>在“账号管理”粘贴 Yahoo!フリマ 或 fril.jp/shop/ 卖家主页链接，点“同步云端”，再在打开的 GitHub 页面点绿色“Submit new issue”。首次提交会绑定你的 GitHub 身份。</span></li><li><b>接收提醒</b><span>价格、成本和选品变化统一创建 <a target="_blank" href="https://github.com/hyx60268-dev/price-guard/issues">GitHub Issue</a>，不再发送邮件或 Telegram。</span></li></ol></dialog>
-<footer>价格检查约每20分钟 · Yahoo＋Rakuma＋Mercari 三平台比价 · GitHub Actions 通知 · 可跨设备加密同步</footer><script type="module" src="app.js?v=50"></script>
+<footer>价格检查约每20分钟 · Yahoo＋Rakuma＋Mercari 三平台比价 · GitHub Actions 通知 · 可跨设备加密同步</footer><script type="module" src="app.js?v=51"></script>
 </body></html>

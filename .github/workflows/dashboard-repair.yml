@@ -16,12 +16,13 @@ permissions:
   pages: write
   id-token: write
 
-concurrency:
-  group: pages
-  cancel-in-progress: false
 
 jobs:
   repack-and-publish:
+    # Hold the shared state/session lock for the entire restore-to-publish transaction.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
