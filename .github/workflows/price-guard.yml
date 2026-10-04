@@ -13,8 +13,8 @@ on:
         type: string
         default: ''
   schedule:
-    # GitHub 云端约每 20 分钟检查一次；无需电脑或手机保持开机。
-    - cron: '*/20 * * * *'
+    # 每小时第 7、27、47 分钟触发，避开整点高峰；GitHub 仍可能延迟派发。
+    - cron: '7,27,47 * * * *'
 permissions:
   contents: read
   issues: write
