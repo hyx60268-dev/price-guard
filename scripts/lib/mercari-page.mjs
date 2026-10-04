@@ -56,7 +56,23 @@ export function readMercariDetail(document){
  const shippingIncluded=/送料込み|出品者負担/.test(shippingText);
  const fixedShipping=/^[¥￥]\s*[\d,]+$/.test(shippingText)?Number(shippingText.replace(/[^\d]/g,'')):null;
  const shippingJPY=shippingIncluded?0:fixedShipping;
- const seller=article.querySelector('a[href^="/user/profile/"],a[href^="/shops/profile/"]');
+ // A comment author or recommended shop may precede the target seller link.
+ // Prefer the explicit seller section and never resolve conflicting identities
+ // by DOM order. Some responsive pages expose just one profile without a heading.
+ const visible=node=>{for(let n=node;n&&n!==article.parentElement;n=n.parentElement){const style=document.defaultView?.getComputedStyle(n);if(n.hidden||n.getAttribute('aria-hidden')==='true'||style?.display==='none'||style?.visibility==='hidden'||style?.opacity==='0')return false}return true};
+ const profile=anchor=>{try{const u=new URL(anchor.getAttribute('href'),document.location?.href||'https://jp.mercari.com');return u.origin==='https://jp.mercari.com'&&/^\/(?:user\/profile\/\d+|shops\/profile\/[A-Za-z0-9_-]+)\/?$/.test(u.pathname)?u.pathname.replace(/\/$/,''):null}catch{return null}};
+ const profileLinks=[...article.querySelectorAll('a[href]')].filter(node=>visible(node)&&!node.closest('[data-testid="description"]')).map(node=>({node,id:profile(node)})).filter(row=>row.id);
+ const kind=value=>/^(?:出品者|出品者情報|ショップ情報|販売者)$/.test(value)?'seller':/^(?:コメント|おすすめ|関連商品|この(?:出品者|ショップ)の商品|評価|レビュー)/.test(value)?'other':null;
+ const regions=headings.filter(visible).map(node=>({node,kind:kind(node.textContent.trim())})).filter(row=>row.kind);
+ const sellerRegions=regions.filter(row=>row.kind==='seller');
+ const preceding=(a,b)=>Boolean(a.compareDocumentPosition(b)&4);
+ const inSellerRegion=row=>{let region;for(const current of regions)if(preceding(current.node,row.node))region=current;return region?.kind==='seller'};
+ const eligibleProfiles=sellerRegions.length?profileLinks.filter(inSellerRegion):regions.length?[]:profileLinks;
+ const sellerIds=[...new Set(eligibleProfiles.map(row=>row.id))];
+ const seller=sellerIds.length===1?eligibleProfiles.find(row=>row.id===sellerIds[0]).node:null;
+ const sellerDiagnostic={status:seller?'confirmed':sellerIds.length>1?'ambiguous':profileLinks.length?'unscoped':'missing',
+  scope:sellerRegions.length?'seller_section':regions.length?'no_seller_section':'unique_article',
+  candidateCount:sellerIds.length,candidateIds:sellerIds.slice(0,4),articleProfileCount:profileLinks.length,observedProfileIds:[...new Set(profileLinks.map(row=>row.id))].slice(0,4)};
  const images=[...article.querySelectorAll('[aria-label^="商品画像"] img,[aria-label^="商品サムネイル"] img')].map(n=>n.currentSrc||n.src).filter(Boolean);
  const publicShipping=[];
  // Diagnostics only: inspect publicly embedded target-product state, never
@@ -75,7 +91,7 @@ export function readMercariDetail(document){
   }catch{}
  }
  return {priceDiagnostic:price&&shippingJPY!==null?undefined:{publicShipping,headerText:header.map(n=>n.children.length?'':n.textContent).join(' ').slice(0,1200),shippingHeadings:headings.filter(n=>/送料|配送/.test(n.textContent)).map(n=>n.parentElement.outerHTML.slice(0,1500)),converted:converted?.outerHTML.slice(0,1000),targetPrices:targetPrices.map(n=>n.outerHTML.slice(0,700)),headerPrices:header.filter(n=>/[¥￥]|[0-9],[0-9]{3}/.test(n.textContent)).slice(-10).map(n=>n.outerHTML.slice(0,500))},title,description,condition,price,itemPrice:price,shippingJPY,shippingText,shippingKnown:shippingJPY!==null,
-  status:checkout?'OPEN':'UNKNOWN',sellerId:seller?.getAttribute('href')||'',sellerName:seller?.querySelector('h2,h3,[data-testid="seller-name"]')?.textContent?.trim()||seller?.querySelector('img')?.alt?.replace(/の(?:画像|アイコン).*$/,'').trim()||'',images:[...new Set(images)]};
+  status:checkout?'OPEN':'UNKNOWN',sellerId:seller?sellerIds[0]:'',sellerDiagnostic,sellerName:seller?.querySelector('h2,h3,[data-testid="seller-name"]')?.textContent?.trim()||seller?.querySelector('img')?.alt?.replace(/の(?:画像|アイコン).*$/,'').trim()||'',images:[...new Set(images)]};
 }
 export async function mercariSearch(page,url){
  await page.goto(url,{waitUntil:'domcontentloaded',timeout:60000});
@@ -87,7 +103,9 @@ export async function mercariDetail(page,url){
  if(!/^https:\/\/jp\.mercari\.com\/(?:item\/m\d+|shops\/product\/[A-Za-z0-9]+)$/.test(url))throw Error('煤炉商品链接无效');
  await page.goto(url,{waitUntil:'domcontentloaded',timeout:60000});
  await page.locator('main article h1').waitFor({timeout:30000});
- await page.waitForFunction('() => { const d=('+readMercariDetail.toString()+')(document); return Boolean(d&&d.price&&d.description&&d.shippingText); }',{},{timeout:30000}).catch(()=>{});
+ await page.waitForFunction('() => { const d=('+readMercariDetail.toString()+')(document); return Boolean(d&&d.price&&d.description&&d.shippingText&&d.sellerId); }',{},{timeout:30000}).catch(()=>{});
  const result=await page.evaluate('('+readMercariDetail.toString()+')(document)');
- if(!result?.title||!result.price||!result.description)throw Error('煤炉目标详情字段不完整 '+JSON.stringify({title:Boolean(result?.title),price:result?.price,description:Boolean(result?.description),status:result?.status,diagnostic:result?.priceDiagnostic}));return {...result,url,id:url.split('/').at(-1)};
+ if(!result?.title||!result.price||!result.description)throw Error('煤炉目标详情字段不完整 '+JSON.stringify({title:Boolean(result?.title),price:result?.price,description:Boolean(result?.description),status:result?.status,diagnostic:result?.priceDiagnostic}));
+ if(!result.sellerId)throw Error('煤炉目标卖家尚未确认 '+JSON.stringify({itemId:url.split('/').at(-1),...result.sellerDiagnostic}));
+ return {...result,url,id:url.split('/').at(-1)};
 }

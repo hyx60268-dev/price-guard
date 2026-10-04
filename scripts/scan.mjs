@@ -375,7 +375,13 @@ for(const context of contexts){
     const calculated=calculateManualFields(base,manual,settings);
     if(combinedMarket.underpriced&&recommendedPrice>ownPrice)calculated.advice=combinedMarket.singleVerified?'与下一家同款存在提价空间（仅1个核验样本）':'与下一家同款存在提价空间，建议提价';
     if(comparisonIncomplete)calculated.advice=decision.canRecommend?'已有核验同款低价，可参考降价；其他平台仍在更新':'三平台比价待核验';
-    if(priceAuditItemIds.has(item.id))console.log('[比价复查]',JSON.stringify({itemId:item.id,ownPrice,recommendedPrice,canRecommend:decision.canRecommend,complete:decision.complete,platforms:Object.fromEntries([['yahoo',yc],['rakuma',rc],['mercari',mc]].map(([platform,value])=>[platform,{status:value.status,checkedAt:value.checkedAt,lastAttemptAt:value.lastAttemptAt,candidates:(value.candidates||[]).slice(0,10).map(row=>({id:row.id,price:row.price,sellerId:row.sellerId,matchMethod:row.matchMethod})),rejected:(value.rejected||[]).slice(0,12).map(row=>({id:row.id,reason:row.reason}))}]))}));
+    if(priceAuditItemIds.has(item.id))console.log('[比价复查]',JSON.stringify({itemId:item.id,ownPrice,recommendedPrice,canRecommend:decision.canRecommend,complete:decision.complete,platforms:Object.fromEntries([['yahoo',yc],['rakuma',rc],['mercari',mc]].map(([platform,value])=>[platform,{
+      status:value.status,checkedAt:value.checkedAt,lastAttemptAt:value.lastAttemptAt,searchCheckedAt:value.searchCheckedAt,
+      sourceStatus:value.sourceStatus,cardCount:value.cardCount,searchCardCount:value.searchCardCount,recommendationCardCount:value.recommendationCardCount,
+      preliminaryCount:value.preliminaryCount,detailCheckedCount:value.detailCheckedCount,
+      detailQueue:value.detailQueue?{selected:value.detailQueue.lastSelection,remaining:value.detailQueue.remaining}:undefined,
+      candidates:(value.candidates||[]).slice(0,10).map(row=>({id:row.id,price:row.price,sellerId:row.sellerId,matchMethod:row.matchMethod})),
+      rejected:(value.rejected||[]).slice(-30).map(row=>({id:row.id,reason:row.reason}))}]))}));
     return {...base,...calculated};
   });
   const yahooValues=[...context.yahooById.values()];
