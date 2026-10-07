@@ -1,15 +1,8 @@
 name: 快速发布仪表盘
 
 on:
+  # Main pushes publish through price-guard to avoid replacing its pending scan.
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - public/**
-      - scripts/lib/publish.mjs
-      - scripts/repack-dashboard.mjs
-      - scripts/restore-published-state.mjs
-      - .github/workflows/dashboard-repair.yml
 
 permissions:
   contents: read
