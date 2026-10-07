@@ -1,4 +1,4 @@
-import { reviewedProcurementCatalogIdentity } from './reviewed-procurement-catalog.mjs';
+import { reviewedProcurementCatalogIdentity,verifiedProcurementOwnPrimaryImage } from './reviewed-procurement-catalog.mjs';
 import { PUBLIC_PURCHASABLE_VERIFICATION } from './procurement-evidence.mjs';
 import { ALTER_NARBERAL_URL,isAlterNarberalTarget,readAlterProcurementDetail,procurementSourcePlanVersion } from './alter-procurement.mjs';
 import { publicHtml,searchExternalImages,externalImageQueries,externalSearchQueries,externalPublicUrl,publicAccessRoute } from './external-images.mjs';
@@ -256,7 +256,7 @@ export async function alternativeProcurementCost(item,{deadline=Date.now()+90000
  const diagnose=row=>{if(report.diagnostics.length<16)report.diagnostics.push({...row,source:row.source?diagnosticText(row.source,32):undefined,url:row.url&&row.url.length<=512?canonicalProcurementUrl(row.url)||undefined:undefined,reason:diagnosticText(row.reason)})};
  if(['accountId','id','title','image'].some(key=>!target[key])){diagnose({stage:'target',reason:'target_identity_missing'});return {...report,reason:'target_identity_missing'};}
  if(Date.now()>=deadline)return {...report,status:'deferred',reason:'budget_exhausted'};
- const own=await fingerprint(item.image);if(!own){diagnose({stage:'target',reason:'target_image_unavailable'});return {...report,status:'unavailable',reason:'target_image_unavailable'};}
+ const own=await fingerprint(verifiedProcurementOwnPrimaryImage(item)||item.image);if(!own){diagnose({stage:'target',reason:'target_image_unavailable'});return {...report,status:'unavailable',reason:'target_image_unavailable'};}
  const seen=new Set();let sourcesCompleted=0,sourceFailure=false;
  const selectCandidates=(rows,summary)=>{const unique=new Set(),accepted=[];for(const row of rows){const url=canonicalProcurementUrl(row.url);let reason;
   if(!url){report.unsupportedTargets++;if(summary)summary.unsupportedTargets++;reason='unsupported_detail_target';}

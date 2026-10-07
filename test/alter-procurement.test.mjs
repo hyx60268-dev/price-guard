@@ -90,7 +90,7 @@ test('identical complete catalog unit can reach selected retail quote without by
 async function observedCatalogResult(subject=structuredClone(observedAlterOwn),mutateQuote=value=>value){
  const {alternativeProcurementCost}=await import('../scripts/lib/procurement-sources.mjs');
  const quote=mutateQuote(alterQuoteFromDOM(read(),subject));
- const fp=async url=>({...observedAlterFingerprints[url===subject.image?'own':'source'],url});
+ const fp=async url=>({...observedAlterFingerprints[url===subject.sourceDetail?.images?.[0]?'own':'source'],url});
  const result=await alternativeProcurementCost(subject,{fingerprint:fp,search:async()=>[],detail:async()=>quote});
  return {subject,quote,result};
 }
@@ -120,7 +120,7 @@ test('catalog offer expires and any changed target or supplier identity revokes 
  assert.equal(verifiedPurchasableProcurementOffers(base,{now:time+25*3600000}).length,0);
  const scenarios=[
   item=>item.accountId='other-account',item=>item.id='relisted-id',item=>item.title+=' 1/7',item=>item.image+='?different=1',
-  item=>item.sourceDetail.seller.id='another-seller',item=>item.sourceDetail.description+=' 開封済み',item=>item.sourceDetail.condition={key:'used',text:'傷や汚れあり'},item=>item.sourceDetail.status='SOLD',
+  item=>item.sourceDetail.seller.id='another-seller',item=>delete item.sourceDetail.seller,item=>item.sellerId='another-seller',item=>item.sourceDetail.images[0]+='?changed=1',item=>item.sourceDetail.images=[],item=>item.sourceDetail.id='other-id',item=>item.sourceDetail.title+=' 1/7',item=>item.sourceDetail.description+=' 開封済み',item=>item.sourceDetail.condition={key:'used',text:'傷や汚れあり'},item=>item.sourceDetail.status='SOLD',
   item=>item.procurementSource.purchasableOffers[0].skuId='AL99999',item=>item.procurementSource.purchasableOffers[0].selectedVariant+=' 初版',
   item=>item.procurementSource.purchasableOffers[0].detailDescription+=' 1/7',item=>item.procurementSource.purchasableOffers[0].detailImages[0]+='?changed=1',
   item=>item.procurementSource.purchasableOffers[0].inStock=false,item=>item.procurementSource.purchasableOffers[0].price=900,
@@ -209,4 +209,57 @@ test('full encrypted publication cannot retain a sidecar invalidated by a new ob
   assert.equal(path.dirname(root),path.resolve(os.tmpdir()));assert.ok(path.basename(root).startsWith('price-guard-catalog-'));
   await fs.rm(root,{recursive:true,force:true});
  }
+});
+
+test('profile thumbnail -> hydrate -> runner -> compact preserves the listing binding and verifies the original detail image',async()=>{
+ const {discoverYahooProfile}=await import('../scripts/lib/yahoo.mjs');
+ const {createOwnSourceLoader}=await import('../scripts/lib/own-source.mjs');
+ const {runPublicProcurement}=await import('../scripts/lib/procurement-runner.mjs');
+ const {alternativeProcurementCost}=await import('../scripts/lib/procurement-sources.mjs');
+ const {compactDashboardResult}=await import('../scripts/lib/publish.mjs');
+ const {visiblePurchasableOffers}=await import('../public/procurement-view.js');
+ // The original detail URL and byte hash are real observations. This thumbnail
+ // is deliberately synthetic; the public cloud proof reads the actual profile URL.
+ const thumbnail='https://fixture.example.org/yahoo-profile-thumbnail.jpg',original=observedAlterOwn.sourceDetail.images[0];
+ const raw={id:observedAlterOwn.id,title:observedAlterOwn.title,thumbnailImageUrl:thumbnail,sellerId:observedAlterOwn.sellerId,itemStatus:'OPEN',price:24999};
+ const profile=await discoverYahooProfile(null,'https://paypayfleamarket.yahoo.co.jp/user/p6579087',{}, {fetchYahooResult:async()=>({items:[raw],totalResultsAvailable:1})});
+ const subject={...profile.items[0],accountId:'fixture-owner',platform:'yahoo'};
+ let reads=0;const loader=createOwnSourceLoader({fetchYahooBundle:async()=>{reads++;return {detail:structuredClone(observedAlterOwn.sourceDetail)}}});
+ const quote=alterQuoteFromDOM(read(),subject),images=[];
+ const lookup=(item,options)=>alternativeProcurementCost(item,{...options,search:async()=>[],detail:async()=>quote,
+  fingerprint:async url=>{images.push(url);assert.notEqual(url,thumbnail,'a thumbnail must not be compared with the reviewed original bytes');return {...observedAlterFingerprints[url===original?'own':'source'],url};}});
+ const results=await runPublicProcurement([[{item:subject,prior:{}}]],{hydrate:loader.hydrate,lookup,deadline:Date.now()+60000,limit:1});
+ const reference=results.get(subject.accountId+':'+subject.id);
+ assert.equal(reads,1);assert.deepEqual(images,[original,quote.detailImages[0]]);assert.equal(subject.image,thumbnail);
+ assert.equal(reference.purchasableOffers.length,1,JSON.stringify(reference.diagnostics));
+ assert.equal(reference.target.image,thumbnail);assert.equal(reference.purchasableOffers[0].target.image,thumbnail);
+ assert.equal(reference.purchasableOffers[0].catalogIdentity.own.image,original);
+ assert.equal(reference.averageCNY,null);assert.deepEqual(reference.samples,[]);assert.equal(reference.selectedQuote,undefined);
+ const compact=compactDashboardResult({items:[{...subject,procurementSource:reference}]}).items[0];
+ assert.equal(compact.image,thumbnail);assert.equal(compact.procurementTarget.image,thumbnail);assert.equal(visiblePurchasableOffers(compact).length,1);
+});
+
+test('detail identity and actual image bytes remain required when a profile thumbnail differs',async()=>{
+ const {alternativeProcurementCost}=await import('../scripts/lib/procurement-sources.mjs');
+ const {verifiedProcurementOwnPrimaryImage}=await import('../scripts/lib/reviewed-procurement-catalog.mjs');
+ const original=observedAlterOwn.sourceDetail.images[0],thumbnail='https://fixture.example.org/yahoo-profile-thumbnail.jpg';
+ const changes=[
+  item=>delete item.sourceDetail.seller,item=>item.sourceDetail.seller.id='other',item=>item.sourceDetail.sellerId='conflict',
+  item=>delete item.sellerId,item=>item.sellerId='other',item=>item.seller={id:'conflict'},
+  item=>item.sourceDetail.id='other',item=>item.sourceDetail.listingId='other',item=>item.sourceDetail.title+=' 1/7',
+  item=>item.sourceDetail.status='SOLD',item=>item.sourceDetail.images=[],item=>item.sourceDetail.images[0]=original+'?changed=1'
+ ];
+ for(const change of changes){
+  const subject=structuredClone(observedAlterOwn);subject.image=thumbnail;change(subject);
+  const quote=alterQuoteFromDOM(read(),subject);
+  const result=await alternativeProcurementCost(subject,{search:async()=>[],detail:async()=>quote,
+   fingerprint:async url=>({...observedAlterFingerprints[url===original?'own':'source'],url})});
+  assert.deepEqual(result.purchasableOffers,[],String(change));assert.equal(result.averageCNY,null,String(change));
+  if(!subject.sourceDetail.images?.[0]?.includes('?changed'))assert.equal(verifiedProcurementOwnPrimaryImage(subject),'',String(change));
+ }
+ const subject={...structuredClone(observedAlterOwn),image:thumbnail},quote=alterQuoteFromDOM(read(),observedAlterOwn);
+ const result=await alternativeProcurementCost(subject,{search:async()=>[],detail:async()=>quote,
+  fingerprint:async url=>({...observedAlterFingerprints[url===original?'own':'source'],url,...(url===original?{contentSha256:'0'.repeat(64)}:{})})});
+ assert.deepEqual(result.purchasableOffers,[],'same original URL with changed bytes must revoke the review');
+ assert.equal(result.averageCNY,null);
 });

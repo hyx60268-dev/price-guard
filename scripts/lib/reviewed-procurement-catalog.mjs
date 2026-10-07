@@ -33,12 +33,23 @@ const reviews=[
 const text=value=>String(value??'').normalize('NFKC').replace(/\s+/g,' ').trim();
 export const catalogueTextDigest=value=>createHash('sha256').update(text(value),'utf8').digest('hex');
 const condition=value=>text(typeof value==='string'?value:value?.name||value?.text||value?.label||value?.key||'');
-const firstImage=item=>{const first=item.sourceDetail?.images?.[0]||item.images?.[0];return typeof first==='string'?first:first?.url||item.image||''};
+// A profile thumbnail is an inventory/cache binding, not the original image
+// reviewed for catalogue identity. Use the detail image only after its own
+// listing identity agrees with the current profile card.
+export function verifiedProcurementOwnPrimaryImage(item={}){
+ const detail=item.sourceDetail,detailSeller=String(detail?.seller?.id||detail?.sellerId||''),cardSeller=String(item.sellerId||item.seller?.id||'');
+ if(!detail||!item.id||String(detail.id||detail.listingId||'')!==String(item.id)||
+  detail.listingId&&String(detail.listingId)!==String(item.id)||detail.status!=='OPEN'||
+  !text(detail.title)||text(detail.title)!==text(item.title)||!detailSeller||!cardSeller||detailSeller!==cardSeller||
+  [detail.seller?.id,detail.sellerId,item.sellerId,item.seller?.id].filter(Boolean).some(id=>String(id)!==detailSeller))return '';
+ const first=detail.images?.[0],url=typeof first==='string'?first:first?.url;
+ return typeof url==='string'&&/^https:\/\//.test(url)?url:'';
+}
 const ownDescription=item=>item.sourceDetail?.description??item.yahoo?.ownDescription??item.description??'';
 function ownSnapshot(item={}){
  return {id:String(item.id||''),sellerId:String(item.sourceDetail?.seller?.id||item.sourceDetail?.sellerId||item.seller?.id||item.sellerId||''),
   title:text(item.title),descriptionSha256:catalogueTextDigest(ownDescription(item)),
-  condition:condition(item.sourceDetail?.condition??item.yahoo?.ownCondition??item.condition),image:firstImage(item)};
+  condition:condition(item.sourceDetail?.condition??item.yahoo?.ownCondition??item.condition),image:verifiedProcurementOwnPrimaryImage(item)};
 }
 function supplierSnapshot(quote={}){
  return {source:quote.source,canonicalUrl:quote.canonicalUrl,sellerKey:quote.sellerKey,skuId:String(quote.skuId||''),
@@ -53,7 +64,7 @@ function evidence(review){
 export function matchesProcurementCatalogueReview({item,quote,ownPrimary,sourcePrimary},review){
  if(!review?.id||!review.reviewedAt||!review.observation||!item?.accountId)return false;
  if(!fieldsEqual(ownSnapshot(item),review.own)||!fieldsEqual(supplierSnapshot(quote),review.supplier))return false;
- if(item.image!==review.own.image||!text(ownDescription(item))||!text(quote.detailDescription))return false;
+ if(!text(ownDescription(item))||!text(quote.detailDescription))return false;
  if(item.sourceDetail?.status&&item.sourceDetail.status!=='OPEN')return false;
  return [[ownPrimary,review.own],[sourcePrimary,review.supplier]].every(([primary,snapshot])=>
   /^[a-f0-9]{64}$/.test(snapshot.imageSha256||'')&&primary?.url===snapshot.image&&primary.contentSha256===snapshot.imageSha256);
@@ -64,7 +75,7 @@ export function reviewedProcurementCatalogIdentity(input={}){
 }
 export function currentReviewedProcurementCatalogIdentity({item,offer}={}){
  const review=reviews.find(row=>row.id===offer?.catalogIdentity?.id);
- if(!review||!item?.accountId||item.image!==review.own.image||
+ if(!review||!item?.accountId||
   !fieldsEqual(ownSnapshot(item),review.own)||!fieldsEqual(supplierSnapshot(offer),review.supplier))return null;
  if(item.sourceDetail?.status&&item.sourceDetail.status!=='OPEN')return null;
  return JSON.stringify(offer.catalogIdentity)===JSON.stringify(evidence(review))?evidence(review):null;
