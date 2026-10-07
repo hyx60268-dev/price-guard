@@ -1,4 +1,5 @@
 import { isOwnedOffer } from '../../public/owned-offers.js';
+import { parseShopProfile } from '../../public/shop-profile.js';
 import {planYahooDetailQueue} from './yahoo-detail-queue.mjs';
 import { knownYahooCandidates,yahooTargetShipping } from './yahoo-known-refresh.mjs';
 import { extractYahooBundleComponents } from './merchant-bundles.mjs';
@@ -234,11 +235,16 @@ export async function discoverYahooProfile(_unusedPage,profileUrl,settings={},de
     const result=await getResult(`${profileUrl}?page=${page}`,settings);
     all.push(...result.items);
   }
-  const items=[...new Map(all.filter(x=>x.itemStatus==='OPEN').map(x=>[x.id,liveItem(x)])).values()];
   const total=Number(first.totalResultsAvailable??all.length);
   const complete=new Set(all.map(item=>item.id)).size>=total;
   if(!complete)throw new Error('Yahoo 主页分页不完整，保留已有库存');
-  return {items,totalResults:total,pages,complete};
+  const profile=parseShopProfile(profileUrl),profileSellerId=profile?.platform==='yahoo_fleamarket'?new URL(profile.profileUrl).pathname.split('/').at(-1):'';
+  // Profile pages include old SOLD listings. Preserve their ownership evidence
+  // separately from the active inventory, without inferring a sale date.
+  const cards=all.filter(raw=>raw?.id&&(!profileSellerId||[raw.sellerId,raw.seller?.id].filter(Boolean).every(id=>String(id)===profileSellerId)));
+  const listedItems=[...new Map(cards.map(raw=>[raw.id,{...liveItem(raw),sellerId:String(raw.sellerId||raw.seller?.id||profileSellerId)}])).values()];
+  return {items:listedItems.filter(item=>item.itemStatus==='OPEN'),listedItems:profileSellerId?listedItems:[],
+    profileUrl:profileSellerId?profile.profileUrl:null,profileSellerId,totalResults:total,pages,complete};
 }
 
 export async function yahooCompare(_unusedPage,item,settings={},dependencies={}){

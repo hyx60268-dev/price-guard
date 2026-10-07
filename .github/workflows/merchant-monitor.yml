@@ -58,10 +58,11 @@ jobs:
           key: price-guard-state-${{ github.run_id }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
+        id: pages-artifact-1
         with:
           path: public
           name: merchant-pages-${{ github.run_attempt }}
-      - uses: actions/deploy-pages@v4
+      - uses: ./.github/actions/deploy-pages-retry
         id: deploy
         with:
-          artifact_name: merchant-pages-${{ github.run_attempt }}
+          artifact_id: ${{ steps.pages-artifact-1.outputs.artifact_id }}

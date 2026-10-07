@@ -25,7 +25,7 @@ test('all publishers serialize, retain full state, and acknowledge only after de
     assert.match(workflow,/cancel-in-progress: false/);
     assert.doesNotMatch(workflow,/cp public\/data\/latest.json.enc state\/latest.json.enc/);
     assert.match(workflow,/npm test/);
-    if(file!=='dashboard-repair')assert.ok(workflow.indexOf('scripts/ack-sync-queue.mjs')>workflow.indexOf('actions/deploy-pages@'));
+    if(file!=='dashboard-repair')assert.ok(workflow.indexOf('scripts/ack-sync-queue.mjs')>workflow.indexOf('./.github/actions/deploy-pages-retry'));
   }
 });
 
