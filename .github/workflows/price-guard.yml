@@ -92,14 +92,15 @@ jobs:
       - name: 上传账号快速发布包
         if: github.event_name == 'push' || steps.sync.outputs.processed != '0'
         uses: actions/upload-pages-artifact@v3
+        id: pages-artifact-1
         with:
           path: public
           name: github-pages-users-${{ github.run_attempt }}
       - name: 立即发布新用户和账号
         if: github.event_name == 'push' || steps.sync.outputs.processed != '0'
-        uses: actions/deploy-pages@v4
+        uses: ./.github/actions/deploy-pages-retry
         with:
-          artifact_name: github-pages-users-${{ github.run_attempt }}
+          artifact_id: ${{ steps.pages-artifact-1.outputs.artifact_id }}
       - name: 确认已发布同步请求
         if: steps.sync.outputs.processed != '0'
         run: node scripts/ack-sync-queue.mjs
@@ -131,12 +132,13 @@ jobs:
           PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
+        id: pages-artifact-2
         with:
           path: public
           name: github-pages-prices-${{ github.run_attempt }}
-      - uses: actions/deploy-pages@v4
+      - uses: ./.github/actions/deploy-pages-retry
         with:
-          artifact_name: github-pages-prices-${{ github.run_attempt }}
+          artifact_id: ${{ steps.pages-artifact-2.outputs.artifact_id }}
       # A due-check here makes daily monitoring survive GitHub replacing a
       # pending standalone publication with a scheduled pricing run.
       - name: 补执行到期的每日商家监控
@@ -168,14 +170,15 @@ jobs:
           key: price-guard-state-${{ github.run_id }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
+        id: pages-artifact-3
         with:
           path: public
           name: github-pages-${{ github.run_attempt }}
       - name: 发布网页
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: ./.github/actions/deploy-pages-retry
         with:
-          artifact_name: github-pages-${{ github.run_attempt }}
+          artifact_id: ${{ steps.pages-artifact-3.outputs.artifact_id }}
       - name: 验收云端闲鱼自动成本（独立于网页发布）
         run: node scripts/check-cloud-cost.mjs
       - name: 验收全账号价格覆盖（全量运行）

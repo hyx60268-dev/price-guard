@@ -28,6 +28,7 @@ import { calculateManualFields,manualCostFor,mergeAccountConfigs } from './lib/s
 import { MATCHING_RULES_VERSION } from './lib/rules.mjs';
 import { invalidateCorrectedMatches } from '../public/match-memory.js';
 import { listingAge } from './lib/listing-age.mjs';
+import { mergeOwnedListingHistory } from './lib/owned-listing-history.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url)),root=path.resolve(here,'..');
 const readJson=file=>fs.readFile(file,'utf8').then(JSON.parse);
@@ -95,11 +96,12 @@ const contexts=await mapLimit(accounts,Math.min(profileConcurrency,accounts.leng
   const previousItems=(previous?.items||[]).filter(item=>item.accountId?item.accountId===account.id:account.id===defaultAccountId);
   const previousById=new Map(previousItems.map(item=>[item.id,item]));
   let activeItems=(previousItems.length?previousItems:catalogItems).map((item,index)=>({...item,accountId:account.id,seq:index+1}));
-  let profileStatus='cached',profileError='';
+  let profileStatus='cached',profileError='',profileDiscovery=null;
   console.log(`\n=== 账号 ${account.name} (${account.id}) ===`);
   try{
     const discovered=account.platform==='rakuma'?await discoverRakumaProfile(account.profileUrl,settings):await discoverYahooProfile(null,account.profileUrl,settings);
     if(discovered.items.length||discovered.complete===true){
+      profileDiscovery=discovered;
       activeItems=reconcileLiveItems(catalogItems,previousItems,discovered.items,account.id,Object.values(previous?.listingHistory||{}));
       profileStatus='live';
       console.log(`${account.platform} 主页成功：${discovered.pages} 页，${activeItems.length} 件当前在售`);
@@ -108,7 +110,7 @@ const contexts=await mapLimit(accounts,Math.min(profileConcurrency,accounts.leng
   const profileDelta=inventoryDelta(previousItems,activeItems);
   activeItems=activeItems.map(item=>({...item,platform:account.platform}));
   console.log(`清单变化：新增 ${profileDelta.added.length}、减少 ${profileDelta.removed.length}、重新上架 ${profileDelta.relisted.length}、复用 ${profileDelta.unchanged}`);
-  return {account,accountIndex,catalogItems,previousItems,previousById,activeItems,profileStatus,profileError,profileDelta,yahooById:new Map(),rakumaById:new Map(),mercariById:new Map(),xianyuById:new Map()};
+  return {account,accountIndex,catalogItems,previousItems,previousById,activeItems,profileStatus,profileError,profileDelta,profileDiscovery,yahooById:new Map(),rakumaById:new Map(),mercariById:new Map(),xianyuById:new Map()};
 });
 
 settings.ownedOffers=buildOwnedOffers(accounts,contexts.flatMap(c=>[...c.previousItems,...c.activeItems]));
@@ -419,22 +421,9 @@ for(const context of contexts){
 }
 
 const checkedAt=new Date().toISOString(),allItems=accountResults.flatMap(account=>account.items);
-const listingHistory={...(previous?.listingHistory||{})};
-for(const item of [...(previous?.items||[]),...allItems]){
-  if(!item.accountId||!item.id)continue;
-  const {id,accountId,title,xianyuQuery,image,relistedFrom}=item;
-  listingHistory[`${accountId}:${id}`]={id,accountId,title,xianyuQuery,image,relistedFrom};
-}
-for(const [key,oldId] of Object.entries(relistAliases))delete listingHistory[`${key.slice(0,key.lastIndexOf(':'))}:${oldId}`];
-// Keep an encrypted, cross-account history of every title that has appeared in the
-// seller inventories.  A sold item disappears from the live profile, but it must
-// still be excluded from future product discovery runs.
-const ownedTitleHistory=[...new Set([
-  ...(previous?.ownedTitleHistory||[]),
-  ...(previous?.items||[]).map(item=>item.title),
-  ...contexts.flatMap(context=>context.catalogItems.map(item=>item.title)),
-  ...allItems.map(item=>item.title)
-].map(value=>String(value||'').trim()).filter(Boolean))].slice(-5000);
+// Retain public listings already sold before monitoring started, without adding
+// them to active inventory or assigning an inferred sale/first-seen date.
+const {listingHistory,ownedTitleHistory}=mergeOwnedListingHistory({previous,contexts,items:allItems,relistAliases});
 const result={
   externalSearchAccess:externalSearchAccessSnapshot(),
   merchantMonitors:previous?.merchantMonitors||[],listingHistory,pricingCoverage:pricingCoverage(allItems,accountResults),
