@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 import {openContext} from './lib/browser.mjs';
 import {readPublicProcurementDetail,alternativeProcurementCost} from './lib/procurement-sources.mjs';
 import {ALTER_NARBERAL_URL} from './lib/alter-procurement.mjs';
@@ -24,7 +25,12 @@ try{
  if(own?.status!=='OPEN'||!own?.description||!image)throw Error('public_target_unavailable');
  const [ownFp,candidateFp]=await Promise.all([imageFingerprints(image),imageFingerprints(observedQuote?.detailImages?.[0])]);
  const candidateTitle=[observedQuote?.brand,observedQuote?.series,observedQuote?.detailTitle,observedQuote?.selectedVariant].filter(Boolean).join(' ');
- const identityDiagnostics={titleScore:titleScore(externalImageQueries(own.title)[0],candidateTitle),primaryImageScore:primaryProductSimilarity(ownFp,candidateFp),ownCondition:own.condition,sourceCondition:observedQuote?.condition,sourceSku:observedQuote?.skuId,sourceTitle:observedQuote?.detailTitle};
+ const digest=value=>createHash('sha256').update(String(value??'').normalize('NFKC').replace(/\s+/g,' ').trim(),'utf8').digest('hex');
+ const identityDiagnostics={titleScore:titleScore(externalImageQueries(own.title)[0],candidateTitle),primaryImageScore:primaryProductSimilarity(ownFp,candidateFp),
+  ownPrimary:{url:ownFp?.url,contentSha256:ownFp?.contentSha256},sourcePrimary:{url:candidateFp?.url,contentSha256:candidateFp?.contentSha256},
+  ownTitle:own.title,ownSellerId:String(own.seller?.id||own.sellerId||''),ownImages:own.images,
+  ownDescriptionSha256:digest(own.description),sourceDescriptionSha256:digest(observedQuote?.detailDescription),
+  ownCondition:own.condition,sourceCondition:observedQuote?.condition,sourceSku:observedQuote?.skuId,sourceTitle:observedQuote?.detailTitle,sourceVariant:observedQuote?.selectedVariant};
  const reference=await alternativeProcurementCost(sourceItem,{deadline:Date.now()+60000,context:opened.context,
   search:async()=>[],detail:async url=>url===ALTER_NARBERAL_URL?observedQuote:{status:'unsupported',reason:'proof_source_outside_scope',reviewComplete:false}});
  const automaticCostAccepted=reference.status==='ok'&&reference.averageCNY>0;
@@ -35,3 +41,4 @@ try{
 }catch(error){console.error('[阿尔塔公开实测错误]',String(error?.message||error).replace(/https?:\/\/\S+/g,'[url omitted]').slice(0,200));passed=false}
 finally{await opened.browser.close()}
 if(!passed)process.exitCode=1;
+
