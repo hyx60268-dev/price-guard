@@ -1,8 +1,8 @@
-import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { publishStoredDiscovery } from './lib/discovery-publication.mjs';
 
-// Preserve discovery during the early price publication without recalculating
-// changes against the current snapshot (that would erase notification events).
-for(const name of ['discovery.json.enc','discovery-status.json']){
-  try{await fs.copyFile(new URL(`../state/${name}`,import.meta.url),new URL(`../public/data/${name}`,import.meta.url))}
-  catch(error){if(error.code!=='ENOENT')throw error}
-}
+// Filter stored discovery against the just-published inventory history. This
+// performs no market requests and does not recalculate scan notification events.
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+await publishStoredDiscovery({root,password:process.env.DASHBOARD_PASSWORD});
