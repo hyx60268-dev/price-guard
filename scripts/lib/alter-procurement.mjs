@@ -59,7 +59,7 @@ export function alterQuoteFromDOM(dom,item={},url=ALTER_NARBERAL_URL){
  return {status:'quoted',source:'alter_shanghai',id:'298',skuId:f['型号'],url:ALTER_NARBERAL_URL,canonicalUrl:ALTER_NARBERAL_URL,
  sellerKey:'alter_shanghai:retail',sellerName:'阿尔塔在线',sellerIdentityKey:'alter_shanghai:retail',
  unitCNY,shippingCNY:0,landedCNY:unitCNY,price:unitCNY,currency:'CNY',inStock:true,skuVerified:true,shippingKnown:true,
- shippingScope:'source_displayed_zto_delivery',shippingMethod:'中通快递（包邮）；顺丰速运到付不适用此报价',purchaseLimit:1,deliveryTerms:'中国大陆中通快递包邮；顺丰到付不适用此报价；限购1件',
+ shippingScope:'source_displayed_zto_delivery',shippingMethod:'中通快递（包邮）；顺丰速运到付不适用此报价',purchaseLimit:1,deliveryTerms:'中通快递包邮；顺丰到付不适用此报价；限购1件',
  selectedVariant:f['型号']+' / '+f['产品名']+' / 1/8',
  brand:f['品牌'],series:f['作品名'],detailTitle:dom.title,detailDescription:['品牌：'+f['品牌'],'型号：'+f['型号'],'作品：'+f['作品名'],'到货：'+f['到货月份'],'比例：'+clean(f['比例']),'商品类别：'+f['商品类别']].join('；'),
  detailImages:images,priceSource:'target_detail',priceEvidence:'visible_full_price_and_stock',condition:'retail_unspecified',quantity:1,reviewComplete:true};

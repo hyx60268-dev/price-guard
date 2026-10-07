@@ -1,6 +1,7 @@
 import { ALTER_NARBERAL_URL,isAlterProcurementUrl } from './alter-procurement.mjs';
 import { verifiedProcurementAuthority } from './procurement-authority.mjs';
 export const PUBLIC_PROCUREMENT_VERIFICATION='public_procurement_detail_v3';
+export const PUBLIC_PURCHASABLE_VERIFICATION='public_purchasable_offer_v1';
 const identityFields=['accountId','id','title','image'];
 const semanticFields=['description','condition'];
 const normalizedText=value=>typeof value==='string'?value.replace(/\s+/g,' ').trim():'';

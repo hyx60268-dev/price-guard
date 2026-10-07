@@ -20,7 +20,7 @@ function redGiftBoxContentCompatible(item,title,known){
  return offerIdentityGuard({ownTitle:heading(known),ownDescription:'レッドの完全なギフトボックス',candidateTitle:heading(title),candidateDescription:description||title,checkImages:false}).accepted;
 }
 
-function dentistContentCompatible(item){
+function tenCentimetrePlushContentCompatible(item){
  const descriptions=[item.sourceDescription,item.description,item.sourceDetail?.description,item.yahoo?.ownDescription,conditionText(item.condition),conditionText(item.sourceDetail?.condition)].filter(v=>typeof v==='string'&&v.trim());
  for(const value of descriptions){
   const body=value.normalize('NFKC');
@@ -46,7 +46,15 @@ function dentistContentCompatible(item){
  return true;
 }
 
-// Source galleries and photographs were visually reviewed on 2026-10-01/02.
+
+function painterContentCompatible(item){
+ if(!tenCentimetrePlushContentCompatible(item))return false;
+ const body=[item.sourceDescription,item.description,item.sourceDetail?.description,item.yahoo?.ownDescription,conditionText(item.condition),conditionText(item.sourceDetail?.condition)].filter(v=>typeof v==='string').join('\n').normalize('NFKC');
+ // This reviewed set contains the doll and removable red beret together.
+ return !/(?:帽子|ベレー帽)(?:のみ|だけ|なし|無し|欠品)|(?:帽子|ベレー帽)(?:は|が)?(?:付属しません|含まれません)|(?:不含|不包含|不附带|仅售|只售)(?:帽子)|初期衣装(?:以外|ではありません)|別衣装|黄金比|ナルキッソス/i.test(body);
+}
+
+// Source galleries and photographs were visually reviewed on 2026-10-01/02/07.
 // This is an explicit product/variant mapping, not a claim that perceptual
 // hashes can identify a new camera angle or infer an unobserved colour.
 export function reviewedProductImages(item={}){
@@ -56,7 +64,22 @@ export function reviewedProductImages(item={}){
  // match. Bind the review to both listing and observed primary photograph so
  // another Dentist skin, size, set or relist cannot inherit this evidence.
  const primary=(item.sourceImages||item.images||[item.image])[0];
- if((item.sourceId||item.id)==='m91581618076'&&title.normalize('NFKC').replace(/\s+/g,' ').trim()==='中国限定 第五人格 歯医者 初期衣装 ぬいぐるみ'&&primary==='https://static.mercdn.net/item/detail/orig/photos/m91581618076_1.jpg?1790594913'&&dentistContentCompatible(item)){
+ // The gallery below is syndicated by Hooos and attributes the shop to
+ // 橙子的小棉花. The original shop page was not inspected; attribution must
+ // not be presented as verified authorship or official-brand authority.
+ // Three 800px photographs were visually inspected on 2026-10-07: handheld
+ // front, standing front and rear. The original listing uses the standing
+ // view; the white wall, wooden cabinet, green-hatted ornament and book match.
+ if((item.sourceId||item.id)==='m98929657142'&&title.normalize('NFKC').replace(/\s+/g,' ').trim()==='中国限定 第五人格 画家 初期衣装 ぬいぐるみ'&&primary==='https://static.mercdn.net/item/detail/orig/photos/m98929657142_1.jpg?1790595067'&&painterContentCompatible(item)){
+  const reviewedAt='2026-10-07T15:25:00Z';
+  const sourceUrl='https://tao.hooos.com/goods_gvnWNMbT3t2WdjA4boSoo8Satr-DokRR8I6PQ88G55Tq.html';
+  return [
+   ['bao/uploaded/i1','O1CN01Xz7R8l1bUr2huK9dp','画家初始服装玩偶手持正面实拍','handheld-front'],
+   ['i4','O1CN01lZfY1M1bUr2h8OJmm','画家初始服装玩偶站立正面实拍','standing-front'],
+   ['i1','O1CN01s8WdPG1bUr2hCTdId','画家初始服装玩偶背面实拍','standing-rear']
+  ].map(([directory,file,caption,angleId])=>({url:'https://img.alicdn.com/'+directory+'/2255603469/'+file+'_!!2255603469.jpg',sourceUrl,sourceName:'虎窝淘转载图库 · 页面标注橙子的小棉花',caption,kind:'physical_photo',verification:'reviewed_exact_product_variant',reviewedAt,photoEvidence:{publisherId:'tao.hooos.com:gallery:gvnWNMbT3t2WdjA4boSoo8Satr-DokRR8I6PQ88G55Tq',shootId:'alicdn:2255603469:painter-10cm',sceneId:'white-wall-wooden-cabinet-book',angleId,reviewedSameScene:true,reviewedAt,evidence:'同一转载图库的手持正面、站立正面与背面逐图核对；木柜、白墙、绿色帽摆件与书本一致，棕发蓝纽扣眼、红贝雷帽、印花红马甲和黑裤吻合。页面标示10cm并归属橙子的小棉花；未核实原店作者身份或官方授权。'}}));
+ }
+ if((item.sourceId||item.id)==='m91581618076'&&title.normalize('NFKC').replace(/\s+/g,' ').trim()==='中国限定 第五人格 歯医者 初期衣装 ぬいぐるみ'&&primary==='https://static.mercdn.net/item/detail/orig/photos/m91581618076_1.jpg?1790594913'&&tenCentimetrePlushContentCompatible(item)){
   // All three gallery slides were inspected on 2026-10-02: the same vintage
   // English newspaper/cream tabletop, with overhead, handheld and standing
   // views. They are distinct photographs, not resized copies of one frame.
@@ -98,7 +121,7 @@ export function reconcileReviewedProductImages(item={},images=item.webImages||[]
  const valid=new Map(reviewedProductImages(item).map(p=>[merchantImageAssetKey(p),p]));
  const belongs=p=>{
   if(p?.verification!=='reviewed_exact_product_variant')return false;
-  try{const u=new URL(p.sourceUrl);return u.hostname==='article.pchome.net'&&/^\/content-2197942(?:-\d+)?\.html$/.test(u.pathname)||u.hostname==='detail.youzan.com'&&u.pathname==='/show/goods'&&u.searchParams.get('alias')==='2osy35s5abbdhtd'||u.hostname==='booth.pm'&&u.pathname==='/ja/items/8885115'}catch{return false}
+  try{const u=new URL(p.sourceUrl);return u.hostname==='article.pchome.net'&&/^\/content-2197942(?:-\d+)?\.html$/.test(u.pathname)||u.hostname==='detail.youzan.com'&&u.pathname==='/show/goods'&&u.searchParams.get('alias')==='2osy35s5abbdhtd'||u.hostname==='booth.pm'&&u.pathname==='/ja/items/8885115'||u.hostname==='tao.hooos.com'&&u.pathname==='/goods_gvnWNMbT3t2WdjA4boSoo8Satr-DokRR8I6PQ88G55Tq.html'}catch{return false}
  };
  // Refresh retained registry metadata too: an older one-view review must not
  // shadow a later explicit review of the same photograph's scene and group.

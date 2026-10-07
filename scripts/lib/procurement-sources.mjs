@@ -1,3 +1,5 @@
+import { reviewedProcurementCatalogIdentity } from './reviewed-procurement-catalog.mjs';
+import { PUBLIC_PURCHASABLE_VERIFICATION } from './procurement-evidence.mjs';
 import { ALTER_NARBERAL_URL,isAlterNarberalTarget,readAlterProcurementDetail,procurementSourcePlanVersion } from './alter-procurement.mjs';
 import { publicHtml,searchExternalImages,externalImageQueries,externalSearchQueries,externalPublicUrl,publicAccessRoute } from './external-images.mjs';
 import { imageFingerprints,primaryProductSimilarity } from './image.mjs';
@@ -250,7 +252,7 @@ export function knownProcurementUrls(item={}){
   ?['https://detail.youzan.com/show/goods?alias=2osy35s5abbdhtd']:[];
 }
 export async function alternativeProcurementCost(item,{deadline=Date.now()+90000,maxDetails=8,search=searchExternalImages,detail=readPublicProcurementDetail,fingerprint=imageFingerprints,matchCorrections={},context,getContext}={}){
- const target=procurementTarget(item),checkedAt=new Date().toISOString(),report={status:'incomplete',averageCNY:null,samples:[],sellerCount:0,verification:PUBLIC_PROCUREMENT_VERIFICATION,sourcePlanVersion:procurementSourcePlanVersion(item),checkedAt,target,diagnostics:[],searched:0,detailCheckedCount:0,searchResults:[],unsupportedTargets:0,duplicateUrls:0};
+ const target=procurementTarget(item),checkedAt=new Date().toISOString(),report={status:'incomplete',averageCNY:null,samples:[],purchasableOffers:[],sellerCount:0,verification:PUBLIC_PROCUREMENT_VERIFICATION,sourcePlanVersion:procurementSourcePlanVersion(item),checkedAt,target,diagnostics:[],searched:0,detailCheckedCount:0,searchResults:[],unsupportedTargets:0,duplicateUrls:0};
  const diagnose=row=>{if(report.diagnostics.length<16)report.diagnostics.push({...row,source:row.source?diagnosticText(row.source,32):undefined,url:row.url&&row.url.length<=512?canonicalProcurementUrl(row.url)||undefined:undefined,reason:diagnosticText(row.reason)})};
  if(['accountId','id','title','image'].some(key=>!target[key])){diagnose({stage:'target',reason:'target_identity_missing'});return {...report,reason:'target_identity_missing'};}
  if(Date.now()>=deadline)return {...report,status:'deferred',reason:'budget_exhausted'};
@@ -279,12 +281,22 @@ export async function alternativeProcurementCost(item,{deadline=Date.now()+90000
    const identityText=value=>colorText(value).replace(/白色/g,'ホワイト').replace(/红色/g,'レッド').replace(/黑色/g,'ブラック').replace(/蓝色/g,'ブルー').replace(/ギフトボックス/g,'礼盒').replace(/コラボ/g,'联名');
    // NewCondition is explicit source evidence; normal retail / unknown condition
    // is not. Do not infer new/sealed from a shop name or a matching photograph.
-   const candidateDescription=[quote.detailDescription,quote.conditionEvidence==='https://schema.org/NewCondition'?'新品':''].filter(Boolean).join('\n');
+   const candidateDescription=[quote.brand,quote.series,quote.detailDescription,quote.conditionEvidence==='https://schema.org/NewCondition'?'新品':''].filter(Boolean).join('\n');
    const sealed=/(?:未開封|未拆封|未开封|全新未拆)/;
    const candidateOriginal=[quote.detailTitle,quote.selectedVariant,quote.detailDescription].filter(Boolean).join('\n');
    const sealConflict=/(?:已[开拆]封|開封済|拆封验货|不是.{0,3}未[开拆]封|非.{0,3}未[开拆]封|不(?:保证|确定).{0,4}未[开拆]封)/;
-   if(sealed.test(ownTitle+'\n'+ownDescription)&&(!sealed.test(candidateOriginal)||sealConflict.test(candidateOriginal))){diagnose({source:quote.source,reason:'sealed_condition_unconfirmed',url});continue}
-   const guard=offerIdentityGuard({ownTitle:identityText(ownTitle),ownDescription:identityText(ownDescription),candidateTitle:identityText([quote.detailTitle,quote.selectedVariant].filter(Boolean).join(' ')),candidateDescription:identityText(candidateDescription),primaryImageScore});
+   const guard=offerIdentityGuard({ownTitle:identityText(ownTitle),ownDescription:identityText(ownDescription),candidateTitle:identityText([quote.brand,quote.series,quote.detailTitle,quote.selectedVariant].filter(Boolean).join(' ')),candidateDescription:identityText(candidateDescription),primaryImageScore});
+   if(sealed.test(ownTitle+'\n'+ownDescription)&&(!sealed.test(candidateOriginal)||sealConflict.test(candidateOriginal))){
+    // A reviewed catalog identity can expose this real retail offer separately.
+    // It does not establish unopened condition and never enters cost samples.
+    const physicalCompatible=guard.accepted||guard.reason==='condition_or_packaging_mismatch';
+    const catalogIdentity=physicalCompatible&&quote.condition==='retail_unspecified'&&!sealConflict.test(candidateOriginal)&&titleMatch>=.62
+     ?reviewedProcurementCatalogIdentity({item,quote,ownPrimary:own,sourcePrimary:fp}):null;
+    if(catalogIdentity)report.purchasableOffers.push({...quote,checkedAt:new Date().toISOString(),verification:PUBLIC_PURCHASABLE_VERIFICATION,
+     target,catalogIdentity,eligibility:'condition_unconfirmed',condition:'retail_unspecified',
+     identity:{method:'reviewed_catalog_identity',accepted:true,titleScore:titleMatch,primaryImageScore}});
+    diagnose({source:quote.source,reason:'sealed_condition_unconfirmed',url,titleScore:titleMatch,primaryImageScore,purchasableOffer:Boolean(catalogIdentity)});continue;
+   }
    if(!guard.accepted||!(primaryImageScore>=.98)||titleMatch<.62){diagnose({source:quote.source,reason:guard.accepted?'identity_unconfirmed':guard.reason,url,titleScore:titleMatch,primaryImageScore});continue}
    report.samples.push({...quote,sellerIdentityKey:procurementSellerIdentity(quote.sellerName),checkedAt:new Date().toISOString(),verification:PUBLIC_PROCUREMENT_VERIFICATION,target,identity:{accepted:true,titleScore:titleMatch,primaryImageScore}});
    if(verifiedPublicCostEvidence(report.samples,{target}).ready)return;

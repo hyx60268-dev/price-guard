@@ -1,3 +1,6 @@
+import { rejectedByMemory } from '../../public/match-memory.js';
+import { currentReviewedProcurementCatalogIdentity } from './reviewed-procurement-catalog.mjs';
+import { PUBLIC_PURCHASABLE_VERIFICATION,canonicalProcurementUrl,safeProcurementUrl } from './procurement-evidence.mjs';
 import { currentProcurementSourcePlan } from './alter-procurement.mjs';
 import { mergeXianyuReview } from './xianyu-review-plan.mjs';
 import { XIANYU_VERIFICATION, verifiedCostEvidence } from './xianyu-evidence.mjs';
@@ -70,4 +73,24 @@ export function mergeXianyuCostEvidence(priorItem={},current={},options={}){
  if(cached)return {...merged,averageCNY:cached.averageCNY,samples:cached.samples,checkedAt:cached.checkedAt,lastAttemptAt,
   verification:XIANYU_VERIFICATION,costEvidenceStatus:'cached_verified'};
  return {...merged,averageCNY:null,samples:[],lastAttemptAt,costEvidenceStatus:'missing'};
+}
+
+
+// A purchasable catalog quote is useful information even when its unopened
+// condition is unknown. This side channel never supplies a cost or a profit.
+export function verifiedPurchasableProcurementOffers(item={}, {now=Date.now(),maxAgeHours=24,matchCorrections={}}={}){
+ const time=typeof now==='number'?now:Date.parse(now),hours=publicHours(maxAgeHours);
+ const offers=item.procurementSource?.purchasableOffers;
+ return (Array.isArray(offers)?offers:[]).filter(offer=>{
+  const age=time-Date.parse(offer?.checkedAt||'');
+  if(rejectedByMemory(matchCorrections,item,'procurement',offer))return false;
+  if(offer?.verification!==PUBLIC_PURCHASABLE_VERIFICATION||offer.eligibility!=='condition_unconfirmed'||offer.condition!=='retail_unspecified'||
+   !(age>=0&&age<=hours*3600000)||!sameProcurementTarget(offer.target,item))return false;
+  if(offer.status!=='quoted'||offer.priceSource!=='target_detail'||offer.currency!=='CNY'||offer.inStock!==true||offer.skuVerified!==true||offer.shippingKnown!==true||offer.quantity!==1||!Number.isInteger(offer.purchaseLimit)||offer.purchaseLimit<1||
+   !positive(offer.unitCNY)||!Number.isFinite(offer.shippingCNY)||offer.shippingCNY<0||offer.landedCNY!==offer.unitCNY+offer.shippingCNY||offer.price!==offer.landedCNY)return false;
+  if(!offer.skuId||!offer.selectedVariant||!offer.sellerKey||!offer.sellerName||!offer.detailTitle||!offer.detailDescription||!Array.isArray(offer.detailImages)||!offer.detailImages.length||
+   !offer.detailImages.every(safeProcurementUrl)||!offer.deliveryTerms||!offer.identity?.accepted||offer.identity.method!=='reviewed_catalog_identity'||
+   canonicalProcurementUrl(offer.url)!==offer.canonicalUrl||!offer.canonicalUrl)return false;
+  return Boolean(currentReviewedProcurementCatalogIdentity({item,offer}));
+ });
 }

@@ -1,4 +1,4 @@
-name: 阿尔塔公开采购来源读取实测
+name: 阿尔塔真实报价与自动成本分层验收
 on:
   workflow_dispatch:
   pull_request:
@@ -7,6 +7,8 @@ on:
       - scripts/lib/procurement-sources.mjs
       - scripts/lib/procurement-evidence.mjs
       - scripts/lib/procurement-authority.mjs
+      - scripts/lib/reviewed-procurement-catalog.mjs
+      - scripts/lib/procurement-reference.mjs
       - scripts/prove-alter-procurement.mjs
       - .github/workflows/alter-procurement-proof.yml
 permissions:

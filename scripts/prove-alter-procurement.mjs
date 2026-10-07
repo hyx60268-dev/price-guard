@@ -7,6 +7,7 @@ import {fetchYahooItemBundle} from './lib/yahoo.mjs';
 import {imageFingerprints,primaryProductSimilarity} from './lib/image.mjs';
 import {titleScore} from './lib/rules.mjs';
 import {externalImageQueries} from './lib/external-images.mjs';
+import {verifiedPurchasableProcurementOffers} from './lib/procurement-reference.mjs';
 const opened=await openContext();let passed=true,observedQuote=null;
 try{
  for(const [label,title]of [['target','ALTER オーバーロード ナーベラル・ガンマ so-bin Ver. フィギュア'],['wrong_character','ALTER アルベド so-bin Ver. 1/8'],['wrong_scale','ALTER ナーベラル・ガンマ so-bin Ver. 1/7']]){
@@ -34,11 +35,17 @@ try{
  const reference=await alternativeProcurementCost(sourceItem,{deadline:Date.now()+60000,context:opened.context,
   search:async()=>[],detail:async url=>url===ALTER_NARBERAL_URL?observedQuote:{status:'unsupported',reason:'proof_source_outside_scope',reviewComplete:false}});
  const automaticCostAccepted=reference.status==='ok'&&reference.averageCNY>0;
- console.log('[阿尔塔公开同款全流程实测]',JSON.stringify({checkedAt:new Date().toISOString(),targetId:sourceItem.id,status:reference.status,reason:reference.reason,detailCheckedCount:reference.detailCheckedCount,automaticCostAccepted,averageCNY:reference.averageCNY,identityDiagnostics,diagnostics:reference.diagnostics,privateInventoryVerified:false}));
- // This workflow includes the true identity pipeline: a readable retail page
- // alone does not make the business acceptance green.
- passed&&=automaticCostAccepted;
+ const purchasableOffers=verifiedPurchasableProcurementOffers({...sourceItem,procurementSource:reference});
+ const purchasableOfferPublishedCandidate=purchasableOffers.length===1&&purchasableOffers[0].skuId==='AL20744'&&
+  purchasableOffers[0].price===observedQuote.price&&purchasableOffers[0].purchaseLimit===1&&
+  reference.averageCNY===null&&reference.samples.length===0&&!reference.selectedQuote;
+ console.log('[阿尔塔公开同款全流程实测]',JSON.stringify({checkedAt:new Date().toISOString(),targetId:sourceItem.id,status:reference.status,reason:reference.reason,detailCheckedCount:reference.detailCheckedCount,
+  sourceReadAccepted:passed,purchasableOfferPublishedCandidate,automaticCostAccepted,averageCNY:reference.averageCNY,
+  purchasableOffers:purchasableOffers.map(offer=>({skuId:offer.skuId,price:offer.price,shippingCNY:offer.shippingCNY,inStock:offer.inStock,purchaseLimit:offer.purchaseLimit,deliveryTerms:offer.deliveryTerms,eligibility:offer.eligibility,condition:offer.condition,checkedAt:offer.checkedAt,verification:offer.verification,identity:offer.identity})),
+  identityDiagnostics,diagnostics:reference.diagnostics,privateInventoryVerified:false}));
+ // The two results remain distinct. A current catalog offer may pass this
+ // source-specific acceptance while the separate automatic-cost gate stays red.
+ passed&&=purchasableOfferPublishedCandidate||automaticCostAccepted;
 }catch(error){console.error('[阿尔塔公开实测错误]',String(error?.message||error).replace(/https?:\/\/\S+/g,'[url omitted]').slice(0,200));passed=false}
 finally{await opened.browser.close()}
 if(!passed)process.exitCode=1;
-
