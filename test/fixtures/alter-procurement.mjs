@@ -20,9 +20,9 @@ export const alterDetailHTML=`<!doctype html><html><body>
 
 // Public target and image byte digests observed in the 2026-10-07 cloud proof.
 export const observedAlterOwn={
- accountId:'fixture-owner',id:'z679021554',title:'ALTER オーバーロード ナーベラル・ガンマ so-bin Ver.フィギュア',
+ accountId:'fixture-owner',platform:'yahoo',sellerId:'p6579087',id:'z679021554',title:'ALTER オーバーロード ナーベラル・ガンマ so-bin Ver.フィギュア',
  image:'https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0209/users/df683a7ebea962737028bd2830aacc9e5928b694/i-img981x1200-17888949831044ibi4t.jpg',
- sourceDetail:{status:'OPEN',seller:{id:'p6579087'},condition:{key:'new',text:'未使用'},
+ sourceDetail:{id:'z679021554',title:'ALTER オーバーロード ナーベラル・ガンマ so-bin Ver.フィギュア',images:['https://auctions.c.yimg.jp/images.auctions.yahoo.co.jp/image/dr000/auc0209/users/df683a7ebea962737028bd2830aacc9e5928b694/i-img981x1200-17888949831044ibi4t.jpg'],status:'OPEN',seller:{id:'p6579087'},condition:{key:'new',text:'未使用'},
  description:'ALTER オーバーロード ナーベラル・ガンマ so-bin Ver.フィギュア 新品未開封 正規品 即購入可能です。 海外製品のため、外箱の細かなスレ・へこみ、ぬいぐるみの縫製や個体差などが見られる場合がございます。あらかじめご了承ください。 即購入OKです。 コレクション用はもちろん、プレゼントにもおすすめです。'}
 };
 // Deliberately different perceptual fingerprints exercise the catalog path;

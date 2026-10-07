@@ -9,7 +9,7 @@ export function createOwnSourceLoader({fetchYahooBundle,fetchRakumaItem,now=Date
   const key=item.platform+':'+item.id;
   if(!details.has(key))details.set(key,(async()=>{
    const source=prior.sourceDetail,stamp=Date.parse(source?.checkedAt||'');
-   if(source?.description&&source.listingId===item.id&&prior.title===item.title&&prior.ownPrice===item.ownPrice&&stamp<=now()&&now()-stamp<6*3600000)return source;
+   if(source?.description&&source.listingId===item.id&&prior.title===item.title&&prior.ownPrice===item.ownPrice&&prior.image===item.image&&stamp<=now()&&now()-stamp<6*3600000)return source;
    const detail=item.platform==='rakuma'?await fetchRakumaItem(item):(await yahooBundle(item.id)).detail;
    if(!detail?.description?.trim())throw Error('自有商品销售正文缺失');
    if(detail.status&&detail.status!=='OPEN')throw Error('自有商品不再在售，等待库存更新');
