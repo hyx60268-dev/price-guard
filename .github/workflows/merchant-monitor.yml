@@ -1,15 +1,9 @@
 name: 每日指定商家监控
 on:
+  # Main pushes publish through price-guard to avoid replacing its pending scan.
   workflow_dispatch:
   schedule:
     - cron: '15 0 * * *'
-  push:
-    branches: [main]
-    paths:
-      - config/merchant-monitor.json
-      - scripts/merchant-monitor.mjs
-      - scripts/lib/merchant-*.mjs
-      - .github/workflows/merchant-monitor.yml
 permissions:
   contents: read
   pages: write
