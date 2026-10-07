@@ -1,7 +1,7 @@
 // Shared browser/server implementation. Corrections only reject evidence; they
 // never force a match or bypass quantity, variant, availability or price checks.
 export const correctionKey=record=>`${record.accountId}:${record.itemId}:${record.platform}:${record.candidateId}`;
-export const candidateId=(platform,row)=>String(row?.id||(platform==='procurement'?(row?.canonicalUrl||row?.url):'')||String(row?.url||'').match(platform==='xianyu'?/[?&]id=(\d+)/:platform==='rakuma'?/item\.fril\.jp\/([^/?#]+)/:/\/item\/([^/?#]+)/)?.[1]||'');
+export const candidateId=(platform,row)=>String((platform==='procurement'?(row?.canonicalUrl||row?.url):'')||row?.id||String(row?.url||'').match(platform==='xianyu'?/[?&]id=(\d+)/:platform==='rakuma'?/item\.fril\.jp\/([^/?#]+)/:/\/item\/([^/?#]+)/)?.[1]||'');
 export function mergeMatchCorrections(base={},incoming={}){
   const output={...base};
   for(const record of Object.values(incoming||{})){
@@ -14,7 +14,13 @@ export function mergeMatchCorrections(base={},incoming={}){
 }
 export function rejectedByMemory(records,item,platform,candidate){
   const id=candidateId(platform,candidate);
-  return Object.values(records||{}).find(record=>!record.deleted&&record.accountId===item.accountId&&record.platform===platform&&record.candidateId===id&&
+  const procurementIds=new Set([candidate?.canonicalUrl,candidate?.url,candidate?.id,candidate?.skuId].filter(value=>value!==undefined&&value!==null&&String(value)).map(String));
+  const procurementUrls=new Set([candidate?.canonicalUrl,candidate?.url].filter(Boolean).map(String));
+  const sameCandidate=record=>platform==='procurement'
+    ?(!record.candidateUrl||procurementUrls.has(String(record.candidateUrl)))&&
+      (procurementIds.has(String(record.candidateId))||Boolean(record.candidateUrl&&procurementUrls.has(String(record.candidateUrl))))
+    :record.candidateId===id;
+  return Object.values(records||{}).find(record=>!record.deleted&&record.accountId===item.accountId&&record.platform===platform&&sameCandidate(record)&&
     (record.itemId===item.id||record.itemId===item.relistedFrom&&record.ownTitle===item.title&&record.ownImage===item.image));
 }
 export function invalidateCorrectedMatches(item,records={}){
@@ -40,6 +46,12 @@ export function invalidateCorrectedMatches(item,records={}){
   }
   if((item.procurementSource?.samples||[]).some(row=>rejectedByMemory(records,item,'procurement',row))){
     next={...next,averageCNY:null,costSource:'missing',referenceProvider:null,procurementSource:{...item.procurementSource,status:'correction_pending',verification:null,averageCNY:null,samples:[]}};
+  }
+  const offers=next.procurementSource?.purchasableOffers;
+  if(Array.isArray(offers)&&offers.some(row=>rejectedByMemory(records,item,'procurement',row))){
+    // Removing a condition-unconfirmed offer must not touch actual purchase
+    // costs, fees or another source already adopted for profit calculation.
+    next={...next,procurementSource:{...next.procurementSource,purchasableOffers:offers.filter(row=>!rejectedByMemory(records,item,'procurement',row))}};
   }
   return next;
 }

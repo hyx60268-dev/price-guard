@@ -326,6 +326,7 @@ let procurementBrowser,procurementContextPromise;
 const getProcurementContext=()=>procurementContextPromise||=(async()=>{const opened=await openContext();procurementBrowser=opened.browser;return opened.context})();
 const procurementBuckets=contexts.map(context=>context.activeItems.map(item=>({item,prior:priorFor(context,item)})).sort((a,b)=>(Date.parse(a.prior.procurementSource?.checkedAt)||0)-(Date.parse(b.prior.procurementSource?.checkedAt)||0)));
 const procurementWork=runPublicProcurement(procurementBuckets,{
+ matchCorrections,
  priorityItemIds:priceAuditItemIds,
  deadline:Math.min(deadline,Date.now()+180000),limit:Math.max(1,Math.min(12,Number(settings.maxPublicProcurementItemsPerRun)||8)),concurrency:2,
  hydrate:hydratedItem,lookup:(item,options)=>alternativeProcurementCost(item,{...options,getContext:getProcurementContext,matchCorrections}),

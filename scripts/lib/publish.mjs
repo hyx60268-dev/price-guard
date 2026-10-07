@@ -1,3 +1,4 @@
+import { procurementTarget,verifiedPurchasableProcurementOffers } from './procurement-reference.mjs';
 import { buildOwnedOffers,excludeOwnedOffers } from '../../public/owned-offers.js';
 import { pricingDecision } from '../../public/pricing-policy.js';
 import fs from 'node:fs/promises';
@@ -35,12 +36,22 @@ function compactComparison(value={}){
   return output;
 }
 
-export function compactDashboardResult(result={}){
+function currentPurchasableOffers(item,matchCorrections={},now=Date.now()){
+  if(!item.procurementSource||!Object.hasOwn(item.procurementSource,'purchasableOffers'))return {...item,procurementTarget:undefined};
+  const purchasableOffers=verifiedPurchasableProcurementOffers(item,{now,matchCorrections});
+  return {...item,procurementTarget:purchasableOffers.length?procurementTarget(item):undefined,
+    procurementSource:{...item.procurementSource,purchasableOffers}};
+}
+export function compactDashboardResult(result={}, {now=Date.now()}={}){
   const accounts=(result.accounts||[]).map(({items,...account})=>account);
-  const items=(result.items||[]).map(item=>({
-    ...item,sourceDetail:undefined,cachedYahoo:undefined,
-    yahoo:compactComparison(item.yahoo),rakuma:compactComparison(item.rakuma),mercari:compactComparison(item.mercari),xianyu:compactComparison(item.xianyu)
-  }));
+  // Full descriptions, condition and catalogue identity must be checked before
+  // compaction removes those observations. Never validate against an old target.
+  const items=(result.items||[]).map(raw=>{
+    const item=currentPurchasableOffers(raw,result.matchCorrections,now),binding=item.procurementTarget;
+    return {...item,sourceDetail:undefined,cachedYahoo:undefined,
+      ...(binding?{description:binding.description,condition:binding.condition}:{}),
+      yahoo:compactComparison(item.yahoo),rakuma:compactComparison(item.rakuma),mercari:compactComparison(item.mercari),xianyu:compactComparison(item.xianyu)};
+  });
   return {...result,listingHistory:undefined,appliedSyncIssues:undefined,accounts,items};
 }
 
@@ -132,7 +143,8 @@ export function dashboardSummary(result,changeSummary){
 export async function writeOutputs({root,result,previous,password}){
   await Promise.all(['data','public/data','state'].map(directory=>fs.mkdir(path.join(root,directory),{recursive:true})));
   const ownership=buildOwnedOffers([...(result.accounts||[]),...(result.managedAccounts||[])],result.items||[]);
-  result.items=(result.items||[]).map(item=>{
+  result.items=(result.items||[]).map(raw=>{
+    const item=currentPurchasableOffers(raw,result.matchCorrections);
     const clean=excludeOwnedOffers(item,ownership);if(clean.yahoo===item.yahoo&&clean.rakuma===item.rakuma&&clean.mercari===item.mercari)return item;
     const decision=pricingDecision(clean);return {...clean,...decision,lowestPrice:decision.lowest?.price??clean.ownPrice,lowestUrl:decision.lowest?.url||clean.url,
       afterProfitJPY:Number.isFinite(clean.costJPY)?decision.recommendedPrice-clean.costJPY:null,

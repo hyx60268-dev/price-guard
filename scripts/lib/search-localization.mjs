@@ -8,6 +8,9 @@ export function localizeSearchTerms(value=''){
  const localized=pokemon?original.replace(/(?:[绘繪絵]?[梦夢](?:描)?[点點][睛晴])/g,'绘梦点睛')
   .replace(/未開封/g,'未拆封').replace(/第(\d+)弾/g,'第$1弹'):original;
  return localized
+  .replace(/アルター|阿尔塔/g,'ALTER')
+  .replace(/オーバーロード/gi,'OVERLORD')
+  .replace(/ナーベラル[・·\s]*ガンマ|Narberal\s*(?:Gamma|Γ)/gi,'娜贝拉尔·伽玛')
   .replace(/ピカチュウ/g,'皮卡丘')
   .replace(/トイ[・·\s]*ストーリー|Toy\s*Story/gi,'玩具总动员')
   .replace(/クレヨンしんちゃん|Crayon\s*Shin[ -]?chan|蠟筆小新/gi,'蜡笔小新')
@@ -40,5 +43,5 @@ export function searchIdentityAnchorsPresent(query='',candidate=''){
  // Shared brands and packaging are insufficient for these observed product
  // families. Keep the named character and wardrobe/series in search recall.
  const editions=query.match(/MINIME\d+[a-z\d]*/gi)||[],otherEditions=new Set((candidate.match(/MINIME\d+[a-z\d]*/gi)||[]).map(value=>value.toLowerCase()));
- return editions.every(value=>otherEditions.has(value.toLowerCase()))&&[/蜡笔小新/,/衣橱/,/草莓熊/,/WARM\s*EMBRACE/i].every(anchor=>!anchor.test(query)||anchor.test(candidate));
+ return editions.every(value=>otherEditions.has(value.toLowerCase()))&&[/娜贝拉尔[·・\s]*伽玛/,/蜡笔小新/,/衣橱/,/草莓熊/,/WARM\s*EMBRACE/i].every(anchor=>!anchor.test(query)||anchor.test(candidate));
 }

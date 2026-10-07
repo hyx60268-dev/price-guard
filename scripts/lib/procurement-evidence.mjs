@@ -1,5 +1,7 @@
+import { ALTER_NARBERAL_URL,isAlterProcurementUrl } from './alter-procurement.mjs';
 import { verifiedProcurementAuthority } from './procurement-authority.mjs';
 export const PUBLIC_PROCUREMENT_VERIFICATION='public_procurement_detail_v3';
+export const PUBLIC_PURCHASABLE_VERIFICATION='public_purchasable_offer_v1';
 const identityFields=['accountId','id','title','image'];
 const semanticFields=['description','condition'];
 const normalizedText=value=>typeof value==='string'?value.replace(/\s+/g,' ').trim():'';
@@ -56,6 +58,7 @@ function jdProductId(u){
 export function procurementSource(url){
  try{const u=new URL(url);if(!safe(url))return null;
   if(u.hostname==='detail.youzan.com'&&u.pathname==='/show/goods'&&/^[a-z0-9]+$/.test(u.searchParams.get('alias')||'')||/(?:^|\.)youzan\.com$/.test(u.hostname)&&/^\/(?:v2\/goods|wscgoods\/detail)\/[a-z0-9]+$/.test(u.pathname))return 'youzan';
+  if(isAlterProcurementUrl(url))return 'alter_shanghai';
   if(jdProductId(u))return 'jd';
   if(['item.taobao.com','detail.tmall.com'].includes(u.hostname)&&u.pathname==='/item.htm'&&/^\d+$/.test(u.searchParams.get('id')||''))return u.hostname.includes('tmall')?'tmall':'taobao';
   if(u.hostname==='weidian.com'&&u.pathname==='/item.html'&&/^\d+$/.test(u.searchParams.get('itemID')||''))return 'weidian';
@@ -65,14 +68,15 @@ export function procurementSource(url){
 export function canonicalProcurementUrl(value){
  try{const u=new URL(value);const source=procurementSource(value);if(!source)return null;
   if(source==='youzan'){const alias=u.searchParams.get('alias')||u.pathname.split('/').pop();return 'https://detail.youzan.com/show/goods?alias='+alias}
+  if(source==='alter_shanghai')return ALTER_NARBERAL_URL;
   if(source==='jd')return 'https://item.jd.com/'+jdProductId(u)+'.html';
   if(source==='1688')return u.origin+u.pathname;
   const key=source==='weidian'?'itemID':'id';return u.origin+u.pathname+'?'+key+'='+u.searchParams.get(key);
  }catch{return null}
 }
 export function procurementQuoteSelection(sample){
- const keys=['source','canonicalUrl','skuId','sellerKey','sellerIdentityKey','selectedVariant','unitCNY','shippingCNY','landedCNY','checkedAt'];
- return {...Object.fromEntries(keys.map(key=>[key,sample[key]])),authority:verifiedProcurementAuthority(sample)};
+ const keys=['source','canonicalUrl','skuId','sellerKey','sellerIdentityKey','selectedVariant','unitCNY','shippingCNY','landedCNY','checkedAt','shippingScope','shippingMethod','purchaseLimit','deliveryTerms'];
+ return {...Object.fromEntries(keys.filter(key=>sample[key]!==undefined).map(key=>[key,sample[key]])),authority:verifiedProcurementAuthority(sample)};
 }
 export function verifiedPublicCostEvidence(samples=[],{now=Date.now(),maxAgeHours=24,target}={}){
  const valid=[],urls=new Set(),sellers=new Set(),identities=new Set(),evidenceTarget=target||samples[0]?.target;const time=typeof now==='number'?now:Date.parse(now);
