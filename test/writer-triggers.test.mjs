@@ -26,13 +26,13 @@ test('the primary push writer covers quick dashboard publication, core scan and 
   const steps=workflow.split(/^  scan-and-publish:\s*$/m)[1];
   assert.ok(steps,'primary writer job exists');
   const repack=steps.indexOf('run: node scripts/repack-dashboard.mjs');
-  const deploy=steps.indexOf('uses: ./.github/actions/deploy-pages-retry');
+  const deploy=steps.indexOf('uses: actions/deploy-pages@');
   const scan=steps.indexOf('run: npm run scan');
   const merchant=steps.indexOf('run: node scripts/merchant-monitor.mjs');
   assert.ok(repack>=0&&repack<deploy&&deploy<scan&&scan<merchant,'one transaction publishes the interface before scanning, then refreshes merchants');
   assert.match(steps.slice(0,repack),/if: github.event_name == 'push'/);
   assert.match(steps.slice(merchant),/MERCHANT_MONITOR_IF_DUE: '1'/);
-  assert.ok(steps.indexOf('uses: ./.github/actions/deploy-pages-retry',merchant)>merchant,'merchant output is published');
+  assert.ok(steps.indexOf('uses: actions/deploy-pages@',merchant)>merchant,'merchant output is published');
 });
 
 test('manual repair and independent daily merchant monitoring remain available',async()=>{
