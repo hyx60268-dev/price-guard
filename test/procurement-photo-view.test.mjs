@@ -37,3 +37,12 @@ test('the displayed procurement reference names the actual selected seller, vari
  const stale=new JSDOM(publicProcurementMarkup({...item,referenceProvider:null}));
  try{assert.equal(stale.window.document.querySelectorAll('strong').length,0);}finally{stale.window.close()}
 });
+
+
+test('procurement shows the actual delivery scope without rendering supplier markup',()=>{
+ const sample={unitCNY:1120,shippingCNY:0,landedCNY:1120,deliveryTerms:'中国大陆中通包邮；顺丰到付不采用。<img src=x onerror=bad()>'};
+ const dom=new JSDOM(publicProcurementMarkup({procurementSource:{samples:[sample]}}));
+ try{assert.match(dom.window.document.body.textContent,/配送条件：中国大陆中通包邮；顺丰到付不采用/);assert.equal(dom.window.document.querySelectorAll('img').length,0);}finally{dom.window.close()}
+ const legacy=new JSDOM(publicProcurementMarkup({procurementSource:{samples:[{...sample,deliveryTerms:null}]}}));
+ try{assert.doesNotMatch(legacy.window.document.body.textContent,/配送条件/);}finally{legacy.window.close()}
+});

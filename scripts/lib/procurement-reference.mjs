@@ -1,3 +1,4 @@
+import { currentProcurementSourcePlan } from './alter-procurement.mjs';
 import { mergeXianyuReview } from './xianyu-review-plan.mjs';
 import { XIANYU_VERIFICATION, verifiedCostEvidence } from './xianyu-evidence.mjs';
 import { PUBLIC_PROCUREMENT_VERIFICATION, verifiedPublicCostEvidence, procurementTarget, procurementTargetsEqual } from './procurement-evidence.mjs';
@@ -52,7 +53,7 @@ export function chooseProcurementReference(item={},options={}){
 export function hasCompletedPublicProcurementReview(item={}, {now=Date.now(),maxAgeHours=24}={}){
  const cost=item.procurementSource||{};
  if(verifiedPublicProcurementCache(item,{now,maxAgeHours}))return true;
- return cost.status==='incomplete'&&cost.verification===PUBLIC_PROCUREMENT_VERIFICATION&&cost.reviewVersion===1&&
+ return currentProcurementSourcePlan(cost,item)&&cost.status==='incomplete'&&cost.verification===PUBLIC_PROCUREMENT_VERIFICATION&&cost.reviewVersion===1&&
   sameProcurementTarget(cost.target,item)&&fresh(cost.reviewedAt,publicHours(maxAgeHours),now);
 }
 

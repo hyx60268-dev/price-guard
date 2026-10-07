@@ -1,3 +1,4 @@
+import { ALTER_NARBERAL_URL,isAlterNarberalTarget,readAlterProcurementDetail,procurementSourcePlanVersion } from './alter-procurement.mjs';
 import { publicHtml,searchExternalImages,externalImageQueries,externalSearchQueries,externalPublicUrl,publicAccessRoute } from './external-images.mjs';
 import { imageFingerprints,primaryProductSimilarity } from './image.mjs';
 import { offerIdentityGuard } from './offer-identity.mjs';
@@ -203,6 +204,7 @@ export async function readPublicProcurementDetail(url,{item,context,getContext,d
  const source=procurementSource(url);if(!source)return {status:'unsupported',reason:'unsupported_source',reviewComplete:false};
  const remaining=()=>Math.max(1,Math.min(15000,deadline-Date.now()));
  const staticRead=async()=>{try{const response=await html(url,{deadline,withMetadata:true});return parsePublicProcurementDetail(typeof response==='string'?response:response?.html,url,{metadata:typeof response==='string'?{}:response?.metadata||{}});}catch(error){return {status:'unavailable',reason:'detail_fetch_error',reviewComplete:false,diagnostic:safeProcurementDiagnostic({...fetchDiagnostic(error.publicMetadata||{},url),failureKind:detailFailureKind(error)})};}};
+ if(source==='alter_shanghai')return readAlterProcurementDetail(url,{item,context,getContext,deadline});
  if(source!=='youzan')return staticRead();
  const browser=context||await getContext?.();
  if(!browser)return staticRead();
@@ -243,11 +245,12 @@ function searchExample(row,reason){let host='';try{host=new URL(row.url).hostnam
 // Direct detail recall only. Every returned page still passes SKU, availability,
 // target identity and price verification; an entry is never an accepted quote.
 export function knownProcurementUrls(item={}){
+ if(isAlterNarberalTarget(item))return [ALTER_NARBERAL_URL];
  return /Anker/i.test(item.title||'')&&/AeroClip\s*2/i.test(item.title||'')&&/張凌赫|张凌赫/.test(item.title||'')
   ?['https://detail.youzan.com/show/goods?alias=2osy35s5abbdhtd']:[];
 }
 export async function alternativeProcurementCost(item,{deadline=Date.now()+90000,maxDetails=8,search=searchExternalImages,detail=readPublicProcurementDetail,fingerprint=imageFingerprints,matchCorrections={},context,getContext}={}){
- const target=procurementTarget(item),checkedAt=new Date().toISOString(),report={status:'incomplete',averageCNY:null,samples:[],sellerCount:0,verification:PUBLIC_PROCUREMENT_VERIFICATION,checkedAt,target,diagnostics:[],searched:0,detailCheckedCount:0,searchResults:[],unsupportedTargets:0,duplicateUrls:0};
+ const target=procurementTarget(item),checkedAt=new Date().toISOString(),report={status:'incomplete',averageCNY:null,samples:[],sellerCount:0,verification:PUBLIC_PROCUREMENT_VERIFICATION,sourcePlanVersion:procurementSourcePlanVersion(item),checkedAt,target,diagnostics:[],searched:0,detailCheckedCount:0,searchResults:[],unsupportedTargets:0,duplicateUrls:0};
  const diagnose=row=>{if(report.diagnostics.length<16)report.diagnostics.push({...row,source:row.source?diagnosticText(row.source,32):undefined,url:row.url&&row.url.length<=512?canonicalProcurementUrl(row.url)||undefined:undefined,reason:diagnosticText(row.reason)})};
  if(['accountId','id','title','image'].some(key=>!target[key])){diagnose({stage:'target',reason:'target_identity_missing'});return {...report,reason:'target_identity_missing'};}
  if(Date.now()>=deadline)return {...report,status:'deferred',reason:'budget_exhausted'};
@@ -264,7 +267,7 @@ export async function alternativeProcurementCost(item,{deadline=Date.now()+90000
   try{const quote=await detail(url,{item,context,getContext,deadline});report.detailCheckedCount++;
    if(quote.status!=='quoted'){if(quote.status==='unavailable'||quote.status==='error'||quote.reviewComplete===false)sourceFailure=true;diagnose({source:procurementSource(url),reason:quote.reason,url,...(quote.diagnostic?{detail:safeProcurementDiagnostic(quote.diagnostic)}:{})});continue}
    if(rejected(matchCorrections,item,quote)){diagnose({source:quote.source,reason:'rejected_by_memory',url});continue}
-   const query=externalImageQueries(item.title)[0],candidate=colorText(quote.detailTitle+' '+quote.selectedVariant);
+   const query=externalImageQueries(item.title)[0],candidate=colorText([quote.brand,quote.series,quote.detailTitle,quote.selectedVariant].filter(Boolean).join(' '));
    const titleMatch=titleScore(query,candidate),fp=await fingerprint(quote.detailImages?.[0]),primaryImageScore=primaryProductSimilarity(own,fp);
    // Search queries deliberately strip descriptors and may truncate. Only the
    // original offer can provide quantity, condition and version constraints.

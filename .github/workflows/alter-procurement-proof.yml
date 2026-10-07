@@ -1,0 +1,27 @@
+name: 阿尔塔公开采购来源读取实测
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/lib/alter-procurement.mjs
+      - scripts/lib/procurement-sources.mjs
+      - scripts/lib/procurement-evidence.mjs
+      - scripts/lib/procurement-authority.mjs
+      - scripts/prove-alter-procurement.mjs
+      - .github/workflows/alter-procurement-proof.yml
+permissions:
+  contents: read
+jobs:
+  alter-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: 核对真实完整报价与错误目标排除
+        run: node scripts/prove-alter-procurement.mjs
