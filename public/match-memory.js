@@ -53,5 +53,6 @@ export function invalidateCorrectedMatches(item,records={}){
     // costs, fees or another source already adopted for profit calculation.
     next={...next,procurementSource:{...next.procurementSource,purchasableOffers:offers.filter(row=>!rejectedByMemory(records,item,'procurement',row))}};
   }
+  if(Array.isArray(next.nativeSupplierQuotes))next={...next,nativeSupplierQuotes:next.nativeSupplierQuotes.filter(row=>!rejectedByMemory(records,item,'procurement',row)&&!(row.source==='xianyu'&&rejectedByMemory(records,item,'xianyu',row)))};
   return next;
 }

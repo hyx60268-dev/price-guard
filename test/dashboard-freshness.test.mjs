@@ -84,3 +84,54 @@ test('a newer status cannot make the older snapshot on screen appear fresh',asyn
   assert.match(f.win.document.querySelector('#freshnessText').textContent,/2 天/);
  }finally{f.dom.window.close()}
 });
+
+test('same-platform dashboard labels only its required market and keeps native failure visible',async()=>{
+ const now=Date.parse('2026-10-15T22:00:00Z'),item={...product('1',now),platform:'yahoo_fleamarket',comparisonMode:'same_platform'};
+ item.rakuma={status:'error'};item.mercari={status:'error'};
+ const f=await fixture(now,[item]);
+ try{
+  assert.match(f.win.document.body.textContent,/同平台/);
+  assert.equal(f.win.pricingStatus(item).state,'ready');
+  f.win.fixture.detail('1');
+  assert.match(f.win.document.querySelector('#detail').textContent,/不参与本轮比价|当前仅比较/);
+  item.yahoo.status='error';f.win.fixture.render();
+  assert.notEqual(f.win.pricingStatus(item).state,'ready');
+ }finally{f.win.close()}
+});
+
+test('cached valid pricing does not appear as a completed current20-minute price-and-cost cycle',async()=>{
+ const now=Date.parse('2026-10-15T23:00:00Z'),item={...product('1',now-4*3600_000),platform:'yahoo_fleamarket',comparisonMode:'same_platform'};
+ const f=await fixture(now,[item]);
+ try{
+  f.data.cycleCoverage={finishedAt:new Date(now).toISOString(),withinTarget:true,accounts:[{accountId:'a',inventoryComplete:true,total:1,priceComplete:0,costVerified:0,completeItems:0}]};
+  f.win.fixture.render();
+  assert.match(f.win.document.querySelector('#statusGrid').textContent,/20分钟全量周期未完成.*比价 0\/1.*成本 0\/1/);
+  assert.match(f.win.document.querySelector('#pricingProgress').textContent,/有效覆盖 1\/1/);
+  assert.match(f.win.document.querySelector('#pricingProgress').textContent,/不代表20分钟内全量更新完成/);
+  Object.assign(f.data.cycleCoverage.accounts[0],{priceComplete:1,costVerified:1,completeItems:1});f.win.fixture.render();
+  assert.match(f.win.document.querySelector('#statusGrid').textContent,/首次全量已齐，连续周期待验证/);
+  f.data.cycleCoverage.accounts[0].completionGapSeconds=4*3600;f.win.fixture.render();
+  assert.match(f.win.document.querySelector('#statusGrid').textContent,/本轮已齐，更新间隔超时/);
+  f.data.cycleCoverage.accounts[0].completionGapSeconds=1200;f.win.fixture.render();
+  assert.match(f.win.document.querySelector('#statusGrid').textContent,/20分钟全量周期已完成/);
+  f.setClock(now+20*60_000+1);f.win.fixture.render();
+  assert.match(f.win.document.querySelector('#statusGrid').textContent,/最近完整周期已过期/);
+ }finally{f.win.close()}
+});
+
+test('native supplier quote can be rejected in the real correction dialog without becoming cost',async()=>{
+ const { normalizeNativeSupplierDetail }=await import('../scripts/lib/native-supplier-quotes.mjs');
+ const now=Date.now(),item=product('1',now),url='https://item.taobao.com/item.htm?id=1001&skuId=2001';
+ const quote=normalizeNativeSupplierDetail(item,{source:'taobao',finalUrl:url,accessStatus:'readable',httpStatus:200,pageKind:'target_detail',fetchedAt:new Date(now).toISOString(),contentSha256:'a'.repeat(64),detailTitle:'测试待核验报价',selectedOffer:{productId:'1001',skuId:'2001',sellerKey:'taobao:external',sellerName:'测试供应商',selectedVariant:'白色1套',quantity:1,saleContents:'1套模型',nativePrice:599,currency:'CNY',priceKind:'selected_sku_total',purchaseType:'ordinary',priceCondition:'unconditional',priceEvidence:'人民币599',currencyEvidence:'人民币 CNY',isOwn:false}},{now});
+ assert.ok(quote);item.nativeSupplierQuotes=[quote];
+ const f=await fixture(now,[item]);
+ try{
+  f.win.fixture.detail('1');const doc=f.win.document;
+  assert.match(doc.querySelector('.native-supplier-quotes').textContent,/尚未计入成本/);
+  const button=[...doc.querySelectorAll('[data-correct]')].find(node=>node.closest('li').textContent.includes('测试待核验报价'));
+  assert.ok(button);button.click();
+  assert.equal(doc.querySelector('.native-supplier-quotes'),null);
+  const rejected=[...doc.querySelectorAll('[data-correct]')].find(node=>node.closest('li').textContent.includes('测试待核验报价'));
+  assert.equal(rejected.disabled,true);assert.match(doc.querySelector('#detailBody').textContent,/已排除/);
+ }finally{f.win.close()}
+});

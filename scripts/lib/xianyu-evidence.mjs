@@ -1,6 +1,6 @@
 // A search card (or a recommendation below a blocked detail) is not a verified
 // offer. Keep this contract shared by the scanner, cache and discovery pipeline.
-export const XIANYU_VERIFICATION = 'shared_offer_identity_detail_v11';
+export const XIANYU_VERIFICATION = 'shared_offer_identity_detail_v12';
 
 export function positivePrice(value) {
   if(value===null||value===undefined||String(value).trim()==='')return null;
@@ -20,6 +20,8 @@ export function detailStateFailure(state={}) {
   return null;
 }
 
+// Historical detail-price benchmark only. Purchasable procurement costs are
+// validated separately by verifiedPurchasableXianyuEvidence.
 export function verifiedCostEvidence(samples=[]) {
   const sellers=new Map(),ids=new Set();
   for(const sample of samples){
@@ -73,7 +75,10 @@ export function readXianyuDetailDOM() {
   let sellerKey='';
   if(seller){const url=new URL(seller.href,location.href);const id=url.searchParams.get('userId');if(id&&/^\d+$/.test(id))sellerKey=`goofish:${id}`}
   const optionCount=main?[...main.querySelectorAll('[role="radio"],[class*="sku" i] button,[class*="spec" i] button')].filter(visible).length:0;
-  return {text,titles,priceRange,images:[...new Set(images)].slice(0,16),price:prices.length===1?prices[0]:null,sellerKey,optionCount,blocked,loginVisible,unavailable,networkError,
+  const currencyText=main?[...main.querySelectorAll('[class^="price--"],[class*=" price--"]')].filter(visible).map(n=>n.innerText||'').join(' '):'';
+  const currency=/(?:人民币|RMB|CNY|[￥¥])/i.test(currencyText)&&!/(?:日元|日圓|JPY|美元|USD)/i.test(currencyText)?'CNY':null;
+  const purchaseTermsText=(main?.innerText||'').replace(/\s+/g,' ').trim().slice(0,12000);
+  return {text,purchaseTermsText,titles,priceRange,currency,images:[...new Set(images)].slice(0,16),price:prices.length===1?prices[0]:null,sellerKey,optionCount,blocked,loginVisible,unavailable,networkError,
     diagnostic:{challengeFrame,challengeText,loginVisible,loginSurfaces,networkError,mainFound:Boolean(main),descriptionLength:text.length,galleryFound:Boolean(gallery),imageCount:images.length,priceCount:prices.length,priceRange,sellerFound:Boolean(sellerKey)}};
 }
 
@@ -137,14 +142,14 @@ export function completedXianyuReview(cost={}) {
 
 // Every check is still the full physical-offer verifier. Stop as soon as the
 // existing independent-seller contract is met; extra reads can only add load.
-export async function collectXianyuDetails(candidates, verify, coherent = rows => rows) {
+export async function collectXianyuDetails(candidates, verify, coherent = rows => rows, ready = rows => verifiedCostEvidence(rows).ready) {
   const checks=[], accepted=[];let detailLoginFailures=0;
   for(const candidate of candidates){
     const check=await verify(candidate);checks.push(check);
     if(check.reason==='detail_blocked')break;
     if(check.reason==='detail_login_required'&&++detailLoginFailures>=2)break;
     if(check.accepted)accepted.push({...candidate,...check});
-    if(verifiedCostEvidence(coherent(accepted)).ready)break;
+    if(ready(coherent(accepted)))break;
   }
   return checks;
 }

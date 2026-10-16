@@ -6,7 +6,7 @@ import { syncHandoff,copySyncBody } from '../public/sync-handoff.js';
 import { buildOwnedOffers,excludeOwnedOffers } from '../public/owned-offers.js';
 import { merchantProfile,mergeMerchantConfigs } from '../public/merchant-config.js';
 import { selectMerchantProducts,merchantCardsMarkup } from '../public/merchant-view.js';
-import { pricingDecision, PLATFORM_LABELS, PRICING_RULES_VERSION } from '../public/pricing-policy.js';
+import { pricingDecision, requiredPricingPlatforms, PLATFORM_LABELS, PRICING_RULES_VERSION } from '../public/pricing-policy.js';
 import { pricingStatus, pricingSummary } from '../public/pricing-status.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,7 +27,7 @@ test('actual procurement wins over automatic reference; overview sorts and opens
  const source=await fs.readFile(new URL('../public/app.js',import.meta.url),'utf8');
  const dom=new JSDOM(html,{url:'https://example.test',runScripts:'outside-only'});
  try{
- Object.assign(dom.window,{snapshotFreshness,elapsedLabel,procurementLabel,publicProcurementMarkup,merchantProductKey,merchantDismissed,postedMerchantRecord,merchantMonitorStatus,syncHandoff,copySyncBody,buildOwnedOffers,excludeOwnedOffers,merchantProfile,mergeMerchantConfigs,selectMerchantProducts,merchantCardsMarkup,pricingStatus,pricingSummary,pricingDecision,PLATFORM_LABELS,mergeAccounts,resolveCostRecord,createCostResolver,candidateId,correctionKey,mergeMatchCorrections,rejectedByMemory,invalidateCorrectedMatches,parseShopProfile,FRONTEND_VERSION,fetch:async()=>{throw Error('offline fixture')}});
+ Object.assign(dom.window,{snapshotFreshness,elapsedLabel,procurementLabel,publicProcurementMarkup,merchantProductKey,merchantDismissed,postedMerchantRecord,merchantMonitorStatus,syncHandoff,copySyncBody,buildOwnedOffers,excludeOwnedOffers,merchantProfile,mergeMerchantConfigs,selectMerchantProducts,merchantCardsMarkup,pricingStatus,pricingSummary,pricingDecision,requiredPricingPlatforms,PLATFORM_LABELS,mergeAccounts,resolveCostRecord,createCostResolver,candidateId,correctionKey,mergeMatchCorrections,rejectedByMemory,invalidateCorrectedMatches,parseShopProfile,FRONTEND_VERSION,fetch:async()=>{throw Error('offline fixture')}});
  dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true};
  dom.window.eval(source.replace(/^import .*;\r?\n/gm,'')+`window.fixture={set(value,costs){data=value;manualCosts=costs;currentAccountId='__all__'},effective,selected,render,actionablePrice}`);
  const item={id:'same',accountId:'a',accountName:'A店',title:'商品 A',ownPrice:1000,recommendedPrice:900,averageCNY:90,yahoo:{status:'ok',rulesVersion:PRICING_RULES_VERSION,checkedAt:new Date().toISOString(),candidates:[{price:901,url:'https://example.com/a',id:'1',matchMethod:'verified'}]},rakuma:{status:'ok',rulesVersion:PRICING_RULES_VERSION,checkedAt:new Date().toISOString()},mercari:{status:'ok',rulesVersion:PRICING_RULES_VERSION,checkedAt:new Date().toISOString()}};
@@ -38,7 +38,7 @@ test('actual procurement wins over automatic reference; overview sorts and opens
  assert.equal(dom.window.fixture.actionablePrice(other),true);
  assert.equal(dom.window.fixture.selected()[0].accountId,'a');
  dom.window.fixture.render();assert.equal(dom.window.document.querySelectorAll('.inventory-card').length,2);
- assert.match(dom.window.document.querySelector('#pricingProgress').textContent,/三平台全部完成 1\/2/);
+ assert.match(dom.window.document.querySelector('#pricingProgress').textContent,/三平台有效覆盖 1\/2/);
  assert.match(dom.window.document.querySelector('#cards').textContent,/建议降价/);
  dom.window.document.querySelector('#cards [data-account="b"]').click();
  assert.equal(dom.window.document.querySelector('#detailBody h2').textContent,'商品 B');
@@ -72,7 +72,7 @@ test('supplier offer has a working correction button and disappears immediately 
  const html=await fs.readFile(new URL('../public/index.html',import.meta.url),'utf8'),source=await fs.readFile(new URL('../public/app.js',import.meta.url),'utf8');
  const dom=new JSDOM(html,{url:'https://example.test',runScripts:'outside-only'});
  try{
-  Object.assign(dom.window,{snapshotFreshness,elapsedLabel,procurementLabel,publicProcurementMarkup,merchantProductKey,merchantDismissed,postedMerchantRecord,merchantMonitorStatus,syncHandoff,copySyncBody,buildOwnedOffers,excludeOwnedOffers,merchantProfile,mergeMerchantConfigs,selectMerchantProducts,merchantCardsMarkup,pricingStatus,pricingSummary,pricingDecision,PLATFORM_LABELS,mergeAccounts,resolveCostRecord,createCostResolver,candidateId,correctionKey,mergeMatchCorrections,rejectedByMemory,invalidateCorrectedMatches,parseShopProfile,FRONTEND_VERSION,fetch:async()=>{throw Error('offline fixture')}});
+  Object.assign(dom.window,{snapshotFreshness,elapsedLabel,procurementLabel,publicProcurementMarkup,merchantProductKey,merchantDismissed,postedMerchantRecord,merchantMonitorStatus,syncHandoff,copySyncBody,buildOwnedOffers,excludeOwnedOffers,merchantProfile,mergeMerchantConfigs,selectMerchantProducts,merchantCardsMarkup,pricingStatus,pricingSummary,pricingDecision,requiredPricingPlatforms,PLATFORM_LABELS,mergeAccounts,resolveCostRecord,createCostResolver,candidateId,correctionKey,mergeMatchCorrections,rejectedByMemory,invalidateCorrectedMatches,parseShopProfile,FRONTEND_VERSION,fetch:async()=>{throw Error('offline fixture')}});
   dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true};
   dom.window.eval(source.replace(/^import .*;\r?\n/gm,'')+`window.fixture={set(value,costs){data=value;manualCosts=costs;matchCorrections={};currentAccountId='__all__'},detail,corrections:()=>matchCorrections,costs:()=>manualCosts}`);
   const target={accountId:'a',id:'own',title:'完整手办',image:'https://images.example.org/1.jpg',description:'新品未開封',condition:'未使用'};

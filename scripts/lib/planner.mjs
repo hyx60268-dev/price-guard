@@ -1,6 +1,7 @@
 import { inferSize } from './rules.mjs';
 import { normalizeProductIdentity } from './state.mjs';
-import { verifiedCostEvidence,XIANYU_VERIFICATION } from './xianyu-evidence.mjs';
+import { XIANYU_VERIFICATION } from './xianyu-evidence.mjs';
+import { verifiedXianyuCost } from './xianyu-procurement-evidence.mjs';
 
 export function reconcileLiveItems(catalogItems=[],previousItems=[],liveItems=[],accountId='default',history=[]){
   const previous=new Map(previousItems.map(item=>[item.id,item]));
@@ -90,11 +91,8 @@ export function shouldScanXianyu(item,yahooResult){
 }
 
 export function verifiedXianyuCache(item={}){
-  const reference=Object.hasOwn(item.xianyu||{},'averageCNY')?item.xianyu.averageCNY:
-    !item.referenceProvider||item.referenceProvider==='xianyu'?item.averageCNY:null;
-  const evidence=verifiedCostEvidence(item.xianyu?.samples);
-  if(item.xianyu?.verification!==XIANYU_VERIFICATION||!evidence.ready||!Number.isFinite(reference)||reference<=0||Math.abs(reference-evidence.median)>=.01)return null;
-  return {averageCNY:evidence.median,samples:evidence.samples,checkedAt:item.xianyu.checkedAt||item.checkedAt||null,verification:item.xianyu.verification};
+  if(item.xianyu?.verification!==XIANYU_VERIFICATION)return null;
+  return verifiedXianyuCost(item);
 }
 
 export function isFresh(value,hours,now=Date.now()){

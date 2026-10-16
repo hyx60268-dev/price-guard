@@ -275,7 +275,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   const broadSearchInterval=hasCurrentKnownOffer?broadSearchHours*3_600_000:Math.max(1,Number(settings.yahooFreshMinutes)||20)*60_000;
   const broadSearchDue=!knownOnly&&(settings.forceYahooBroadSearch===true||!Number.isFinite(lastBroadSearch)||lastBroadSearch>Date.now()+60_000||Date.now()-lastBroadSearch>=broadSearchInterval);
   if(!knownOnly&&(externalOwn||broadSearchDue||!ownBundle)){
-    try{search=await getResult(searchUrl,settings);searchObservedAt=search?new Date().toISOString():null}catch(error){searchError=String(error)}
+    try{search=await getResult(searchUrl,settings);searchObservedAt=search?(search.observedAt||new Date().toISOString()):null}catch(error){searchError=String(error)}
   }
   if(!search&&!ownBundle)throw new Error(`搜索与商品页均失败：${searchError}; ${itemPageError}`);
   if(knownOnly){

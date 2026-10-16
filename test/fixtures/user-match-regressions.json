@@ -607,5 +607,14 @@
     "candidateDescription": "新品未開封 1点",
     "primaryImageScore": 1,
     "expected": "explicit_variant_mismatch"
+  },
+  {
+    "case": "2026-10-15 标题白色不能掩盖正文红色销售内容",
+    "ownTitle": "フィギュア ホワイト 1個",
+    "ownDescription": "新品 ホワイト 1個",
+    "candidateTitle": "フィギュア ホワイト 1個",
+    "candidateDescription": "新品 レッド 1個 现货 全国包邮",
+    "primaryImageScore": 1,
+    "expected": "description_color_mismatch"
   }
 ]

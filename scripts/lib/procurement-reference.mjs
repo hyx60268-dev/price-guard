@@ -3,7 +3,8 @@ import { currentReviewedProcurementCatalogIdentity } from './reviewed-procuremen
 import { PUBLIC_PURCHASABLE_VERIFICATION,canonicalProcurementUrl,safeProcurementUrl } from './procurement-evidence.mjs';
 import { currentProcurementSourcePlan } from './alter-procurement.mjs';
 import { mergeXianyuReview } from './xianyu-review-plan.mjs';
-import { XIANYU_VERIFICATION, verifiedCostEvidence } from './xianyu-evidence.mjs';
+import { XIANYU_VERIFICATION } from './xianyu-evidence.mjs';
+import { verifiedXianyuCost } from './xianyu-procurement-evidence.mjs';
 import { PUBLIC_PROCUREMENT_VERIFICATION, verifiedPublicCostEvidence, procurementTarget, procurementTargetsEqual } from './procurement-evidence.mjs';
 
 const positive=value=>Number.isFinite(value)&&value>0;
@@ -22,14 +23,8 @@ export function bindProcurementTarget(reference={},item={}){
 }
 
 export function verifiedXianyuReference(item={}, {now=Date.now(),xianyuFreshHours=168}={}){
- const cost=item.xianyu||{},evidence=verifiedCostEvidence(cost.samples);
- // Old snapshots stored only the top-level amount. Once a provider is explicit,
- // another provider's amount must never be borrowed to validate Xianyu evidence.
- const amount=Object.hasOwn(cost,'averageCNY')?cost.averageCNY:
-  !item.referenceProvider||item.referenceProvider==='xianyu'?item.averageCNY:null;
- if(cost.verification!==XIANYU_VERIFICATION||!evidence.ready||!positive(amount)||
-  Math.abs(amount-evidence.median)>=.01||!fresh(cost.checkedAt,Number(xianyuFreshHours)||168,now))return null;
- return {averageCNY:evidence.median,referenceProvider:'xianyu',sourceLabel:'闲鱼',checkedAt:cost.checkedAt,samples:evidence.samples};
+ if(item.xianyu?.verification!==XIANYU_VERIFICATION)return null;
+ return verifiedXianyuCost(item,{now,xianyuFreshHours});
 }
 
 export function verifiedPublicProcurementCache(item={}, {now=Date.now(),maxAgeHours=24}={}){
@@ -64,13 +59,18 @@ export function hasCompletedPublicProcurementReview(item={}, {now=Date.now(),max
 // reference keeps its original evidence timestamp even when the retry fails.
 export function mergeXianyuCostEvidence(priorItem={},current={},options={}){
  const prior=priorItem.xianyu||{},merged=mergeXianyuReview(prior,current);
+ // Scanners can supply the current own-detail observation so a changed item
+ // cannot retain an earlier target's otherwise fresh evidence during merging.
+ const currentItem=options.currentItem;
  const attempted=!['cached_verified','skipped_recent_review','deferred_limit','deferred_access','deferred_auth','not_requested'].includes(current.status)&&Boolean(current.status);
  const lastAttemptAt=attempted&&current.checkedAt?current.checkedAt:prior.lastAttemptAt;
- const live=['ok','cached_verified'].includes(current.status)?verifiedXianyuReference({xianyu:current},options):null;
+ const live=['ok','cached_verified'].includes(current.status)?verifiedXianyuReference({...currentItem||current.target,xianyu:current},options):null;
  if(live)return {...merged,averageCNY:live.averageCNY,samples:live.samples,checkedAt:live.checkedAt,lastAttemptAt,
   verification:XIANYU_VERIFICATION,costEvidenceStatus:current.status==='ok'?'verified':'cached_verified'};
- const cached=verifiedXianyuReference(priorItem,options);
+ const cached=verifiedXianyuReference(currentItem?{...currentItem,xianyu:prior}:priorItem,options);
  if(cached)return {...merged,averageCNY:cached.averageCNY,samples:cached.samples,checkedAt:cached.checkedAt,lastAttemptAt,
+  target:cached.target,costVerification:cached.costVerification,selectedQuote:cached.selectedQuote,
+  benchmarkMedianCNY:cached.benchmarkMedianCNY,benchmarkCheckedAt:cached.benchmarkCheckedAt,
   verification:XIANYU_VERIFICATION,costEvidenceStatus:'cached_verified'};
  return {...merged,averageCNY:null,samples:[],lastAttemptAt,costEvidenceStatus:'missing'};
 }

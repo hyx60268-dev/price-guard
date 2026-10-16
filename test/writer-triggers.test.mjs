@@ -31,7 +31,8 @@ test('the primary push writer covers quick dashboard publication, core scan and 
   const merchant=steps.indexOf('run: node scripts/merchant-monitor.mjs');
   assert.ok(repack>=0&&repack<deploy&&deploy<scan&&scan<merchant,'one transaction publishes the interface before scanning, then refreshes merchants');
   assert.match(steps.slice(0,repack),/if: github.event_name == 'push'/);
-  assert.match(steps.slice(merchant),/MERCHANT_MONITOR_IF_DUE: '1'/);
+  assert.match(steps.slice(merchant),/MERCHANT_MONITOR_DAILY_CATCHUP: '1'/);
+  assert.doesNotMatch(steps.slice(merchant),/MERCHANT_MONITOR_IF_DUE:/);
   assert.ok(steps.indexOf('uses: actions/deploy-pages@',merchant)>merchant,'merchant output is published');
 });
 
@@ -41,4 +42,5 @@ test('manual repair and independent daily merchant monitoring remain available',
   assert.match(dashboard,/^  workflow_dispatch:/m);
   assert.match(merchant,/^  workflow_dispatch:/m);
   assert.match(merchant,/^  schedule:\r?\n    - cron: '15 0 \* \* \*'/m);
+  assert.doesNotMatch(await readWorkflow('merchant-monitor.yml'),/MERCHANT_MONITOR_DAILY_CATCHUP|MERCHANT_MONITOR_IF_DUE/);
 });

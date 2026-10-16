@@ -6,8 +6,9 @@ import { XIANYU_VERIFICATION } from '../scripts/lib/xianyu-evidence.mjs';
 import { procurementTargetsEqual,verifiedPublicCostEvidence } from '../scripts/lib/procurement-evidence.mjs';
 import { publicProcurementItem } from './fixtures/procurement-reference.mjs';
 const now=Date.parse('2026-10-01T17:00:00Z');
-const withXianyu=item=>({...item,xianyu:{averageCNY:95,verification:XIANYU_VERIFICATION,checkedAt:new Date(now).toISOString(),samples:[
- {id:'x1',sellerKey:'x-a',price:90,priceSource:'target_detail'},{id:'x2',sellerKey:'x-b',price:100,priceSource:'target_detail'}]}});
+import { xianyuProcurementItem } from './fixtures/xianyu-procurement.mjs';
+const withXianyu=item=>xianyuProcurementItem(now,item);
+const stampXianyu=(item,stamp)=>{item.xianyu.checkedAt=stamp;item.xianyu.selectedQuote.checkedAt=stamp;for(const sample of item.xianyu.samples)sample.checkedAt=stamp;};
 
 test('fresh public procurement chooses an independently verified landed amount without mutating Xianyu',()=>{
  const item=publicProcurementItem(now);item.xianyu={status:'deferred_access',averageCNY:null,samples:[]};
@@ -24,7 +25,7 @@ test('valid Xianyu reference stays preferred and cannot borrow a public top-leve
  assert.equal(verifiedXianyuReference(item,{now}),null);
  assert.equal(chooseProcurementReference(item,{now}).averageCNY,100);
  delete item.referenceProvider;item.averageCNY=95;
- assert.equal(verifiedXianyuReference(item,{now}).averageCNY,95);
+ assert.equal(verifiedXianyuReference(item,{now}),null,'top-level amount cannot replace source evidence');
 });
 
 test('public cache cannot survive account, relist, title, image or sample target changes',()=>{
@@ -69,18 +70,21 @@ test('a completed no-match review is distinct from an unavailable or deferred at
 });
 
 test('a failed current attempt cannot extend the age of historical Xianyu prices',()=>{
- const prior=withXianyu(publicProcurementItem(now));prior.xianyu.checkedAt=new Date(now-3600000).toISOString();
+ const prior=withXianyu(publicProcurementItem(now));stampXianyu(prior,new Date(now-3600000).toISOString());
  prior.xianyu.reviewedAt=prior.xianyu.checkedAt;prior.xianyu.reviewVersion=XIANYU_VERIFICATION;
  const failure={status:'login_required',checkedAt:new Date(now).toISOString(),averageCNY:null,samples:[]};
  const merged=mergeXianyuCostEvidence(prior,failure,{now,xianyuFreshHours:2});
  assert.equal(merged.status,'login_required');assert.equal(merged.reviewStatus,'login_required');
  assert.equal(merged.checkedAt,prior.xianyu.checkedAt);assert.equal(merged.lastAttemptAt,failure.checkedAt);
  assert.equal(merged.averageCNY,95);assert.equal(merged.costEvidenceStatus,'cached_verified');
+ const noNewQuote=mergeXianyuCostEvidence(prior,{...failure,status:'manual_review',target:prior.xianyu.target,selectedQuote:null,benchmarkMedianCNY:null},{now,xianyuFreshHours:2});
+ assert.ok(verifiedXianyuReference({...prior,xianyu:noNewQuote},{now,xianyuFreshHours:2}));
+ assert.deepEqual(noNewQuote.selectedQuote,prior.xianyu.selectedQuote);assert.equal(noNewQuote.checkedAt,prior.xianyu.checkedAt);
  assert.equal(verifiedXianyuReference({xianyu:merged},{now:now+3600000,xianyuFreshHours:2}),null);
 });
 
 test('expired prior evidence and explicit null or altered Xianyu amounts never revive from a retry',()=>{
- const prior=withXianyu(publicProcurementItem(now));prior.xianyu.checkedAt=new Date(now-3*3600000).toISOString();
+ const prior=withXianyu(publicProcurementItem(now));stampXianyu(prior,new Date(now-3*3600000).toISOString());
  const failure={status:'error',checkedAt:new Date(now).toISOString(),averageCNY:null,samples:[]};
  const merged=mergeXianyuCostEvidence(prior,failure,{now,xianyuFreshHours:2});
  assert.equal(merged.averageCNY,null);assert.deepEqual(merged.samples,[]);assert.equal(merged.lastAttemptAt,failure.checkedAt);
@@ -91,8 +95,8 @@ test('expired prior evidence and explicit null or altered Xianyu amounts never r
 });
 
 test('a newly verified Xianyu observation replaces the old timestamp, while deferred work adds no attempt',()=>{
- const prior=withXianyu(publicProcurementItem(now));prior.xianyu.checkedAt=new Date(now-3600000).toISOString();
- const current={...prior.xianyu,status:'ok',checkedAt:new Date(now).toISOString()};
+ const prior=withXianyu(publicProcurementItem(now));stampXianyu(prior,new Date(now-3600000).toISOString());
+ const current=withXianyu(publicProcurementItem(now)).xianyu;
  const live=mergeXianyuCostEvidence(prior,current,{now});
  assert.equal(live.checkedAt,current.checkedAt);assert.equal(live.lastAttemptAt,current.checkedAt);assert.equal(live.costEvidenceStatus,'verified');
  const deferred=mergeXianyuCostEvidence(prior,{status:'deferred_access',averageCNY:null,samples:[]},{now});

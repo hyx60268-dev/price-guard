@@ -11,7 +11,7 @@ export async function makeWorkbook(result,path){
     ['当前利润','currentProfitJPY',13],['调价后利润','afterProfitJPY',14],['预警','advice',22],['置信度','confidence',10],
     ['Yahoo来源','yahooSource',12],['成本来源','costSource',12],['Yahoo商品','ownUrl',36],['最低价链接','lowestUrl',36],['闲鱼搜索','xianyuSearchUrl',36],
     ['在售至少天数','listingDays',16],['时间依据','listingAgeSource',22],['30天未售建议','listingAgeAdvice',48],
-    ['最低价平台','marketSourcePlatform',14],['三平台核验状态','coverageStatus',40]
+    ['最低价平台','marketSourcePlatform',14],['比价核验状态','coverageStatus',40]
   ].map(([header,key,width])=>({header,key,width}));
   ws.getRow(1).font={bold:true,color:{argb:'FFFFFFFF'}};
   ws.getRow(1).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF17365D'}};
@@ -28,7 +28,7 @@ export async function makeWorkbook(result,path){
     row.getCell('K').value={formula:`IF(OR(AND(G${n}="",H${n}=""),I${n}="",J${n}=""),"",ROUNDUP(((IF(H${n}="",G${n},H${n})+I${n})*参数!$B$2+J${n})*参数!$B$4,0))`,result:source.costJPY??undefined};
     row.getCell('L').value={formula:`IF(K${n}="","",D${n}-K${n})`,result:source.currentProfitJPY??undefined};
     row.getCell('M').value={formula:`IF(OR(K${n}="",F${n}=""),"",F${n}-K${n})`,result:decision.canRecommend?source.afterProfitJPY??undefined:undefined};
-    row.getCell('N').value={formula:`IF(F${n}="","三平台比价待核验",IF(K${n}="","待输入成本",IF(M${n}<0,"调价后亏损",IF(M${n}<参数!$B$3,"不建议按推荐价出售",IF(L${n}<参数!$B$3,"建议提价或控制成本","利润正常")))))`,result:decision.canRecommend?source.advice??'待输入成本':'三平台比价待核验'};
+    row.getCell('N').value={formula:`IF(F${n}="","比价待核验",IF(K${n}="","待输入成本",IF(M${n}<0,"调价后亏损",IF(M${n}<参数!$B$3,"不建议按推荐价出售",IF(L${n}<参数!$B$3,"建议提价或控制成本","利润正常")))))`,result:decision.canRecommend?source.advice??'待输入成本':'比价待核验'};
   }
   ws.autoFilter={from:'A1',to:'Y1'};
   for(const key of ['ownPrice','lowestPrice','recommendedPrice','costJPY','currentProfitJPY','afterProfitJPY'])ws.getColumn(key).numFmt='¥#,##0;[Red]-¥#,##0';

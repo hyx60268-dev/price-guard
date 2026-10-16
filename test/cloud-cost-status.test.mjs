@@ -4,8 +4,8 @@ import { cloudCostStatus } from '../scripts/lib/cloud-cost-status.mjs';
 import { XIANYU_VERIFICATION } from '../scripts/lib/xianyu-evidence.mjs';
 
 const now = Date.parse('2026-09-23T12:00:00Z');
-const item = () => ({ averageCNY: 95, xianyu: { verification: XIANYU_VERIFICATION, checkedAt: new Date(now).toISOString(), reviewedAt: new Date(now).toISOString(), reviewVersion: XIANYU_VERIFICATION,
-  samples: [{ id: '1', sellerKey: 'a', priceSource: 'target_detail', price: 90 }, { id: '2', sellerKey: 'b', priceSource: 'target_detail', price: 100 }] } });
+import { xianyuProcurementItem } from './fixtures/xianyu-procurement.mjs';
+const item = (id) => {const {procurementSource,...target}=publicProcurementItem(now);return xianyuProcurementItem(now,{...target,...(id?{id}:{})});};
 
 test('cloud cost does not accept search success, manual costs or zero references', () => {
   const result = { manualCosts: { a: { purchaseCNY: 95 } }, items: [{ averageCNY: 95 }], accounts: [{ scanStats: { xianyuScanned: 1 } }] };
@@ -20,7 +20,7 @@ test('fresh independent detail evidence passes without requiring a new cost ever
 });
 test('expired, duplicate seller, old contract and altered price cannot pass acceptance', () => {
   for (const change of [i => i.xianyu.checkedAt = '2026-09-01', i => i.xianyu.checkedAt = '2026-10-01',
-    i => i.xianyu.samples[1].sellerKey = 'a', i => i.xianyu.verification = 'old', i => i.averageCNY = 1]) {
+    i => i.xianyu.samples[1].sellerKey = i.xianyu.samples[0].sellerKey, i => i.xianyu.verification = 'old', i => i.averageCNY = 1]) {
     const i = item(); change(i);
     assert.equal(cloudCostStatus({ items: [i] }, now).accepted, false);
   }
@@ -121,9 +121,9 @@ test('Xianyu-only overall acceptance also checks the displayed amount when sourc
 
 
 test('one correct Xianyu amount cannot hide another selected reference with a wrong amount',()=>{
- const good={...item(),id:'good',referenceProvider:'xianyu'};good.xianyu.averageCNY=95;
+ const good={...item('good'),referenceProvider:'xianyu'};good.xianyu.averageCNY=95;
  for(const value of [1,null,undefined]){
-  const wrong={...item(),id:'wrong',referenceProvider:'xianyu',averageCNY:value};wrong.xianyu.averageCNY=95;
+  const wrong={...item('wrong'),referenceProvider:'xianyu',averageCNY:value};wrong.xianyu.averageCNY=95;
   const result=cloudCostStatus({items:[good,wrong],accounts:[{profileStatus:'live'}]},now);
   assert.equal(result.coverage.complete,true);assert.equal(result.sources.xianyu.accepted,true);
   assert.equal(result.sources.xianyu.verifiedReferences,2);
@@ -138,7 +138,7 @@ test('combined procurement acceptance rejects any mismatched selected amount acr
   if(firstProvider==='xianyu'&&wrongProvider==='xianyu')continue;
   const makeRow=(provider,id)=>{
    if(provider==='xianyu'){
-    const row={...item(),id,referenceProvider:provider};row.xianyu.averageCNY=95;return row;
+    const row={...item(id),referenceProvider:provider};row.xianyu.averageCNY=95;return row;
    }
    const row=publicProcurementItem(now);row.id=id;row.procurementSource.target.id=id;
    for(const sample of row.procurementSource.samples)sample.target.id=id;

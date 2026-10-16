@@ -7,18 +7,20 @@ import { mapLimit } from './lib/worker-pool.mjs';
 import { knownYahooRefreshTasks,runKnownYahooRefresh,yahooFullAttemptTime } from './lib/yahoo-known-refresh.mjs';
 import { buildOwnedOffers } from '../public/owned-offers.js';
 import { createOwnSourceLoader } from './lib/own-source.mjs';
+import { configureImageFingerprintCache } from './lib/image.mjs';
 import { xianyuReviewPlan,mergeXianyuReview } from './lib/xianyu-review-plan.mjs';
 import { mercariCompare } from './lib/mercari.mjs';
-import { pricingDecision } from '../public/pricing-policy.js';
+import { pricingDecision,requiredPricingPlatforms,pricingItemsForPlatform,pricingScopeLabel } from '../public/pricing-policy.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { loadXianyuSession } from './lib/xianyu-session.mjs';
 import { deferredXianyuAccess } from './lib/xianyu-access.mjs';
 import { fileURLToPath } from 'node:url';
 import { openContext } from './lib/browser.mjs';
-import { discoverYahooProfile,fetchYahooItemBundle,marketPriceDecision,yahooCompare } from './lib/yahoo.mjs';
+import { discoverYahooProfile,fetchYahooItemBundle,fetchYahooResult,marketPriceDecision,yahooCompare } from './lib/yahoo.mjs';
 import { discoverRakumaProfile,fetchRakumaItem,rakumaCompare } from './lib/rakuma.mjs';
 import { cachedComparison,comparisonIncomplete as isComparisonIncomplete,pricingCoverage } from './lib/pricing-coverage.mjs';
+import { cycleCoverage } from './lib/cycle-coverage.mjs';
 import { xianyuCost } from './lib/xianyu.mjs';
 import { XIANYU_VERIFICATION,completedXianyuReview } from './lib/xianyu-evidence.mjs';
 import { comparisonAttemptTime,retainComparisonAttempt,currentInventoryAdditions,fairRoundRobin,fairPriorityRoundRobin,inventoryDelta,isFresh,isFreshMinutes,parsePriceAuditItemIds,prioritizePriceAuditItems,reconcileLiveItems,verifiedXianyuCache } from './lib/planner.mjs';
@@ -37,6 +39,7 @@ const wait=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
 const startedAt=Date.now();
 let sessionManager;
 const settings=await readJson(path.join(root,'config','settings.json'));
+const imageCacheStats=configureImageFingerprintCache({directory:path.join(root,'state','image-fingerprints')});
 const accountsCfg=await readJson(path.join(root,'config','accounts.json'));
 const password=process.env.DASHBOARD_PASSWORD;
 if(!password||password.length<8)throw new Error('DASHBOARD_PASSWORD 至少需要 8 个字符');
@@ -108,7 +111,7 @@ const contexts=await mapLimit(accounts,Math.min(profileConcurrency,accounts.leng
     }else console.warn(`${account.platform} 主页返回 0 件；沿用保存清单 ${activeItems.length} 件`);
   }catch(error){profileStatus='error';profileError=String(error);console.warn(`${account.platform} 主页失败；沿用保存清单：${profileError}`)}
   const profileDelta=inventoryDelta(previousItems,activeItems);
-  activeItems=activeItems.map(item=>({...item,platform:account.platform}));
+  activeItems=activeItems.map(item=>({...item,platform:account.platform,comparisonMode:settings.comparisonMode==='same_platform'?'same_platform':'cross_platform'}));
   console.log(`清单变化：新增 ${profileDelta.added.length}、减少 ${profileDelta.removed.length}、重新上架 ${profileDelta.relisted.length}、复用 ${profileDelta.unchanged}`);
   return {account,accountIndex,catalogItems,previousItems,previousById,activeItems,profileStatus,profileError,profileDelta,profileDiscovery,yahooById:new Map(),rakumaById:new Map(),mercariById:new Map(),xianyuById:new Map()};
 });
@@ -127,7 +130,7 @@ const yahooFreshMinutes=Number(settings.yahooFreshMinutes)||20;
 const deadline=startedAt+(fullPriceAudit?280:(Number(settings.scanBudgetMinutes)||12))*60_000;
 const yahooBuckets=contexts.map(context=>{
   const currentAdditions=currentInventoryAdditions(context.profileDelta);
-  return context.activeItems.map((item,itemIndex)=>{
+  return pricingItemsForPlatform(context.activeItems,'yahoo').map((item,itemIndex)=>{
   const prior=priorFor(context,item),added=currentAdditions.has(item.id);
   const priceChanged=Number.isFinite(prior.ownPrice)&&prior.ownPrice!==item.ownPrice;
   const rulesChanged=Number(prior.yahoo?.rulesVersion)!==MATCHING_RULES_VERSION;
@@ -144,7 +147,7 @@ const yahooTasks=prioritizePriceAuditItems(fairPriorityRoundRobin(yahooBuckets),
 
 // One in-flight read per own listing, shared across independent platform workers.
 // A deferred Yahoo task must not deprive Rakuma/Mercari/Xianyu of the sale description.
-const {hydrate:hydratedItem,yahooBundle:ownBundle}=createOwnSourceLoader({fetchYahooBundle:id=>fetchYahooItemBundle(id,settings),fetchRakumaItem:item=>fetchRakumaItem(item,settings)});
+const {hydrate:hydratedItem,yahooBundle:ownBundle,yahooResult:sharedYahooResult,stats:publicReadStats}=createOwnSourceLoader({fetchYahooBundle:id=>fetchYahooItemBundle(id,settings),fetchYahooResult:url=>fetchYahooResult(url,settings),fetchRakumaItem:item=>fetchRakumaItem(item,settings)});
 const yahooConcurrency=Math.max(1,Math.min(4,Number(settings.yahooConcurrency)||3));
 const yahooWork=(async()=>{
   // A small, separately bounded lane checks known external details before any
@@ -185,7 +188,7 @@ const yahooWork=(async()=>{
       item.ownPrice=item.sourceDetail.price;
     }
     const profileSellerId=String(context.account.profileUrl||'').match(/\/user\/([^/?#]+)/i)?.[1]||'';
-    const result=await yahooCompare(null,known?.knownRefresh?.mode==='details_only'?{...item,yahoo:known}:item,{...settings,matchCorrections,ownSellerId:item.sellerId||profileSellerId,forceYahooBroadSearch:forceYahoo||task.priority<=1},{fetchYahooItemBundle:id=>ownBundle(id)});context.yahooById.set(item.id,{...result,knownLastAttemptAt:known?.knownLastAttemptAt||prior.yahoo?.knownLastAttemptAt||null});
+    const result=await yahooCompare(null,known?.knownRefresh?.mode==='details_only'?{...item,yahoo:known}:item,{...settings,matchCorrections,ownSellerId:item.sellerId||profileSellerId,forceYahooBroadSearch:forceYahoo||task.priority<=1},{fetchYahooItemBundle:id=>ownBundle(id),fetchYahooResult:sharedYahooResult});context.yahooById.set(item.id,{...result,knownLastAttemptAt:known?.knownLastAttemptAt||prior.yahoo?.knownLastAttemptAt||null});
     console.log(`[Yahoo ${taskIndex+1}/${yahooTasks.length}] ${context.account.name} ${item.id} cards=${result.cardCount} matches=${result.competitorCount} lowest=${result.lowestPrice} source=${result.sourceStatus?.search||'unknown'}`);
   }catch(error){
     console.error(`[Yahoo ERROR][${context.account.id}:${item.id}]`,String(error));
@@ -201,13 +204,14 @@ const yahooWork=(async()=>{
 // Bounded product workers share the run deadline and the platform request gate.
 const rakumaFreshHours=Math.max(1/60,Number(settings.rakumaFreshHours)||1/3);
 const rakumaLimit=Number.POSITIVE_INFINITY; // The deadline bounds admission; no arbitrary per-run item cap.
-const rakumaBuckets=contexts.map(context=>context.activeItems.map((item,itemIndex)=>{
+const rakumaBuckets=contexts.map(context=>pricingItemsForPlatform(context.activeItems,'rakuma').map((item,itemIndex)=>{
   // Failed attempts rotate to the tail too, without becoming accepted cache.
   const prior=priorFor(context,item),cached=cachedRakuma(prior),checked=comparisonAttemptTime(prior.rakuma);
   return {context,item,prior,cached,itemIndex,lastChecked:Number.isFinite(checked)?checked:0};
 }).filter(task=>!task.cached||!isFresh(task.cached.checkedAt,rakumaFreshHours)).sort((a,b)=>a.lastChecked-b.lastChecked||a.itemIndex-b.itemIndex));
 const rakumaTasks=prioritizePriceAuditItems(fairRoundRobin(rakumaBuckets),priceAuditItemIds);
 for(const context of contexts)for(const item of context.activeItems){
+  if(!requiredPricingPlatforms(item).includes('rakuma'))continue;
   const cached=cachedRakuma(priorFor(context,item));if(cached&&isFresh(cached.checkedAt,rakumaFreshHours))context.rakumaById.set(item.id,cached);
 }
 const rakumaConcurrency=Math.max(1,Math.min(4,Number(settings.rakumaConcurrency)||3));
@@ -228,7 +232,7 @@ const rakumaWork=mapLimit(rakumaTasks,rakumaConcurrency,async(task,index)=>{
 
 // All accounts receive a fair turn. A failed source never becomes 'no offers'.
 const mercariLimit=Number.POSITIVE_INFINITY;
-const mercariBuckets=contexts.map(context=>context.activeItems.map((item,itemIndex)=>{
+const mercariBuckets=contexts.map(context=>pricingItemsForPlatform(context.activeItems,'mercari').map((item,itemIndex)=>{
  const prior=priorFor(context,item),cached=cachedComparison(prior.mercari),stamp=comparisonAttemptTime(prior.mercari);
  if(cached&&isFreshMinutes(cached.checkedAt,Number(settings.mercariFreshMinutes)||20)){context.mercariById.set(item.id,cached);return null}
  return {context,item,prior,itemIndex,lastChecked:Number.isFinite(stamp)?stamp:0};
@@ -266,7 +270,7 @@ const xianyuRetryHours=Number(settings.xianyuRetryHours)||24;
 const xianyuLimit=Math.max(0,Number(settings.maxXianyuItemsPerRun)||3);
 const xianyuBuckets=contexts.map(()=>[]);
 for(const [contextIndex,context] of contexts.entries())for(const item of context.activeItems){
-  const prior=priorFor(context,item),yc=context.yahooById.get(item.id)||{};
+  const prior=priorFor(context,item);
   const manual=manualCostFor(manualCosts,{...item,accountId:context.account.id},relistAliases,context.activeItems);
   const verified=verifiedXianyuCache(prior);
   if(verified&&isFresh(verified.checkedAt,xianyuFreshHours)){
@@ -339,23 +343,22 @@ const [,,,,procurementResults]=await Promise.all([yahooWork,rakumaWork,mercariWo
 const accountResults=[];
 for(const context of contexts){
   const rows=context.activeItems.map(item=>{
-    const prior=priorFor(context,item),yc=retainComparisonAttempt(context.yahooById.get(item.id)||{},prior.yahoo),rc=retainComparisonAttempt(context.rakumaById.get(item.id)||{status:'not_requested',candidates:[],lowestPrice:null},prior.rakuma),mc=retainComparisonAttempt(context.mercariById.get(item.id)||{status:'not_requested',candidates:[]},prior.mercari),xc=context.xianyuById.get(item.id)||{status:'not_requested',samples:[],averageCNY:null};
+    const prior=priorFor(context,item),yc=retainComparisonAttempt(context.yahooById.get(item.id)||(requiredPricingPlatforms(item).includes('yahoo')?{}:prior.yahoo||{}),prior.yahoo),rc=retainComparisonAttempt(context.rakumaById.get(item.id)||(requiredPricingPlatforms(item).includes('rakuma')?{status:'not_requested',candidates:[],lowestPrice:null}:prior.rakuma||{status:'not_requested'}),prior.rakuma),mc=retainComparisonAttempt(context.mercariById.get(item.id)||(requiredPricingPlatforms(item).includes('mercari')?{status:'not_requested',candidates:[]}:prior.mercari||{status:'not_requested'}),prior.mercari),xc=context.xianyuById.get(item.id)||{status:'not_requested',samples:[],averageCNY:null};
     const priorVerified=verifiedXianyuCache(prior);
     const procurementSource=procurementResults.get(item.accountId+':'+item.id)||prior.procurementSource;
-    const xianyuEvidence=mergeXianyuCostEvidence(prior,xc,{xianyuFreshHours});
+    const xianyuEvidence=mergeXianyuCostEvidence(prior,xc,{xianyuFreshHours,currentItem:item});
     const reference=chooseProcurementReference({...item,xianyu:xianyuEvidence,procurementSource},{xianyuFreshHours});
     const averageCNY=reference?.averageCNY??null;
     const ownPrice=item.ownPrice;
+    const decision=pricingDecision({...item,ownPrice,yahoo:yc,rakuma:rc,mercari:mc});
     const yahooCompetitors=(yc.candidates||[]).map(value=>({...value,platform:'yahoo'}));
     const rakumaCompetitors=(rc.candidates||[]).map(value=>({...value,platform:'rakuma'}));
-    const competitors=[...yahooCompetitors,...rakumaCompetitors,...(mc.candidates||[]).map(value=>({...value,platform:"mercari"}))].filter(value=>Number.isFinite(Number(value.price))).sort((a,b)=>a.price-b.price);
-    const verifiedLowest=competitors[0]||null;
-    const rakumaCovered=['ok','incomplete','cached'].includes(rc.status);
-    const decision=pricingDecision({ownPrice,yahoo:yc,rakuma:rc,mercari:mc});
+    const competitors=[...yahooCompetitors,...rakumaCompetitors,...(mc.candidates||[]).map(value=>({...value,platform:"mercari"}))].filter(value=>requiredPricingPlatforms(item).includes(value.platform)&&Number.isFinite(Number(value.price))).sort((a,b)=>a.price-b.price);
+    const verifiedLowest=decision.lowest;
     const comparisonIncomplete=!decision.complete;
-    const combinedMarket=marketPriceDecision(ownPrice,competitors,settings,{plausibleCompetitors:[yc.raiseGuardMinPrice,rc.plausibleMinPrice,mc.plausibleMinPrice].filter(Number.isFinite)});
+    const combinedMarket=marketPriceDecision(ownPrice,competitors,settings,{plausibleCompetitors:requiredPricingPlatforms(item).flatMap(platform=>{const source={yahoo:yc,rakuma:rc,mercari:mc}[platform];return [source.raiseGuardMinPrice,source.plausibleMinPrice]}).filter(Number.isFinite)});
     const lowestPrice=verifiedLowest&&verifiedLowest.price<ownPrice?verifiedLowest.price:ownPrice;
-    const lowestUrl=verifiedLowest&&verifiedLowest.price<ownPrice?verifiedLowest.url:(yc.lowestUrl||prior.lowestUrl||item.cachedYahoo?.lowestUrl||item.url||'');
+    const lowestUrl=verifiedLowest&&verifiedLowest.price<ownPrice?verifiedLowest.url:(item.url||'');
     // Always recalculate against the freshly read own price. A manual price
     // change must not replay yesterday's cached recommendation.
     const recommendedPrice=decision.recommendedPrice;
@@ -363,12 +366,12 @@ for(const context of contexts){
     const manual=manualCostFor(manualCosts,{...item,accountId:context.account.id},relistAliases,context.activeItems);
     const yahooSource=['ok','incomplete'].includes(yc.status)?'live':yc.status==='cached'?'cached':Number.isFinite(prior.lowestPrice)?'cached':'own_baseline';
     const costSource=Number.isFinite(manual?.purchaseCNY)?'manual':reference?.referenceProvider==='public_cn'?'public_cn':xc.status==='ok'&&Number.isFinite(xc.averageCNY)?'live':Number.isFinite(averageCNY)?'cached':'missing';
-    const confidence=yc.status==='ok'&&rakumaCovered&&!comparisonIncomplete&&(!needsXianyu||xc.status==='ok'||Number.isFinite(manual?.purchaseCNY))?'高':(yahooSource==='cached'||rc.status==='cached'||costSource==='cached')?'参考缓存':'需人工';
+    const confidence=!comparisonIncomplete&&(!needsXianyu||xc.status==='ok'||Number.isFinite(manual?.purchaseCNY))?'高':(yahooSource==='cached'||rc.status==='cached'||costSource==='cached')?'参考缓存':'需人工';
     const priceSignal=recommendedPrice>ownPrice?'raise':recommendedPrice<ownPrice?'lower':'hold';
     const base={...item,accountId:context.account.id,accountName:context.account.name,ownUrl:item.url,lowestPrice,lowestUrl,recommendedPrice,priceSignal,difference:ownPrice-lowestPrice,
-      marketMedianPrice:combinedMarket.marketMedianPrice??yc.marketMedianPrice??null,marketSampleCount:combinedMarket.marketPrices.length||yc.marketSampleCount||0,
-      marketMinPrice:combinedMarket.marketMinPrice??yc.marketMinPrice??null,marketMaxPrice:combinedMarket.marketMaxPrice??yc.marketMaxPrice??null,
-      marketSourcePlatform:verifiedLowest?.platform||'yahoo',comparisonIncomplete,singleMarketSample:combinedMarket.singleVerified,
+      marketMedianPrice:combinedMarket.marketMedianPrice??null,marketSampleCount:combinedMarket.marketPrices.length,
+      marketMinPrice:combinedMarket.marketMinPrice??null,marketMaxPrice:combinedMarket.marketMaxPrice??null,
+      marketSourcePlatform:verifiedLowest?.platform||requiredPricingPlatforms(item)[0]||null,comparisonIncomplete,singleMarketSample:combinedMarket.singleVerified,
       averageCNY,confidence,yahooSource,costSource,needsXianyu,needsManualPurchase:needsXianyu&&!Number.isFinite(averageCNY)&&!Number.isFinite(manual?.purchaseCNY),
       yahoo:yc,rakuma:rc,mercari:mc,xianyu:xianyuEvidence,procurementSource,
       referenceProvider:reference?.referenceProvider||null,referenceSourceLabel:reference?.sourceLabel||null,referenceCheckedAt:reference?.checkedAt||null,
@@ -377,7 +380,7 @@ for(const context of contexts){
     base.staleListingSuggested=base.listingAge.eligible;
     const calculated=calculateManualFields(base,manual,settings);
     if(combinedMarket.underpriced&&recommendedPrice>ownPrice)calculated.advice=combinedMarket.singleVerified?'与下一家同款存在提价空间（仅1个核验样本）':'与下一家同款存在提价空间，建议提价';
-    if(comparisonIncomplete)calculated.advice=decision.canRecommend?'已有核验同款低价，可参考降价；其他平台仍在更新':'三平台比价待核验';
+    if(comparisonIncomplete)calculated.advice=decision.canRecommend?'已有核验同款低价，可参考降价；覆盖仍待补齐':pricingScopeLabel(item)+'比价待核验';
     if(priceAuditItemIds.has(item.id))console.log('[比价复查]',JSON.stringify({itemId:item.id,ownPrice,recommendedPrice,canRecommend:decision.canRecommend,complete:decision.complete,platforms:Object.fromEntries([['yahoo',yc],['rakuma',rc],['mercari',mc]].map(([platform,value])=>[platform,{
       status:value.status,checkedAt:value.checkedAt,lastAttemptAt:value.lastAttemptAt,searchCheckedAt:value.searchCheckedAt,
       sourceStatus:value.sourceStatus,cardCount:value.cardCount,searchCardCount:value.searchCardCount,recommendationCardCount:value.recommendationCardCount,
@@ -400,13 +403,13 @@ for(const context of contexts){
     procurementScanned:procurementValues.filter(value=>value.attempted).length,
     procurementVerifiedNew:procurementValues.filter(value=>value.attempted&&value.status==='ok').length,
     procurementStatuses:procurementValues.filter(value=>value.attempted).reduce((counts,value)=>{counts[value.status]=(counts[value.status]||0)+1;return counts},{}),
-    yahoo:rows.length,yahooLive:yahooValues.filter(value=>['ok','incomplete'].includes(value.status)).length,
+    yahoo:rows.filter(item=>requiredPricingPlatforms(item).includes('yahoo')).length,yahooLive:yahooValues.filter(value=>['ok','incomplete'].includes(value.status)).length,
     yahooCached:yahooValues.filter(value=>value.status==='cached').length,
     yahooDeferred:yahooValues.filter(value=>value.status==='deferred_budget'||value.cacheReason==='scan_budget').length,
-    rakuma:rows.length,rakumaLive:rakumaValues.filter(value=>['ok','incomplete'].includes(value.status)).length,
+    rakuma:rows.filter(item=>requiredPricingPlatforms(item).includes('rakuma')).length,rakumaLive:rakumaValues.filter(value=>['ok','incomplete'].includes(value.status)).length,
     rakumaCached:rakumaValues.filter(value=>value.status==='cached').length,
     rakumaDeferred:rakumaValues.filter(value=>value.status==='deferred_limit'||value.cacheReason==='rotation_limit').length,
-    mercari:rows.length,mercariLive:mercariValues.filter(value=>['ok','incomplete'].includes(value.status)).length,mercariCached:mercariValues.filter(value=>value.status==='cached').length,
+    mercari:rows.filter(item=>requiredPricingPlatforms(item).includes('mercari')).length,mercariLive:mercariValues.filter(value=>['ok','incomplete'].includes(value.status)).length,mercariCached:mercariValues.filter(value=>value.status==='cached').length,
     xianyuRequested:xianyuValues.filter(value=>!['not_requested'].includes(String(value.status))).length,
     xianyuScanned:xianyuValues.filter(value=>['ok','manual_review','page_empty','login_required','blocked','detail_inaccessible','error'].includes(value.status)).length,
     xianyuVerifiedNew,
@@ -427,10 +430,11 @@ const {listingHistory,ownedTitleHistory}=mergeOwnedListingHistory({previous,cont
 const result={
   externalSearchAccess:externalSearchAccessSnapshot(),
   merchantMonitors:previous?.merchantMonitors||[],listingHistory,pricingCoverage:pricingCoverage(allItems,accountResults),
+  cycleCoverage:cycleCoverage(allItems,accountResults,{startedAt,finishedAt:checkedAt,previousCoverage:previous?.cycleCoverage}),
   version:6,checkedAt,dataRevision:checkedAt,settings,accounts:accountResults,managedAccounts,portalUsers,appliedSyncIssues:previous?.appliedSyncIssues||{},
   manualCosts,matchCorrections,portalPreferences,dismissedDiscoveries,discoveryReviews,ownedTitleHistory,relistAliases,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode,xianyuAccess:sessionManager.access()},items:allItems,
-  scanMeta:{codeSha:process.env.GITHUB_SHA||null,trigger:process.env.SCAN_TRIGGER||'local',startedAt:new Date(startedAt).toISOString(),durationSeconds:Math.round((Date.now()-startedAt)/1000),
-    budgetMinutes:Number(settings.scanBudgetMinutes)||12,profileConcurrency,yahooConcurrency,rakumaConcurrency,mercariConcurrency,rakumaLimit:Number.isFinite(rakumaLimit)?rakumaLimit:null,mercariLimit:Number.isFinite(mercariLimit)?mercariLimit:null,xianyuLimit}
+  scanMeta:{codeSha:process.env.GITHUB_SHA||null,trigger:process.env.SCAN_TRIGGER||'local',startedAt:new Date(startedAt).toISOString(),durationSeconds:Math.round((Date.now()-startedAt)/1000),publicReadStats,imageCacheStats,
+    comparisonMode:settings.comparisonMode||'cross_platform',comparisonTasks:{yahoo:yahooTasks.length,rakuma:rakumaTasks.length,mercari:mercariTasks.length},budgetMinutes:Number(settings.scanBudgetMinutes)||12,profileConcurrency,yahooConcurrency,rakumaConcurrency,mercariConcurrency,rakumaLimit:Number.isFinite(rakumaLimit)?rakumaLimit:null,mercariLimit:Number.isFinite(mercariLimit)?mercariLimit:null,xianyuLimit}
 };
 const {summary}=await writeOutputs({root,result,previous,password});
 console.log(summary);

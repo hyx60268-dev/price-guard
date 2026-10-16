@@ -1,5 +1,6 @@
 import sharp from 'sharp';
 import { createHash } from 'node:crypto';
+import { createFingerprintLoader } from './image-fingerprint-cache.mjs';
 
 const cache=new Map();
 
@@ -16,7 +17,9 @@ async function download(url,attempts=2){
       const length=Number(response.headers.get('content-length'));
       if(Number.isFinite(length)&&length>12_000_000)return null;
       const buffer=Buffer.from(await response.arrayBuffer());
-      return buffer.length<=12_000_000?buffer:null;
+      const encoding=response.headers.get('content-encoding');
+      if(!encoding&&Number.isFinite(length)&&length>0&&buffer.length!==length)return null;
+      return buffer.length<=12_000_000?{buffer,cacheControl:response.headers.get('cache-control'),cacheAge:response.headers.get('age'),responseDate:response.headers.get('date')}:null;
     }catch{if(attempt===attempts)return null}
     finally{clearTimeout(timeout)}
   }
@@ -36,9 +39,7 @@ async function averageHash(buffer){
   return bitsToHex([...data].map(value=>value>=mean?'1':'0').join(''));
 }
 
-async function makeFingerprints(url){
-  if(!url)return null;
-  const buffer=await download(url);if(!buffer)return null;
+async function calculateFingerprints(buffer,url){
   try{
     const center=await sharp(buffer).resize(256,256,{fit:'cover',position:'centre'}).png().toBuffer();
     const [dHash,aHash,centerHash,stats,metadata,border,grid]=await Promise.all([
@@ -60,13 +61,29 @@ async function makeFingerprints(url){
   }catch{return null}
 }
 
+let persistentLoader=createFingerprintLoader({fetchImage:download,fingerprint:calculateFingerprints});
+let cacheClock=Date.now;
+export function configureImageFingerprintCache({directory,now=Date.now}={}){
+ cache.clear();cacheClock=now;persistentLoader=createFingerprintLoader({directory,fetchImage:download,fingerprint:calculateFingerprints,now});
+ return persistentLoader.stats;
+}
+const makeFingerprints=url=>url?persistentLoader.get(url):null;
+
 export async function imageFingerprints(url){
   if(!url)return null;
+  const prior=cache.get(url);
+  if(prior&&!prior.pending&&!(prior.expiresAt>cacheClock()))cache.delete(url);
   if(!cache.has(url)){
     if(cache.size>500)cache.delete(cache.keys().next().value);
-    cache.set(url,makeFingerprints(url).then(value=>{if(!value)cache.delete(url);return value}));
+    const entry={pending:true,expiresAt:0,promise:null};
+    entry.promise=Promise.resolve().then(()=>makeFingerprints(url)).then(value=>{
+      entry.pending=false;entry.expiresAt=value?.imageCacheExpiresAt||0;
+      if(!(entry.expiresAt>cacheClock())&&cache.get(url)===entry)cache.delete(url);
+      return value;
+    },error=>{if(cache.get(url)===entry)cache.delete(url);throw error});
+    cache.set(url,entry);
   }
-  return cache.get(url);
+  return cache.get(url).promise;
 }
 
 export async function imageHash(url){

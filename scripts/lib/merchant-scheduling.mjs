@@ -6,6 +6,17 @@ export function merchantRetryDelay(result={},now=Date.now()){
  const due=Math.min(...pending.map(p=>Date.parse(p.webImageRetryAt)||now));
  return Math.max(20*60_000,Math.min(24*3600_000,due-(Date.parse(result.checkedAt)||now)));
 }
+// The pricing writer only catches up a missed daily merchant observation.
+// Partial details and image retries must not keep its publication lock occupied
+// for another merchant scan every twenty minutes. Standalone retries retain
+// their existing schedule, and new configurations are always due immediately.
+export function merchantMonitorDue(result={}, {configDigest,now=Date.now(),dailyCatchup=false}={}){
+ if(result.mode!=='merchant_monitor'||result.configDigest!==configDigest)return true;
+ const checked=Date.parse(result.checkedAt||'');
+ if(!Number.isFinite(checked)||checked>now)return true;
+ const delay=dailyCatchup?24*3600_000:merchantRetryDelay(result,now);
+ return now-checked>=delay;
+}
 export function merchantBudget({deadline,now=Date.now(),remainingMerchants,remainingDetails}){
  const count=Math.max(1,remainingMerchants);
  return {deadline:Math.min(deadline,now+Math.max(0,deadline-now)/count),detailLimit:Math.max(0,Math.ceil(remainingDetails/count))};
