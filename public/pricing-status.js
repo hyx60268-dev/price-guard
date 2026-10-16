@@ -1,9 +1,10 @@
 import { pricingDecision, PRICING_RULES_VERSION, PRICING_PLATFORMS, PLATFORM_LABELS } from './pricing-policy.js';
 
-const labels={queued:'排队扫描',stale:'数据过期',error:'采集失败',insufficient:'信息不足',ready:'核验完成'};
+const labels={excluded:'不参与本轮比价',queued:'排队扫描',stale:'数据过期',error:'采集失败',insufficient:'信息不足',ready:'核验完成'};
 export function pricingStatus(item={},options={}){
  const decision=pricingDecision(item,options),now=options.now??Date.now();
  const platforms=PRICING_PLATFORMS.map(platform=>{
+  if(!decision.requiredPlatforms.includes(platform))return {platform,name:PLATFORM_LABELS[platform],state:'excluded',label:labels.excluded,reason:'当前仅比较商品所在平台'};
   const source=item[platform]||{},stamp=Date.parse(source.checkedAt||'');
   let state='ready',reason='已取得有效比价结果';
   if(!decision.coverage[platform]){
@@ -24,7 +25,7 @@ export function pricingStatus(item={},options={}){
   return {platform,name:PLATFORM_LABELS[platform],state,label:labels[state],reason};
  });
  // Show the actionable failure first; details retain every platform's reason.
- const state=['error','insufficient','stale','queued'].find(value=>platforms.some(p=>p.state===value))||'ready';
+ const state=['error','insufficient','stale','queued'].find(value=>platforms.some(p=>p.state===value))||(decision.complete?'ready':'queued');
  return {state,label:labels[state],platforms,complete:decision.complete,decision};
 }
 
@@ -32,8 +33,10 @@ export function pricingSummary(items=[],options={}){
  const counts={ready:0,queued:0,stale:0,error:0,insufficient:0};let actionable=0,withEvidence=0;
  for(const item of items){const status=pricingStatus(item,options);counts[status.state]++;if(status.decision.lowest||Object.values(status.decision.coverage).some(Boolean))withEvidence++;if(status.decision.canRecommend&&status.decision.priceSignal!=='hold')actionable++;}
  const total=items.length,remaining=total-counts.ready;
- return {total,...counts,remaining,actionable,withEvidence,
+ const modes=new Set(items.map(item=>item.comparisonMode==='same_platform'?'same_platform':'cross_platform'));
+ const scopeLabel=modes.size>1?'所需平台':modes.has('same_platform')?'同平台':'三平台';
+ return {total,scopeLabel,...counts,remaining,actionable,withEvidence,
   label:!actionable&&remaining?(counts.queued+counts.stale?'比价更新中':'比价未完成'):'建议调价',
   value:!actionable&&remaining?'—':actionable,
-  note:remaining?`三平台全部完成 ${counts.ready} 件，未全部完成 ${remaining} 件；可用调价建议 ${actionable} 条（含部分平台已核验的降价参考），两者不是同一项统计。`:`已核验 ${counts.ready}/${total} 件${total&&!actionable?'，暂无需要调价的商品。':'。'}`};
+  note:remaining?`${scopeLabel}全部完成 ${counts.ready} 件，未全部完成 ${remaining} 件；可用调价建议 ${actionable} 条（含部分平台已核验的降价参考），两者不是同一项统计。`:`已核验 ${counts.ready}/${total} 件${total&&!actionable?'，暂无需要调价的商品。':'。'}`};
 }

@@ -1,4 +1,5 @@
-import { procurementTarget,verifiedPurchasableProcurementOffers } from './procurement-reference.mjs';
+import { procurementTarget,verifiedPurchasableProcurementOffers,verifiedXianyuReference } from './procurement-reference.mjs';
+import { currentNativeSupplierQuotes,ownedNativeSupplierSellerKeys } from './native-supplier-quotes.mjs';
 import { buildOwnedOffers,excludeOwnedOffers } from '../../public/owned-offers.js';
 import { pricingDecision } from '../../public/pricing-policy.js';
 import fs from 'node:fs/promises';
@@ -8,6 +9,7 @@ import { encryptFile } from './crypto.mjs';
 import { makeWorkbook } from './excel.mjs';
 import { cloudCostStatus } from './cloud-cost-status.mjs';
 import { pricingCoverage } from './pricing-coverage.mjs';
+import { scopeCycleCoverage } from './cycle-coverage.mjs';
 import { FRONTEND_VERSION } from '../../public/build-version.js';
 
 function safeUsername(value=''){return String(value).trim().toLowerCase().replace(/[^a-z0-9_-]/g,'').slice(0,48)}
@@ -36,6 +38,16 @@ function compactComparison(value={}){
   return output;
 }
 
+function compactXianyu(value={}){
+ const output=compactComparison(value);
+ for(const key of ['verification','costVerification','target','selectedQuote','benchmarkMedianCNY','benchmarkCheckedAt'])if(value[key]!==undefined)output[key]=value[key];
+ const fields=['id','url','canonicalUrl','sellerKey','price','priceSource','detailTitle','detailDescription','purchaseTermsText','detailImages','target','costVerification',
+  'unitCNY','shippingCNY','landedCNY','currency','currencyEvidence','quantity','selectedVariant','checkedAt','identity','primaryImageScore',
+  'inStock','availabilityEvidence','shippingKnown','shippingScope','shippingEvidence','isOwn'];
+ output.samples=(value.samples||[]).slice(0,5).map(sample=>Object.fromEntries(fields.filter(key=>sample[key]!==undefined).map(key=>[key,sample[key]])));
+ return output;
+}
+
 function currentPurchasableOffers(item,matchCorrections={},now=Date.now()){
   if(!item.procurementSource||!Object.hasOwn(item.procurementSource,'purchasableOffers'))return {...item,procurementTarget:undefined};
   const purchasableOffers=verifiedPurchasableProcurementOffers(item,{now,matchCorrections});
@@ -44,13 +56,21 @@ function currentPurchasableOffers(item,matchCorrections={},now=Date.now()){
 }
 export function compactDashboardResult(result={}, {now=Date.now()}={}){
   const accounts=(result.accounts||[]).map(({items,...account})=>account);
+  const ownedSellerKeys=ownedNativeSupplierSellerKeys([...(result.accounts||[]),...(result.managedAccounts||[])],result.items||[]);
   // Full descriptions, condition and catalogue identity must be checked before
   // compaction removes those observations. Never validate against an old target.
   const items=(result.items||[]).map(raw=>{
     const item=currentPurchasableOffers(raw,result.matchCorrections,now),binding=item.procurementTarget;
+    const xianyu=verifiedXianyuReference(item,{now});
+    const xianyuBinding=xianyu?procurementTarget(item):null;
+    const nativeSupplierQuotes=currentNativeSupplierQuotes(item,{now,matchCorrections:result.matchCorrections,ownedSellerKeys});
+    const nativeBinding=nativeSupplierQuotes[0]?.target;
     return {...item,sourceDetail:undefined,cachedYahoo:undefined,
-      ...(binding?{description:binding.description,condition:binding.condition}:{}),
-      yahoo:compactComparison(item.yahoo),rakuma:compactComparison(item.rakuma),mercari:compactComparison(item.mercari),xianyu:compactComparison(item.xianyu)};
+      ...(Object.hasOwn(item,'nativeSupplierQuotes')?{nativeSupplierQuotes}:{}),
+      ...(binding||xianyuBinding||nativeBinding?{description:(binding||xianyuBinding||nativeBinding).description,condition:(binding||xianyuBinding||nativeBinding).condition}:{}),
+      ...(item.referenceProvider==='xianyu'&&!xianyu?{averageCNY:null,referenceProvider:null,referenceCheckedAt:null}:{}),
+      yahoo:compactComparison(item.yahoo),rakuma:compactComparison(item.rakuma),mercari:compactComparison(item.mercari),
+      xianyu:compactXianyu(xianyu||{...item.xianyu,averageCNY:null,selectedQuote:null})};
   });
   return {...result,listingHistory:undefined,appliedSyncIssues:undefined,accounts,items};
 }
@@ -99,7 +119,7 @@ export function scopeResultForPortalUser(result,user){
   const managedAccounts=(result.managedAccounts||[]).filter(account=>allowed.has(account.id));
   const notificationEmail=safeEmail(result.portalPreferences?.[user.username]?.notificationEmail||user.notificationEmail);
   const matchCorrections=Object.fromEntries(Object.entries(result.matchCorrections||{}).filter(([,record])=>allowed.has(record.accountId)));
-  return {...result,pricingCoverage:pricingCoverage(items,accounts),matchCorrections,portalUsers:undefined,portalPreferences:undefined,portalUser:{username:user.username,displayName:user.displayName,role:'member',notificationEmail},accounts,items,manualCosts,managedAccounts,
+  return {...result,pricingCoverage:pricingCoverage(items,accounts),cycleCoverage:scopeCycleCoverage(result.cycleCoverage,user.accountIds),matchCorrections,portalUsers:undefined,portalPreferences:undefined,portalUser:{username:user.username,displayName:user.displayName,role:'member',notificationEmail},accounts,items,manualCosts,managedAccounts,
     merchantMonitors:undefined,listingHistory:undefined,appliedSyncIssues:undefined,dismissedDiscoveries:{},discoveryReviews:{},
     relistAliases:Object.fromEntries(Object.entries(result.relistAliases||{}).filter(([key])=>allowed.has(key.slice(0,key.lastIndexOf(':'))))),
     ownedTitleHistory:items.map(item=>item.title).filter(Boolean)};
@@ -132,7 +152,7 @@ export function dashboardSummary(result,changeSummary){
     afterLow:items.filter(item=>item.afterUnder1500).length,
     manual:items.filter(item=>item.confidence!=='高').length,
     needsManualPurchase:items.filter(item=>item.needsManualPurchase).length,scanTotals,
-    cloudCost:cloudCostStatus(result),pricingCoverage:pricingCoverage(items,result.accounts||[]),
+    cloudCost:cloudCostStatus(result),pricingCoverage:pricingCoverage(items,result.accounts||[]),cycleCoverage:result.cycleCoverage||null,
     staleListings:items.filter(item=>item.listingAge?.eligible).length,
     matchingCorrections:Object.values(result.matchCorrections||{}).filter(record=>!record.deleted).length,
     xianyuLoginRequired:Boolean(result.login?.xianyuRequired),xianyuAuthExpired:Boolean(result.login?.xianyuAuthExpired),xianyuMode:result.login?.xianyuMode||'unknown',
@@ -143,8 +163,10 @@ export function dashboardSummary(result,changeSummary){
 export async function writeOutputs({root,result,previous,password}){
   await Promise.all(['data','public/data','state'].map(directory=>fs.mkdir(path.join(root,directory),{recursive:true})));
   const ownership=buildOwnedOffers([...(result.accounts||[]),...(result.managedAccounts||[])],result.items||[]);
+  const nativeOwnedSellers=ownedNativeSupplierSellerKeys([...(result.accounts||[]),...(result.managedAccounts||[])],result.items||[]);
   result.items=(result.items||[]).map(raw=>{
-    const item=currentPurchasableOffers(raw,result.matchCorrections);
+    const native=Object.hasOwn(raw,'nativeSupplierQuotes')?{...raw,nativeSupplierQuotes:currentNativeSupplierQuotes(raw,{matchCorrections:result.matchCorrections,ownedSellerKeys:nativeOwnedSellers})}:raw;
+    const item=currentPurchasableOffers(native,result.matchCorrections);
     const clean=excludeOwnedOffers(item,ownership);if(clean.yahoo===item.yahoo&&clean.rakuma===item.rakuma&&clean.mercari===item.mercari)return item;
     const decision=pricingDecision(clean);return {...clean,...decision,lowestPrice:decision.lowest?.price??clean.ownPrice,lowestUrl:decision.lowest?.url||clean.url,
       afterProfitJPY:Number.isFinite(clean.costJPY)?decision.recommendedPrice-clean.costJPY:null,

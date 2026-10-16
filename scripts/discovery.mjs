@@ -182,7 +182,7 @@ async function refreshCachedDiscoveryCosts(prior){
     const opened=await openContext(authState);browser=opened.browser;context=opened.context;page=await context.newPage();
     for(const item of pending){
       try{
-        const xianyu=await xianyuCost(page,{id:item.id,title:item.sourceTitle,description:item.sourceDescription||'',xianyuQuery:item.xianyuQuery,image:item.sourceImages?.[0],images:item.sourceImages||[],yahoo:{ownImages:item.sourceImages||[]}},settings);
+        const xianyu=await xianyuCost(page,{accountId:'discovery',id:item.id,title:item.sourceTitle,description:item.sourceDescription||'',xianyuQuery:item.xianyuQuery,image:item.sourceImages?.[0],images:item.sourceImages||[],yahoo:{ownImages:item.sourceImages||[]}},settings);
         await sessionManager.persist(context,xianyu).catch(()=>console.warn('[闲鱼会话] 更新保存失败，保留原会话'));
         const validated=validDiscoveryXianyu(xianyu);
         Object.assign(item,{xianyu,purchaseCNY:validated.ready?xianyu.averageCNY:null,referenceCNY:xianyu.averageCNY,
@@ -585,7 +585,7 @@ try{
     }
     if(xianyuAuthRequired){Object.assign(item,{status:'needs_xianyu_review',purchaseCNY:null,images:[],confidence:'待核验：本轮闲鱼详情验证受阻',xianyu:{status:'deferred_auth'}});applyDiscoveryProfit(item);continue}
     try{
-      const xianyu=await xianyuCost(xPage,{id:item.id,title:item.sourceTitle,description:item.sourceDescription||'',xianyuQuery:item.xianyuQuery,image:item.sourceImages[0],images:item.sourceImages,yahoo:{ownImages:item.sourceImages}},settings);
+      const xianyu=await xianyuCost(xPage,{accountId:'discovery',id:item.id,title:item.sourceTitle,description:item.sourceDescription||'',xianyuQuery:item.xianyuQuery,image:item.sourceImages[0],images:item.sourceImages,yahoo:{ownImages:item.sourceImages}},settings);
       await sessionManager.persist(context,xianyu).catch(()=>console.warn('[闲鱼会话] 更新保存失败，保留原会话'));
       const validated=validDiscoveryXianyu(xianyu);Object.assign(item,{xianyu,purchaseCNY:validated.ready?xianyu.averageCNY:null,referenceCNY:xianyu.averageCNY,images:validated.images,
         imageSource:validated.imageSource,status:validated.ready?'ready':'needs_xianyu_review',xianyuSearchUrl:xianyu.searchUrl,confidence:validated.ready?'自动核验参考价':xianyuReviewLabel(xianyu.status),costVerification:validated});applyDiscoveryProfit(item);

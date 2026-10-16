@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { XIANYU_VERIFICATION } from '../scripts/lib/xianyu-evidence.mjs';
-const evidence = result => ({...result,verification:XIANYU_VERIFICATION,samples:result.samples.map((sample,index)=>({...sample,id:String(index),priceSource:'target_detail'}))});
+import { xianyuProcurementItem } from './fixtures/xianyu-procurement.mjs';
+const evidence = result => {const item=xianyuProcurementItem(Date.now(),{},result.samples.map(s=>s.price));return {...result,...item.xianyu,samples:item.xianyu.samples.map((sample,index)=>({...sample,independentImages:result.samples[index].independentImages}))};};
 import { canonicalSaleTitle,clusterSellerSales,containsDiscoveryKeyword,discoveryProfit,eligibleDiscoveryCard,groupDiscoveryCandidates,isOwnedDiscoverySource,isWithinDays,mercariDiscoverySearchUrl,mercariSoldEvidence,parseListingTime,rankDiscoveryCandidates,rewriteListing,salesWindowCounts,sameDiscoveryProduct,sameSaleProduct,sellerIdFromProfile,validDiscoveryXianyu,xianyuQueryFor,yahooDiscoverySearchUrl } from '../scripts/lib/discovery.mjs';
 
 test('discovery URLs use the live sold and price filters',()=>{

@@ -21,12 +21,12 @@ test('three unidentified sellers or one seller with three listings never constit
   assert.equal(verifiedCostEvidence([sample('1','a'),sample('2','a'),sample('3','a')]).ready,false);
   assert.equal(verifiedCostEvidence([sample('1','a'),sample('1','b')]).ready,false);
 });
-test('automatic cost uses target-detail prices from different identified sellers',()=>{
+test('detail-price benchmark is not a purchasable cost without supplier evidence',()=>{
   const samples=[sample('1','a',100),sample('2','b',102)];
   assert.equal(verifiedCostEvidence(samples).median,101);
   assert.equal(verifiedCostEvidence(samples).ready,true);
   assert.equal(verifiedCostEvidence([{...samples[0],priceSource:'search_card'},samples[1]]).ready,false);
-  assert.equal(verifiedXianyuCache({averageCNY:101,xianyu:{verification:XIANYU_VERIFICATION,samples}}).averageCNY,101);
+  assert.equal(verifiedXianyuCache({averageCNY:101,xianyu:{verification:XIANYU_VERIFICATION,samples}}),null);
   assert.equal(verifiedCostEvidence([sample('1','a',50),sample('2','b',200)]).ready,false);
 });
 test('null blank and zero costs cannot produce profit or pass discovery gates',()=>{

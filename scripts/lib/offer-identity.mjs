@@ -10,7 +10,9 @@ export function offerIdentityGuard({ ownTitle='', ownDescription='', candidateTi
   const own=specText(`${ownTitle}\n${ownDescription}`),candidate=specText(`${candidateTitle}\n${candidateDescription}`);
   if(hasExplicitDefect(candidateTitle,candidateDescription))return {accepted:false,reason:'defect'};
   if(!saleUnitEquivalent(own,candidate))return {accepted:false,reason:'sale_unit_mismatch'};
-  if(descriptionColorMismatch(own,candidate))return {accepted:false,reason:'description_color_mismatch'};
+  // A matching heading cannot conceal a contradictory selected colour in the
+  // sale description (for example white title, red-only actual contents).
+  if(descriptionColorMismatch(own,candidate)||descriptionColorMismatch(own,specText(candidateDescription)))return {accepted:false,reason:'description_color_mismatch'};
   if(hasExplicitVariantMismatch(ownTitle,candidateTitle)||hasExplicitVariantMismatch(candidateTitle,ownTitle))return {accepted:false,reason:'explicit_variant_mismatch'};
   if(!conditionCompatible(own,candidate))return {accepted:false,reason:'condition_or_packaging_mismatch'};
   const family=productFamily(own,ownCategory),otherFamily=productFamily(candidate,candidateCategory);

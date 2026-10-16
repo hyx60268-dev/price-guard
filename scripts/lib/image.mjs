@@ -1,7 +1,16 @@
 import sharp from 'sharp';
 import { createHash } from 'node:crypto';
+import { createFingerprintLoader } from './image-fingerprint-cache.mjs';
 
-const cache=new Map();
+const cache=new Map(),diagnostics=new Map();
+function recordDiagnostic(url,value){
+  if(!diagnostics.has(url)&&diagnostics.size>=500)diagnostics.delete(diagnostics.keys().next().value);
+  diagnostics.set(url,{...value,checkedAt:new Date().toISOString()});
+}
+// Only bounded, non-sensitive metadata; never response bodies, error text or arbitrary headers.
+export function imageFingerprintDiagnostic(url){
+  const value=diagnostics.get(url);return value?{...value}:null;
+}
 
 function bitsToHex(bits){
   return BigInt(`0b${bits}`).toString(16).padStart(16,'0');
@@ -9,16 +18,33 @@ function bitsToHex(bits){
 
 async function download(url,attempts=2){
   for(let attempt=1;attempt<=attempts;attempt++){
-    const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),12000);
+    const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),12000),start=performance.now();
+    let httpStatus=null;
+    const record=(reason,extra={})=>recordDiagnostic(url,{stage:'download',reason,attempt,httpStatus,elapsedMs:Math.round(performance.now()-start),...extra});
     try{
       const response=await fetch(url,{headers:{'user-agent':'Mozilla/5.0','accept':'image/avif,image/webp,image/*,*/*;q=0.8'},signal:controller.signal});
-      if(!response.ok){if(attempt<attempts)continue;return null}
+      httpStatus=response.status;
+      if(!response.ok){
+        const retry=response.headers.get('retry-after');
+        const date=Date.parse(retry||'');
+        const retryAfter=retry&&/^\d{1,10}$/.test(retry)?retry:Number.isFinite(date)?new Date(date).toUTCString():null;
+        record('http_error',{retryAfter});
+        // Authentication/access/rate-limit responses are not transient image retries.
+        if([401,403,429].includes(response.status)||attempt===attempts)return null;
+        continue;
+      }
       const length=Number(response.headers.get('content-length'));
-      if(Number.isFinite(length)&&length>12_000_000)return null;
+      if(Number.isFinite(length)&&length>12_000_000){record('body_too_large',{declaredBytes:length});return null}
       const buffer=Buffer.from(await response.arrayBuffer());
-      return buffer.length<=12_000_000?buffer:null;
-    }catch{if(attempt===attempts)return null}
-    finally{clearTimeout(timeout)}
+      const encoding=response.headers.get('content-encoding');
+      if(!encoding&&Number.isFinite(length)&&length>0&&buffer.length!==length){record('body_length_mismatch',{declaredBytes:length,receivedBytes:buffer.length});return null}
+      if(buffer.length>12_000_000){record('body_too_large',{receivedBytes:buffer.length});return null}
+      record('body_received',{receivedBytes:buffer.length});
+      return {buffer,cacheControl:response.headers.get('cache-control'),cacheAge:response.headers.get('age'),responseDate:response.headers.get('date')};
+    }catch(error){
+      record(controller.signal.aborted||['AbortError','TimeoutError'].includes(error?.name)?'timeout':'network_error');
+      if(attempt===attempts)return null;
+    }finally{clearTimeout(timeout)}
   }
   return null;
 }
@@ -36,9 +62,7 @@ async function averageHash(buffer){
   return bitsToHex([...data].map(value=>value>=mean?'1':'0').join(''));
 }
 
-async function makeFingerprints(url){
-  if(!url)return null;
-  const buffer=await download(url);if(!buffer)return null;
+async function calculateFingerprints(buffer,url){
   try{
     const center=await sharp(buffer).resize(256,256,{fit:'cover',position:'centre'}).png().toBuffer();
     const [dHash,aHash,centerHash,stats,metadata,border,grid]=await Promise.all([
@@ -57,16 +81,32 @@ async function makeFingerprints(url){
     const backgroundSpread=squares.map((value,index)=>Math.round(Math.sqrt(Math.max(0,value/Math.max(1,count)-(sums[index]/Math.max(1,count))**2))));
     const aspectRatio=metadata.width&&metadata.height?metadata.width/metadata.height:null;
     return {dHash,aHash,centerHash,color,background,backgroundSpread,aspectRatio,colorGrid:[...grid],url,contentSha256:createHash('sha256').update(buffer).digest('hex')};
-  }catch{return null}
+  }catch{recordDiagnostic(url,{...imageFingerprintDiagnostic(url),stage:'fingerprint',reason:'decode_error'});return null}
 }
+
+let persistentLoader=createFingerprintLoader({fetchImage:download,fingerprint:calculateFingerprints});
+let cacheClock=Date.now;
+export function configureImageFingerprintCache({directory,now=Date.now}={}){
+ cache.clear();diagnostics.clear();cacheClock=now;persistentLoader=createFingerprintLoader({directory,fetchImage:download,fingerprint:calculateFingerprints,now});
+ return persistentLoader.stats;
+}
+const makeFingerprints=url=>url?persistentLoader.get(url):null;
 
 export async function imageFingerprints(url){
   if(!url)return null;
+  const prior=cache.get(url);
+  if(prior&&!prior.pending&&!(prior.expiresAt>cacheClock()))cache.delete(url);
   if(!cache.has(url)){
     if(cache.size>500)cache.delete(cache.keys().next().value);
-    cache.set(url,makeFingerprints(url).then(value=>{if(!value)cache.delete(url);return value}));
+    const entry={pending:true,expiresAt:0,promise:null};
+    entry.promise=Promise.resolve().then(()=>makeFingerprints(url)).then(value=>{
+      entry.pending=false;entry.expiresAt=value?.imageCacheExpiresAt||0;
+      if(!(entry.expiresAt>cacheClock())&&cache.get(url)===entry)cache.delete(url);
+      return value;
+    },error=>{if(cache.get(url)===entry)cache.delete(url);throw error});
+    cache.set(url,entry);
   }
-  return cache.get(url);
+  return cache.get(url).promise;
 }
 
 export async function imageHash(url){

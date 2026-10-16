@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 import { offerIdentityGuard } from './offer-identity.mjs';
 import { distinctiveTokens,hasExplicitDefect,hasVariantMismatch,isLikelyVariantOffer,isRejected,productFamily,semanticQuantity,titleScore } from './rules.mjs';
-import { positivePrice,verifiedCostEvidence,XIANYU_VERIFICATION } from './xianyu-evidence.mjs';
+import { positivePrice,XIANYU_VERIFICATION } from './xianyu-evidence.mjs';
+import { verifiedPurchasableXianyuEvidence } from './xianyu-procurement-evidence.mjs';
 
 const listingNoise=/(?:中国限定|海外限定|日本未発売|日本非売品|限定|正規品|公式|新品(?:、未使用)?|未使用|未開封|即日発送|当日発送|翌日発送|国内発送|即納|スピード発送|匿名配送|送料無料|送料込み|即購入(?:可|可能|ok)?|希少|レア|現品限り|ラスト\s*1点|残り\s*1点|在庫あり|在庫複数|複数在庫|早い者勝ち|お?値下げ不可|\d+月\d+日(?:まで|以降)?|\d+\/\d+(?:まで|以降)?|発送予定)/gi;
 const rejectSale=/(?:様専用|専用出品|リクエスト|まとめ商品|オーダー|確認用|取り置き|ばら売り|バラ売り|訳あり|ジャンク|破損|欠品|箱潰れ)/i;
@@ -184,8 +185,9 @@ export function validDiscoveryXianyu(result={}){
   const images=(richest?.images||[]).slice(0,8);
   const prices=samples.map(sample=>Number(sample.price)).sort((a,b)=>a-b);
   const spread=prices.length>=2?(prices.at(-1)-prices[0])/Math.max(1,prices[Math.floor(prices.length/2)]):Infinity;
-  const evidence=verifiedCostEvidence(samples);
-  return {ready:result.verification===XIANYU_VERIFICATION&&result.status==='ok'&&evidence.ready&&spread<=.30&&positivePrice(result.averageCNY)!==null&&images.length>=3,
+  const evidence=verifiedPurchasableXianyuEvidence(samples,{target:result.target});
+  return {ready:result.verification===XIANYU_VERIFICATION&&result.status==='ok'&&evidence.ready&&spread<=.30&&result.averageCNY===evidence.referenceCNY&&
+    result.checkedAt===evidence.selectedQuote?.checkedAt&&JSON.stringify(result.selectedQuote)===JSON.stringify(evidence.selectedQuote)&&images.length>=3,
     images,sample:richest?.sample||null,imageSource:images.length>=3?'xianyu_independent_coherent':null,
     sampleCount:evidence.samples.length,sellerCount:evidence.sellerCount,priceSpread:spread};
 }

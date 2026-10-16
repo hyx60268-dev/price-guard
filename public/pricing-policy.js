@@ -3,10 +3,18 @@ import { isSelfOffer } from './owned-offers.js';
 export const PRICING_RULES_VERSION=22;
 export const PRICING_PLATFORMS=['yahoo','rakuma','mercari'];
 export const PLATFORM_LABELS={yahoo:'Yahoo!フリマ',rakuma:'Rakuma',mercari:'煤炉 Mercari'};
+export function requiredPricingPlatforms(item={}){
+ if(item.comparisonMode!=='same_platform')return [...PRICING_PLATFORMS];
+ const platform={yahoo_fleamarket:'yahoo',yahoo:'yahoo',rakuma:'rakuma',mercari:'mercari'}[item.platform];
+ // Unknown source platforms fail closed; never silently claim full coverage.
+ return platform?[platform]:[];
+}
+export const pricingItemsForPlatform=(items,platform)=>items.filter(item=>requiredPricingPlatforms(item).includes(platform));
+export const pricingScopeLabel=item=>item?.comparisonMode==='same_platform'?'同平台':'三平台';
 const amount=value=>typeof value==='number'&&Number.isFinite(value)&&value>0?value:null;
 export function pricingDecision(item={}, {now=Date.now(),maxAgeHours=6,minimumRaiseGapJPY=1500}={}){
- const own=amount(item.ownPrice),coverage={},candidates=[],guards=[];
- for(const platform of PRICING_PLATFORMS){
+ const own=amount(item.ownPrice),coverage={},candidates=[],guards=[],requiredPlatforms=requiredPricingPlatforms(item);
+ for(const platform of requiredPlatforms){
   const source=item[platform]||{},stamp=Date.parse(source.checkedAt||'');
   const fresh=Number.isFinite(stamp)&&stamp<=now+60000&&now-stamp<=maxAgeHours*3600000;
   coverage[platform]=source.rulesVersion===PRICING_RULES_VERSION&&fresh&&['ok','cached'].includes(source.status)&&(source.evidenceStatus||source.status)!=='incomplete'&&source.cacheReason!=='request_error';
@@ -15,7 +23,7 @@ export function pricingDecision(item={}, {now=Date.now(),maxAgeHours=6,minimumRa
   for(const value of [source.raiseGuardMinPrice,source.plausibleMinPrice])if(amount(value))guards.push(value);
  }
  candidates.sort((a,b)=>a.price-b.price);
- const lowest=candidates[0]||null,complete=PRICING_PLATFORMS.every(p=>coverage[p]);
+ const lowest=candidates[0]||null,complete=requiredPlatforms.length>0&&requiredPlatforms.every(p=>coverage[p]);
  let recommendedPrice=own;
  if(own&&lowest){
   const floor=Math.min(lowest.price,...guards),sellerCount=new Set(candidates.filter(c=>c.sellerId||c.sellerKey).map(c=>c.platform+':'+(c.sellerId||c.sellerKey))).size;
@@ -25,5 +33,5 @@ export function pricingDecision(item={}, {now=Date.now(),maxAgeHours=6,minimumRa
  // A verified cheaper offer is useful even if another platform is unavailable.
  // Only complete coverage can justify raising a price or claiming market coverage.
  const canRecommend=complete||Boolean(own&&lowest&&recommendedPrice<own);
- return {complete,canRecommend,coverage,lowest,recommendedPrice,priceSignal:recommendedPrice>own?'raise':recommendedPrice<own?'lower':'hold',comparisonIncomplete:!complete};
+ return {complete,canRecommend,coverage,requiredPlatforms,lowest,recommendedPrice,priceSignal:recommendedPrice>own?'raise':recommendedPrice<own?'lower':'hold',comparisonIncomplete:!complete};
 }

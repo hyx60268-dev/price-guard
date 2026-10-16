@@ -1,6 +1,6 @@
 import { initializeExternalSearchAccess,externalSearchAccessSnapshot } from './lib/external-images.mjs';
 import { xianyuAccessDiagnostic } from './lib/xianyu-evidence.mjs';
-import { merchantRetryDelay,merchantBudget,merchantXianyuAccess } from './lib/merchant-scheduling.mjs';
+import { merchantMonitorDue,merchantBudget,merchantXianyuAccess } from './lib/merchant-scheduling.mjs';
 import { curateMerchantProducts,prepareMerchantVisuals } from './lib/merchant-curation.mjs';
 import { isMixedBundle,expandMerchantBundles,resolveMercariBundles } from './lib/merchant-bundles.mjs';
 import { allowedMerchantPhotoSource } from '../public/merchant-records.js';
@@ -28,7 +28,8 @@ await initializeExternalSearchAccess({root,password});
 console.log('[公开搜索访问]',JSON.stringify({stage:'merchant',providers:externalSearchAccessSnapshot()}));
 const monitorVersion=22;
 const configDigest=crypto.createHash('sha256').update(JSON.stringify({cfg,monitorVersion})).digest('hex');
-if(process.env.MERCHANT_MONITOR_IF_DUE==='1'&&previous.mode==='merchant_monitor'&&previous.configDigest===configDigest&&Date.now()-Date.parse(previous.checkedAt||'')<merchantRetryDelay(previous)){console.log('商家监控未到下次更新时间，保留已发布记录');process.exit(0)}
+const dailyCatchup=process.env.MERCHANT_MONITOR_DAILY_CATCHUP==='1';
+if((dailyCatchup||process.env.MERCHANT_MONITOR_IF_DUE==='1')&&!merchantMonitorDue(previous,{configDigest,dailyCatchup})){console.log('商家监控未到下次更新时间，保留已发布记录');process.exit(0)}
 const merchants=[...new Map((cfg.merchants||[]).map(raw=>{const m=merchantProfile(raw);return [m.key,m]})).values()];
 let records=previous.mode==='merchant_monitor'?previous.merchantListings||{}:{};
 const errors=[],sources=[],deadline=Date.now()+(Number(cfg.budgetMinutes)||12)*60000;

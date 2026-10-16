@@ -1,7 +1,8 @@
+import { nativeSupplierQuotesMarkup } from './native-supplier-quotes.js';
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const link=value=>/^https:\/\//i.test(value||'')?escape(value):'#';
 const cny=value=>Number.isFinite(value)?'¥'+value.toLocaleString('zh-CN',{maximumFractionDigits:2}):'待核验';
-export function procurementLabel(item={}){return item.referenceProvider==='public_cn'?(item.referenceSourceLabel||'国内公开采购参考'):'闲鱼采购参考';}
+export function procurementLabel(item={}){return item.referenceProvider==='public_cn'?(item.referenceSourceLabel||'国内公开采购参考'):(item.referenceSourceLabel||'闲鱼供应商实价');}
 
 const normalizedText=value=>typeof value==='string'?value.replace(/\s+/g,' ').trim():'';
 function normalizedCondition(value){
@@ -46,6 +47,20 @@ export function visiblePurchasableOffers(item={},now=Date.now()){
 function quoteMarkup(sample,label){
  return `<li>${label?'<strong>'+escape(label)+'</strong>':''}<a target="_blank" rel="noopener" href="${link(sample.url||sample.canonicalUrl)}">${escape(sample.sellerName||sample.source||'采购来源')} · ${escape(sample.detailTitle||sample.title||'已核验商品')}</a>${sample.selectedVariant?`<span>规格：${escape(sample.selectedVariant)}</span>`:''}<span>商品 ${cny(sample.unitCNY)}＋国内运费 ${cny(sample.shippingCNY)}＝${cny(sample.landedCNY??sample.price)}</span>${sample.deliveryTerms?`<span>配送条件：${escape(sample.deliveryTerms)}</span>`:''}${sample.checkedAt?`<span>报价时间：${escape(new Date(sample.checkedAt).toLocaleString('zh-CN'))}</span>`:''}</li>`;
 }
+export function xianyuProcurementMarkup(item={},now=Date.now()){
+ const cost=item.xianyu||{},quote=cost.selectedQuote,age=now-Date.parse(cost.checkedAt||'');
+ const sample=quote&&(cost.samples||[]).find(s=>s.canonicalUrl===quote.canonicalUrl&&s.sellerKey===quote.sellerKey&&s.selectedVariant===quote.selectedVariant&&s.landedCNY===quote.landedCNY&&s.checkedAt===quote.checkedAt);
+ const valid=item.referenceProvider==='xianyu'&&cost.costVerification==='xianyu_purchasable_detail_v1'&&age>=0&&age<86400000&&
+  sample&&currentOfferTarget({...item,procurementTarget:cost.target},sample.target)&&sample.currency==='CNY'&&sample.inStock===true&&sample.shippingKnown===true&&
+  Number.isFinite(sample.unitCNY)&&sample.unitCNY>0&&Number.isFinite(sample.shippingCNY)&&sample.shippingCNY>=0&&sample.landedCNY===sample.unitCNY+sample.shippingCNY&&
+  item.averageCNY===sample.landedCNY&&cost.averageCNY===sample.landedCNY;
+ const benchmarkAge=now-Date.parse(cost.benchmarkCheckedAt||'');
+ const benchmark=cost.verification==='shared_offer_identity_detail_v12'&&benchmarkAge>=0&&benchmarkAge<86400000&&
+  currentOfferTarget({...item,procurementTarget:cost.target},cost.target)&&Number.isFinite(cost.benchmarkMedianCNY)
+  ?`<p class="muted">详情价格中位数 ${cny(cost.benchmarkMedianCNY)}，仅供市场比较，不作为可购买价格，不用于成本和利润。</p>`:'';
+ if(!valid&&!benchmark)return '';
+ return `<section class="procurement-evidence"><h3>闲鱼供应商实价</h3>${valid?'<p>采用下列卖家实际报价，含已核验的国内运费。</p><ul class="samples">'+quoteMarkup({...sample,sellerName:sample.sellerKey,deliveryTerms:'全国包邮；购买数量 '+sample.quantity},'已采用的供应商报价')+'</ul>':'<p>尚无价格、库存、运费和规格证据齐全的可购报价。</p>'}${benchmark}</section>`;
+}
 export function publicProcurementMarkup(item={},options={}){
  const cost=item.procurementSource||{},samples=cost.samples||[],selected=item.referenceProvider==='public_cn';
  const offers=visiblePurchasableOffers(item,options.now??Date.now());
@@ -54,5 +69,5 @@ export function publicProcurementMarkup(item={},options={}){
  const chosen=sample=>Boolean(selected&&cost.status==='ok'&&quote&&sample.canonicalUrl===quote.canonicalUrl&&String(sample.skuId)===String(quote.skuId)&&sample.sellerKey===quote.sellerKey&&Number(sample.landedCNY??sample.price)===Number(quote.landedCNY));
  const verified=samples.length?`<p class="muted">采购参考采用供应商实际可购报价，含国内运费。人工填写的采购价优先使用。</p><ul class="samples">${samples.map(sample=>quoteMarkup(sample,chosen(sample)?'已采用的供应商报价':'')).join('')}</ul>`:'';
  const available=offers.length?`<p>下列同款报价有现货和运费信息。供应商未注明是否原封，尚未计入成本及利润。</p><ul class="samples">${offers.map(sample=>quoteMarkup(sample,'供应商现货报价 · 封装未注明')).join('')}</ul>`:'';
- return `<section class="procurement-evidence"><h3>国内公开采购渠道</h3><p>${escape(status)}${cost.checkedAt?' · '+escape(new Date(cost.checkedAt).toLocaleString('zh-CN')):''}</p>${verified}${available}${!samples.length&&!offers.length?'<ul class="samples"><li>尚未取得符合商品规格的可购买详情报价。</li></ul>':''}</section>`;
+ return xianyuProcurementMarkup(item,options.now??Date.now())+`<section class="procurement-evidence"><h3>国内公开采购渠道</h3><p>${escape(status)}${cost.checkedAt?' · '+escape(new Date(cost.checkedAt).toLocaleString('zh-CN')):''}</p>${verified}${available}${!samples.length&&!offers.length?'<ul class="samples"><li>尚未取得符合商品规格的可购买详情报价。</li></ul>':''}</section>`+nativeSupplierQuotesMarkup(item,options);
 }

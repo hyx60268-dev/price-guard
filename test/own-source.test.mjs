@@ -1,6 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createOwnSourceLoader } from '../scripts/lib/own-source.mjs';
+test('identical public query requests coalesce across workers without sharing mutations or inventing observation times',async()=>{
+ let calls=0,clock=1000;
+ const loader=createOwnSourceLoader({now:()=>clock,fetchYahooResult:async()=>{calls++;await Promise.resolve();return {items:[{id:'external',price:100}]}}});
+ const [a,b]=await Promise.all([loader.yahooResult('same-query'),loader.yahooResult('same-query')]);
+ assert.equal(calls,1);a.items[0].price=1;assert.equal(b.items[0].price,100);
+ clock=9000;const reused=await loader.yahooResult('same-query');assert.equal(reused.observedAt,new Date(1000).toISOString());
+ await loader.yahooResult('different-query');assert.equal(calls,2);assert.deepEqual(loader.stats,{yahooResultRequests:2,yahooResultReuses:2});
+});
+test('failed public queries can retry but never become a successful cached observation',async()=>{
+ let calls=0;const loader=createOwnSourceLoader({fetchYahooResult:async()=>{if(++calls===1)throw Error('HTTP 429');return {items:[]}}});
+ await assert.rejects(loader.yahooResult('query'),/429/);const result=await loader.yahooResult('query');
+ assert.equal(calls,2);assert.ok(result.observedAt);assert.deepEqual(result.items,[]);
+});
 test('independent workers get descriptions even when Yahoo comparison is deferred; concurrent reads share one request',async()=>{
  let calls=0;const loader=createOwnSourceLoader({fetchYahooBundle:async()=>{calls++;await Promise.resolve();return {detail:{description:'新品 1個',images:[{url:'image'}]},recommendations:[]}}});
  const item={id:'z1',platform:'yahoo',title:'title',ownPrice:1000};

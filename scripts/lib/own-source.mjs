@@ -1,10 +1,25 @@
 // Platform workers share public own-listing reads, not competitor decisions or costs.
-export function createOwnSourceLoader({fetchYahooBundle,fetchRakumaItem,now=Date.now}){
- const bundles=new Map(),details=new Map();
+export function createOwnSourceLoader({fetchYahooBundle,fetchYahooResult,fetchRakumaItem,now=Date.now}){
+ const bundles=new Map(),details=new Map(),results=new Map();
+ const stats={yahooResultRequests:0,yahooResultReuses:0};
  const yahooBundle=id=>{
   if(!bundles.has(id))bundles.set(id,fetchYahooBundle(id));
   return bundles.get(id);
  };
+ // Share raw public query observations, never product matching decisions. Two
+ // accounts or variants can issue the same recall query but validate separately.
+ // Keep the original observation time and clone the payload for each consumer.
+ async function yahooResult(url){
+  let request=results.get(url);
+  if(request)stats.yahooResultReuses++;
+  else{
+   stats.yahooResultRequests++;
+   request=Promise.resolve().then(()=>fetchYahooResult(url)).then(result=>({...result,observedAt:new Date(now()).toISOString()}));
+   results.set(url,request);
+   request.catch(()=>{if(results.get(url)===request)results.delete(url)});
+  }
+  return structuredClone(await request);
+ }
  async function hydrate(item,prior={}){
   const key=item.platform+':'+item.id;
   if(!details.has(key))details.set(key,(async()=>{
@@ -19,5 +34,5 @@ export function createOwnSourceLoader({fetchYahooBundle,fetchRakumaItem,now=Date
   const images=(sourceDetail.images||[]).map(image=>typeof image==='string'?image:image?.url).filter(Boolean);
   return {...item,sourceDetail,yahoo:{...(prior.yahoo||{}),ownDescription:sourceDetail.description,ownCategory:sourceDetail.category||prior.yahoo?.ownCategory||'',ownImages:images.length?images:prior.yahoo?.ownImages||[]}};
  }
- return {hydrate,yahooBundle};
+ return {hydrate,yahooBundle,yahooResult,stats};
 }

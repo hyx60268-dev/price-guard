@@ -23,6 +23,14 @@ test('current PC description layout supplies target details, not recommendations
   assert.deepEqual([...state.images],['https://example.com/target.jpg']);
   assert.equal(state.text.includes('错误推荐'),false);
 });
+test('purchase evidence keeps explicit target currency and sold badges outside its description',()=>{
+ const state=read(target.replace('120.50','￥120.50').replace('</div><div class="notLoginContainer','</div><span>已售出</span><div class="notLoginContainer')+recommendations);
+ assert.equal(state.currency,'CNY');assert.equal(state.purchaseTermsText.includes('错误推荐'),false);
+ assert.equal(read(target).currency,null,'an unlabelled number does not prove currency');
+ assert.equal(read(target.replace('120.50','JPY ¥120.50')).currency,null);
+ const sold=read(target.replace('</span></div></div>','</span></div><span>已售出</span></div>'));
+ assert.equal(sold.purchaseTermsText.includes('已售出'),true);assert.equal(sold.text.includes('已售出'),false);
+});
 test('site title and recommendation-only page never provide target evidence',()=>{
   const state=read(recommendations);assert.equal(detailStateFailure(state),'detail_unreadable');
   assert.equal(state.images.length,0);assert.equal(state.price,null);

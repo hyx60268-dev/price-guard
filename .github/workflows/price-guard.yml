@@ -137,12 +137,12 @@ jobs:
       - uses: actions/deploy-pages@v4
         with:
           artifact_name: github-pages-prices-${{ github.run_attempt }}
-      # A due-check here makes daily monitoring survive GitHub replacing a
-      # pending standalone publication with a scheduled pricing run.
+      # Catch up a missed daily observation without appending twenty-minute
+      # partial-detail/image retries to every pricing writer's publication lock.
       - name: 补执行到期的每日商家监控
         run: node scripts/merchant-monitor.mjs
         env:
-          MERCHANT_MONITOR_IF_DUE: '1'
+          MERCHANT_MONITOR_DAILY_CATCHUP: '1'
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
           XIANYU_AUTH_PART_1: ${{ secrets.XIANYU_AUTH_PART_1 }}
           XIANYU_AUTH_PART_2: ${{ secrets.XIANYU_AUTH_PART_2 }}
@@ -178,6 +178,11 @@ jobs:
           artifact_name: github-pages-${{ github.run_attempt }}
       - name: 验收云端闲鱼自动成本（独立于网页发布）
         run: node scripts/check-cloud-cost.mjs
+      - name: 验收全部商品价格成本与连续周期
+        if: ${{ always() && steps.deployment.outcome == 'success' }}
+        run: node scripts/check-cycle-coverage.mjs
+        env:
+          PUBLISHED_STATUS_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data/status.json
       - name: 验收全账号价格覆盖（全量运行）
         if: ${{ always() && inputs.full_audit }}
         run: node scripts/check-price-coverage.mjs
