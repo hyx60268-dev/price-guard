@@ -79,8 +79,15 @@ coverage. Applicable freight and landed cost stay unknown. The source does not
 establish unopened condition. None of these observations supplies automatic cost,
 profit, or full-cycle completion. The page displays the one-unit purchase limit.
 
-The source-layer proof script continues to report automaticCostAccepted separately.
-It can validate publication of an incomplete native quote, but that is not a pass
-of the whole-inventory cost acceptance. It requires current own-detail hydration;
-unit tests and captured-response replays using historical target fixtures do not
+PR CI invokes the proof with `--source-only`: it reads only the independent ALTER
+detail and reports current inventory, publication and automatic cost as not verified.
+It does not read Yahoo, run image matching or load marketplace credentials. A green
+source-layer check does not satisfy the whole-inventory cost acceptance.
+
+The full proof requires current own-detail hydration. Before any source request,
+its controlled caller must restore shared state under the normal writer lock, set
+`PROOF_SHARED_STATE_RESTORED=1`, and supply the existing dashboard key. The proof
+validates the restored encrypted Yahoo access record and initializes the shared
+hold; missing, corrupt or actively held state stops the proof. No PR secrets or
+new permissions are added. Unit tests and historical-target response replays do not
 establish that the current owned listing is still open or unchanged.

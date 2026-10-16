@@ -1,4 +1,7 @@
 import {createHash} from 'node:crypto';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {requireRestoredYahooProofAccess} from './lib/procurement-proof-access.mjs';
 import {readPublicProcurementDetail,alternativeProcurementCost} from './lib/procurement-sources.mjs';
 import {ALTER_NARBERAL_URL} from './lib/alter-procurement.mjs';
 import {verifiedProcurementAuthority} from './lib/procurement-authority.mjs';
@@ -13,8 +16,11 @@ import {imageFingerprints,primaryProductSimilarity,imageFingerprintDiagnostic} f
 import {titleScore} from './lib/rules.mjs';
 import {externalImageQueries} from './lib/external-images.mjs';
 import {verifiedPurchasableProcurementOffers} from './lib/procurement-reference.mjs';
+const sourceOnly=process.argv.includes('--source-only');
+if(process.argv.slice(2).some(argument=>argument!=='--source-only'))throw Error('Unknown ALTER proof mode');
 let passed=true,observedQuote=null;
 try{
+ if(!sourceOnly)await requireRestoredYahooProofAccess({root:path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),password:process.env.DASHBOARD_PASSWORD,restored:process.env.PROOF_SHARED_STATE_RESTORED==='1'});
  for(const [label,title]of [['target','ALTER オーバーロード ナーベラル・ガンマ so-bin Ver. フィギュア'],['wrong_character','ALTER アルベド so-bin Ver. 1/8'],['wrong_scale','ALTER ナーベラル・ガンマ so-bin Ver. 1/7']]){
   const quote=await readPublicProcurementDetail(ALTER_NARBERAL_URL,{item:{title},deadline:Date.now()+45000});
   const authority=quote.status==='quoted'?verifiedProcurementAuthority(quote):null;
@@ -23,6 +29,9 @@ try{
   console.log('[阿尔塔公开采购来源实测]',JSON.stringify({label,checkedAt:new Date().toISOString(),status:quote.status,reason:quote.reason,skuId:quote.skuId,unitCNY:quote.unitCNY,shippingCNY:quote.shippingCNY,deliveryTerms:quote.deliveryTerms,purchaseLimit:quote.purchaseLimit,inStock:quote.inStock,sourceReadAccepted:valid,condition:quote.condition,diagnostic:quote.diagnostic}));
   passed&&=valid;
  }
+ if(sourceOnly){
+  console.log('[阿尔塔独立来源层]',JSON.stringify({sourceReadAccepted:passed,mode:'independent_source_only',currentInventoryVerified:false,automaticCostAccepted:false,inventoryProof:'not_run',nativeQuotePublished:false}));
+ }else{
  // Use the same public profile-card -> hydrate -> runner -> publication path as
  // production. No private inventory, credentials or Xianyu state are loaded.
  const profile=await discoverYahooProfile(null,'https://paypayfleamarket.yahoo.co.jp/user/p6579087',{});
@@ -74,5 +83,6 @@ try{
  // This source-layer proof can pass with an honestly incomplete native quote.
  // Full-cycle cost acceptance remains separate and still counts this as missing.
  passed&&=nativeQuotePublished||purchasableOfferPublishedCandidate||automaticCostAccepted;
+ }
 }catch(error){console.error('[阿尔塔公开实测错误]',String(error?.message||error).replace(/https?:\/\/\S+/g,'[url omitted]').slice(0,200));passed=false}
 if(!passed)process.exitCode=1;
