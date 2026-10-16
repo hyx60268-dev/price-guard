@@ -2,7 +2,7 @@ import { isOwnedOffer } from '../../public/owned-offers.js';
 import { createRequestCooldown,retryAfterDeadline,isRequestDeferred,RequestDeferredError } from './request-cooldown.mjs';
 import { createYahooRequestAccess,loadYahooRequestAccess,yahooRetryAt } from './yahoo-request-access.mjs';
 import { parseShopProfile } from '../../public/shop-profile.js';
-import {planYahooDetailQueue} from './yahoo-detail-queue.mjs';
+import {planYahooDetailQueue,withYahooSchedulingCheckpoint} from './yahoo-detail-queue.mjs';
 import { knownYahooCandidates,yahooTargetShipping } from './yahoo-known-refresh.mjs';
 import { extractYahooBundleComponents } from './merchant-bundles.mjs';
 import { merchantNameFromTitle } from './merchant-names.mjs';
@@ -646,21 +646,21 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
     const card=detailCandidates[index];
     if(knownOnly&&Date.now()>=settings.yahooKnownRefreshDeadline)break;
     detailCheckedCount++;
-    let currentDetailRead=false,currentPrimaryImageScore=null,currentTargetResponse=false;
+    let currentDetailRead=false,currentPrimaryImageScore=null,currentTargetResponse=false,completedRejection=null;
     try{
       const bundle=await getBundle(card.id,settings),detail=bundle.detail;
       currentTargetResponse=detail?.id===card.id&&Boolean(detail?.title?.trim()&&detail?.status)&&Number.isFinite(Number(detail?.price))&&Number(detail.price)>0;
       const evaluation=await evaluateYahooDetail({item,card,bundle,ownDetail,knownOnly,ownSellerId,ownConditionText,ownCategory,
         exactQuery,maxImages,ownFingerprints,ownImageEvidence,settings},{imageFingerprints:fingerprint});
-      currentDetailRead=evaluation.currentDetailRead;currentPrimaryImageScore=evaluation.currentPrimaryImageScore;
+      currentDetailRead=evaluation.currentDetailRead;currentPrimaryImageScore=evaluation.currentPrimaryImageScore;completedRejection=evaluation.rejection;
       if(evaluation.candidate)competitors.push(evaluation.candidate);else if(evaluation.rejection)rejected.push(evaluation.rejection);
-    }catch(error){if(isRequestDeferred(error))throw error;rejected.push({id:card.id,price:card.price,reason:'detail_error',error:String(error)})}
+    }catch(error){if(isRequestDeferred(error))throw withYahooSchedulingCheckpoint(error,detailQueue);rejected.push({id:card.id,price:card.price,reason:'detail_error',error:String(error)})}
     finally{
       const rejection=[...rejected].reverse().find(row=>row.id===card.id);
       const inspectedImageMismatch=['collectible_variant_image_unconfirmed','primary_variant_unconfirmed','physical_image_unconfirmed','lottery_series_unconfirmed'].includes(rejection?.reason)&&Number.isFinite(currentPrimaryImageScore);
       const incompleteRead=/unavailable|error/.test(rejection?.reason||'')||/unconfirmed/.test(rejection?.reason||'')&&!inspectedImageMismatch;
       if(currentDetailRead&&!incompleteRead)detailQueue?.record(card);
-      else if(currentTargetResponse)detailQueue?.recordSchedulingAttempt(card,rejection?.reason);
+      else if(currentTargetResponse&&completedRejection)detailQueue?.recordSchedulingAttempt(card,completedRejection.reason);
     }
   }
 

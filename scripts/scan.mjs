@@ -220,7 +220,7 @@ const yahooWork=(async()=>{
     console.log(`[Yahoo ${taskIndex+1}/${yahooTasks.length}] ${context.account.name} ${item.id} cards=${result.cardCount} matches=${result.competitorCount} lowest=${result.lowestPrice} source=${result.sourceStatus?.search||'unknown'}`);
   }catch(error){
     console.error(`[Yahoo ERROR][${context.account.id}:${item.id}]`,String(error));
-    context.yahooById.set(item.id,isRequestDeferred(error)?deferredYahooComparison(known||prior.yahoo,error):known?.knownRefresh?.mode==='details_only'?{...known,fullSearchError:true}:cachedYahoo(prior,item,'request_error')||{status:'error',error:String(error),rulesVersion:MATCHING_RULES_VERSION,checkedAt:new Date().toISOString(),candidates:[],lowestPrice:item.ownPrice,lowestUrl:item.url,recommendedPrice:item.ownPrice});
+    context.yahooById.set(item.id,isRequestDeferred(error)?deferredYahooComparison(known||prior.yahoo,error,item):known?.knownRefresh?.mode==='details_only'?{...known,fullSearchError:true}:cachedYahoo(prior,item,'request_error')||{status:'error',error:String(error),rulesVersion:MATCHING_RULES_VERSION,checkedAt:new Date().toISOString(),candidates:[],lowestPrice:item.ownPrice,lowestUrl:item.url,recommendedPrice:item.ownPrice});
   }finally{
     const attemptedAt=new Date().toISOString();
     context.yahooById.set(item.id,retainComparisonAttempt({...context.yahooById.get(item.id),lastFullAttemptAt:attemptedAt,knownLastAttemptAt:known?.knownLastAttemptAt||prior.yahoo?.knownLastAttemptAt||null},prior.yahoo,attemptedAt));

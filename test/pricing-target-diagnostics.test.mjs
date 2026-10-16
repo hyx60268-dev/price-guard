@@ -42,12 +42,62 @@ test('CLI reads encrypted restored state and emits only bounded target data, wit
  const temp=await fs.mkdtemp(path.join(os.tmpdir(),'pricing-target-diagnostic-'));
  try{
   for(const folder of ['scripts/lib','public','state'])await fs.mkdir(path.join(temp,folder),{recursive:true});
-  for(const file of ['scripts/pricing-target-diagnostics.mjs','scripts/lib/pricing-target-diagnostics.mjs','scripts/lib/crypto.mjs','public/owned-offers.js'])await fs.copyFile(new URL('../'+file,import.meta.url),path.join(temp,file));
+  for(const file of ['scripts/pricing-target-diagnostics.mjs','scripts/lib/pricing-target-diagnostics.mjs','scripts/lib/crypto.mjs','public/owned-offers.js','public/match-memory.js','public/pricing-policy.js'])await fs.copyFile(new URL('../'+file,import.meta.url),path.join(temp,file));
   await fs.writeFile(path.join(temp,'package.json'),'{"type":"module"}');
   const password='test-only-key',bytes=encrypt(Buffer.from(JSON.stringify({items:[item()]})),password),input=path.join(temp,'state/latest.json.enc');await fs.writeFile(input,bytes);
   const {stdout}=await promisify(execFile)(process.execPath,['scripts/pricing-target-diagnostics.mjs'],{cwd:temp,env:{...process.env,DASHBOARD_PASSWORD:password}});
   assert.match(stdout,/z705310958/);assert.doesNotMatch(stdout,/PRIVATE_|test-only-key/);assert.deepEqual(await fs.readFile(input),bytes);
  }finally{await fs.rm(temp,{recursive:true,force:true});}
+});
+
+function knownOfferItem(){
+ const source=item();return {...source,comparisonMode:'same_platform',recommendedPrice:27999,lowestPrice:28000,
+  yahoo:{...source.yahoo,rulesVersion:22,status:'incomplete',evidenceStatus:'incomplete',cacheReason:null,
+   recommendedPrice:28499,knownRefresh:{mode:'details_only'},candidates:[{id:'fixture28k',price:28000,
+    sellerId:'external-seller',matchMethod:'exact_bidirectional_title_identity',url:'https://paypayfleamarket.yahoo.co.jp/item/fixture28k'}]}};
+}
+test('source fallback, saved top-level decision and recomputation remain explicitly distinct',()=>{
+ const source=knownOfferItem(),state={items:[source]},before=structuredClone(state),result=pricingTargetDiagnostics(state,{now:Date.parse(at)+1000}),row=result.targets[0];
+ assert.equal(result.schemaVersion,2);assert.equal(row.sourceFieldsScope,'yahoo_source_result');assert.equal(row.recommendedPrice,28499);
+ assert.equal(row.decision.savedTopLevel.recommendedPrice,27999);assert.equal(row.decision.recomputedFromSavedState.recommendedPrice,27999);
+ assert.equal(row.decision.recomputedFromSavedState.complete,false);assert.equal(row.decision.recomputedFromSavedState.canRecommend,true);
+ assert.equal(row.decision.browserObserved,false);assert.deepEqual(state,before);assert.equal(row.clocks.checkedAt,at);
+ const old=pricingTargetDiagnostics(state,{now:Date.parse(at)+7*3600_000}).targets[0].decision;
+ assert.equal(old.savedTopLevel.recommendedPrice,27999);assert.equal(old.recomputedFromSavedState.canRecommend,false);assert.equal(old.recomputedFromSavedState.lowest,null);
+});
+test('recomputed decision honors managed ownership and saved corrections without exposing unrelated inventory',()=>{
+ const source=knownOfferItem(),now=Date.parse(at)+1000;
+ const owned=pricingTargetDiagnostics({items:[source],accounts:[{id:'unrelated',platform:'yahoo',sellerId:'external-seller',title:'PRIVATE_ACCOUNT'}]},{now}).targets[0];
+ assert.equal(owned.decision.recomputedFromSavedState.lowest,null);
+ const correction={accountId:source.accountId,itemId:source.id,platform:'yahoo',candidateId:'fixture28k',updatedAt:at};
+ const corrected=pricingTargetDiagnostics({items:[source],matchCorrections:{record:correction}},{now});
+ assert.equal(corrected.targets[0].decision.recomputedFromSavedState.lowest,null);assert.doesNotMatch(JSON.stringify(corrected),/PRIVATE_|purchaseCNY|external-seller/);
+});
+test('saved queue diagnostics are bounded scheduling facts, never offer evidence or renewed clocks',()=>{
+ const source=item();source.yahoo.detailQueue={ownKey:'a'.repeat(64),attempts:[{id:'inspected'}],lastSelection:['inspected'],lastSchedulingSelection:['fixture9'],
+  schedulingAttempts:Array.from({length:10},(_,i)=>({id:'fixture'+i,reason:'physical_product_type_unconfirmed',attemptedAt:at,retryAt:attempt,count:1,description:'PRIVATE_QUEUE',price:98765}))};
+ source.yahoo.detailQueue.schedulingAttempts.push({id:'bad',reason:'PRIVATE_ERROR',attemptedAt:at,retryAt:attempt});
+ const state={items:[source]},before=structuredClone(state),result=pricingTargetDiagnostics(state,{now:Date.parse(at)+1000}),row=result.targets[0],queue=row.detailQueue;
+ assert.equal(queue.identityPresent,true);assert.equal(queue.schedulingAttemptCount,10);assert.equal(queue.invalidSchedulingRows,1);
+ assert.equal(queue.schedulingAttempts.length,8);assert.equal(queue.omittedSchedulingRows,2);assert.equal(row.clocks.checkedAt,at);
+ assert.equal(row.decision.recomputedFromSavedState.lowest,null);assert.deepEqual(state,before);assert.doesNotMatch(JSON.stringify(result),/PRIVATE_|98765|"ownKey"/);
+});
+test('null or malformed saved queue does not break the read-only production diagnostic',()=>{
+ for(const queue of [null,false,'malformed',[],42]){
+  const source=item();source.yahoo.detailQueue=queue;
+  const result=pricingTargetDiagnostics({items:[source]},{now:Date.parse(at)}).targets[0].detailQueue;
+  assert.equal(result.identityPresent,false);assert.equal(result.schedulingAttemptCount,0);assert.deepEqual(result.schedulingAttempts,[]);
+ }
+});
+test('date-parser comments and noncanonical scheduling dates never reach public logs',()=>{
+ const source=item();source.yahoo.detailQueue={schedulingAttempts:[
+  {id:'private1',reason:'physical_product_type_unconfirmed',attemptedAt:'2026-10-16 (PRIVATE_NOTE)',retryAt:attempt},
+  {id:'private2',reason:'sale_description_unavailable',attemptedAt:at,retryAt:'2026-10-17 (PRIVATE_COST_123)'},
+  {id:'private3',reason:'sale_description_unavailable',attemptedAt:'2026-10-16',retryAt:attempt}
+ ]};
+ const result=pricingTargetDiagnostics({items:[source]},{now:Date.parse(at)});
+ assert.equal(result.targets[0].detailQueue.schedulingAttemptCount,0);assert.equal(result.targets[0].detailQueue.invalidSchedulingRows,3);
+ assert.doesNotMatch(JSON.stringify(result),/PRIVATE_NOTE|PRIVATE_COST_123|private[123]/);
 });
 
 test('priority keys only include saved OPEN targets with live inventory and no explicit closed-own evidence',()=>{
