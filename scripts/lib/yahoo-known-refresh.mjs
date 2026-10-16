@@ -1,3 +1,4 @@
+import { isRequestDeferred } from './request-cooldown.mjs';
 import { MATCHING_RULES_VERSION } from './rules.mjs';
 import { isOwnedOffer } from '../../public/owned-offers.js';
 import { rejectedByMemory } from '../../public/match-memory.js';
@@ -82,7 +83,7 @@ export function keepKnownYahooRefresh(prior={},result,attemptedAt=new Date().toI
  }
  // Never relabel an old price as current after a failed read. Preserve the
  // evidence for history, but stop using it for repricing until a real check passes.
- return {...prior,cacheReason:'request_error',lastFullAttemptAt,knownLastAttemptAt:attemptedAt,
+ return {...prior,cacheReason:'request_error',...(result?.deferredReason?{deferredReason:result.deferredReason,retryAt:result.retryAt}:{}),lastFullAttemptAt,knownLastAttemptAt:attemptedAt,
   knownRefresh:{mode:'failed',attemptedAt,reason:result?.knownRefresh?.reason||'no_verified_known_offer',rejected:(result?.rejected||[]).map(row=>({id:row.id,reason:row.reason})).slice(0,2)}};
 }
 
@@ -91,7 +92,7 @@ export async function runKnownYahooRefresh(tasks,{lookup,deadline,limit=Infinity
  await Promise.all(Array.from({length:Math.max(1,Math.min(2,concurrency))},async()=>{
   while(cursor<tasks.length&&admitted<limit&&now()<deadline){
    const task=tasks[cursor++];admitted++;
-   let result;try{result=await lookup(task,{deadline})}catch{result=null}
+   let result;try{result=await lookup(task,{deadline})}catch(error){result=isRequestDeferred(error)?{deferredReason:error.reason,retryAt:error.retryAt,knownRefresh:{reason:error.reason}}:null}
    const attemptedAt=new Date(now()).toISOString(),value=keepKnownYahooRefresh(task.prior.yahoo||{},result,attemptedAt);
    completed.set(task.context.account.id+':'+task.item.id,{task,value});
    log({accountId:task.context.account.id,itemId:task.item.id,attemptedAt,verified:result?.candidates?.length||0,checkedAt:value.checkedAt||null,knownIds:(result?.candidates||[]).map(row=>row.id),reason:value.knownRefresh?.reason||null,offers:(result?.candidates||[]).map(row=>({id:row.id,price:row.price,sellerId:row.sellerId,shippingJPY:row.shippingJPY,shippingSource:row.shippingSource,matchMethod:row.matchMethod})),rejected:(result?.rejected||[]).map(row=>({id:row.id,reason:row.reason})).slice(0,2)});

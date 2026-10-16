@@ -8,7 +8,7 @@ export async function merchantCards(merchant,{settings={},page,maxPages=10,deadl
  const cards=new Map();let complete=false,pages=0;
  if(merchant.platform==='yahoo'){
   for(let n=1;n<=maxPages&&Date.now()<deadline;n++){
-   const result=await fetchYahooResult(`${merchant.url}?page=${n}&sort=openTime&order=desc`,settings);pages++;
+   const result=await fetchYahooResult(`${merchant.url}?page=${n}&sort=openTime&order=desc`,{...settings,yahooRequestDeadline:deadline});pages++;
    if(result.profileName)merchant.name=result.profileName;
    for(const raw of result.items||[])cards.set(raw.id,{id:raw.id,title:raw.title,price:Number(raw.price),status:raw.itemStatus,
     url:`https://paypayfleamarket.yahoo.co.jp/item/${raw.id}`,image:raw.thumbnailImageUrl||'',listedAt:raw.openTime||null,soldAt:raw.itemStatus==='SOLD'?raw.endTime||null:null});
@@ -50,7 +50,7 @@ export async function merchantCards(merchant,{settings={},page,maxPages=10,deadl
 
 export async function merchantDetail(merchant,card,{settings={},page,deadline=Infinity,bundleChild=false,fetchBundle=fetchYahooItemBundle}={}){
  if(merchant.platform==='yahoo'){
-  const bundle=await fetchBundle(card.id,settings),detail=bundle.detail;
+  const bundle=await fetchBundle(card.id,{...settings,yahooRequestDeadline:deadline}),detail=bundle.detail;
   if(String(detail.seller?.id||'')!==merchant.id)throw Error('商品卖家与监控主页不一致');
   const result={...card,sellerName:detail.seller?.name||detail.seller?.nickname||detail.seller?.displayName||'',title:detail.title,description:detail.description||'',price:Number(detail.price),status:detail.status,
    condition:typeof detail.condition==='string'?detail.condition:detail.condition?.name||'',

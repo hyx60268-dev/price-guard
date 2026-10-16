@@ -1,3 +1,4 @@
+import { mergeYahooRequestAccess } from './yahoo-request-access.mjs';
 import { mergeExternalSearchAccess } from './search-access.mjs';
 import { mergeMerchantConfigs } from '../../public/merchant-config.js';
 import { advice,calculateCost } from './rules.mjs';
@@ -111,6 +112,7 @@ export function reconcileDurableState(cache={},published={}){
   return {
     ...base,
     externalSearchAccess:mergeExternalSearchAccess(cache.externalSearchAccess,published.externalSearchAccess),
+    yahooRequestAccess:mergeYahooRequestAccess(cache.yahooRequestAccess,published.yahooRequestAccess),
     merchantMonitors:mergeMerchantConfigs(cache.merchantMonitors||[],published.merchantMonitors||[]),
     manualCosts:mergeManualCosts(cache.manualCosts||{},published.manualCosts||{}),
     dismissedDiscoveries:mergeDismissedDiscoveries(cache.dismissedDiscoveries||{},published.dismissedDiscoveries||{}),

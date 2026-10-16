@@ -1,5 +1,6 @@
 import { isOwnedOffer } from '../../public/owned-offers.js';
-import { createRequestCooldown,retryAfterDeadline } from './request-cooldown.mjs';
+import { createRequestCooldown,retryAfterDeadline,isRequestDeferred,RequestDeferredError } from './request-cooldown.mjs';
+import { createYahooRequestAccess,loadYahooRequestAccess,yahooRetryAt } from './yahoo-request-access.mjs';
 import { parseShopProfile } from '../../public/shop-profile.js';
 import {planYahooDetailQueue} from './yahoo-detail-queue.mjs';
 import { knownYahooCandidates,yahooTargetShipping } from './yahoo-known-refresh.mjs';
@@ -17,6 +18,11 @@ const DEFAULT_REQUEST_INTERVAL_MS=5500;
 const DEFAULT_RATE_LIMIT_COOLDOWN_MS=60000;
 let requestIntervalMs=DEFAULT_REQUEST_INTERVAL_MS,rateLimitCooldownMs=DEFAULT_RATE_LIMIT_COOLDOWN_MS;
 const requestCooldown=createRequestCooldown({intervalMs:()=>requestIntervalMs});
+let requestAccess=createYahooRequestAccess(),requestAccessError=null;
+export async function initializeYahooRequestAccess(options){
+  requestAccess=await loadYahooRequestAccess(options);requestCooldown.deferUntil(yahooRetryAt(requestAccess.snapshot()));return requestAccess.snapshot();
+}
+export const yahooRequestAccessSnapshot=()=>requestAccess.snapshot();
 export function yahooRequestStats(){return requestCooldown.stats()}
 
 function applyYahooSettings(settings={}){
@@ -80,43 +86,57 @@ export function extractCategoryIds(raw={}){
   ].filter(value=>value!==undefined&&value!==null))];
 }
 
-async function fetchHtml(url,attempts=2){
+async function fetchHtml(url,{deadline=Infinity,attempts=2}={}){
   let last;
   for(let attempt=1;attempt<=attempts;attempt++){
-    await requestCooldown.turn();
+    let admission;
+    do{
+      if(requestAccessError)throw requestAccessError;
+      admission=await requestCooldown.turn({deadline});
+      if(requestAccessError)throw requestAccessError;
+    }while(!requestCooldown.isCurrent(admission));
     const controller=new AbortController();
-    const timeout=setTimeout(()=>controller.abort(),15000);
+    const timeout=setTimeout(()=>controller.abort(),Math.max(1,Math.min(15000,deadline-Date.now())));
     try{
+      if(Date.now()>=deadline)throw new RequestDeferredError('request_deadline',requestCooldown.stats().nextRequestAt);
       const response=await fetch(url,{headers:{'user-agent':UA,'accept-language':'ja-JP,ja;q=0.9'},signal:controller.signal,redirect:'follow'});
       if(response.status===429){
         const now=Date.now();
-        const deadline=retryAfterDeadline(response.headers.get('retry-after'),now)
+        const retryAt=retryAfterDeadline(response.headers.get('retry-after'),now)
           ??now+Math.min(120000,rateLimitCooldownMs*attempt);
-        requestCooldown.deferUntil(deadline);
+        requestCooldown.deferUntil(retryAt);
+        try{await requestAccess.block(retryAt)}catch(error){requestAccessError=new RequestDeferredError('yahoo_cooldown_state_unavailable',retryAt);requestAccessError.cause=error;throw requestAccessError}
+        if(retryAt>=deadline)throw new RequestDeferredError('request_cooldown_deadline',retryAt);
         // The shared gate owns the wait, including any later 429 extension.
-        if(attempt<attempts){console.warn(`[Yahoo 限流] ${Math.ceil((deadline-now)/1000)} 秒后重试 (${attempt}/${attempts})`);continue}
+        if(attempt<attempts){console.warn(`[Yahoo 限流] ${Math.ceil((retryAt-now)/1000)} 秒后重试 (${attempt}/${attempts})`);continue}
       }
       if(!response.ok) throw new Error(`HTTP ${response.status}`);
       const html=await response.text();
+      if(Date.now()>=deadline)throw new RequestDeferredError('request_deadline',requestCooldown.stats().nextRequestAt);
       if(html.length<10000) throw new Error(`页面内容异常短 (${html.length} bytes)`);
       return html;
     }catch(error){
+      if(isRequestDeferred(error))throw error;
+      if(Date.now()>=deadline)throw new RequestDeferredError('request_deadline',requestCooldown.stats().nextRequestAt);
       last=error;
-      if(attempt<attempts) await new Promise(resolve=>setTimeout(resolve,1000*attempt));
-    }finally{clearTimeout(timeout)}
+      if(attempt<attempts){
+        if(Date.now()+1000*attempt>=deadline)throw new RequestDeferredError('request_deadline',requestCooldown.stats().nextRequestAt);
+        await new Promise(resolve=>setTimeout(resolve,1000*attempt));
+      }
+    }finally{clearTimeout(timeout);controller.abort()}
   }
   throw new Error(`Yahoo 请求失败：${String(last)}`);
 }
 
 export async function fetchYahooResult(url,settings={}){
   applyYahooSettings(settings);
-  const html=await fetchHtml(url),result=searchResult(extractNextData(html));
+  const html=await fetchHtml(url,{deadline:settings.yahooRequestDeadline}),result=searchResult(extractNextData(html));
   return /^https:\/\/paypayfleamarket\.yahoo\.co\.jp\/user\//.test(url)?{...result,profileName:merchantNameFromTitle('yahoo',html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]||'')}:result;
 }
 
 export async function fetchYahooItemBundle(id,settings={}){
   applyYahooSettings(settings);
-  const html=await fetchHtml(`https://paypayfleamarket.yahoo.co.jp/item/${id}`),nextData=extractNextData(html);
+  const html=await fetchHtml(`https://paypayfleamarket.yahoo.co.jp/item/${id}`,{deadline:settings.yahooRequestDeadline}),nextData=extractNextData(html);
   const detail=extractItemData(nextData);
   return {detail,shipping:yahooTargetShipping(html,detail),recommendations:extractRecommendationCards(nextData),components:extractYahooBundleComponents(html)};
 }
@@ -253,7 +273,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   // 已有有效竞品由快查更新，广搜沿用较低频率；尚无匹配的商品按正常复查资格继续找。
   // 仅推荐页/详情检查不得充当广搜时间，否则未搜索也会反复推迟下一次广搜。
   if(externalOwn){if(item.sourceDetail)ownBundle={detail:item.sourceDetail,recommendations:[]};else itemPageError='ラクマ自有商品详情未读取'}
-  else try{ownBundle=await getBundle(item.id,settings)}catch(error){itemPageError=String(error)}
+  else try{ownBundle=await getBundle(item.id,settings)}catch(error){if(isRequestDeferred(error))throw error;itemPageError=String(error)}
   const broadSearchHours=Math.max(1,Number(settings.yahooBroadSearchHours)||6);
   const lastBroadSearch=Date.parse(item.yahoo?.searchCheckedAt||'');
   const quoteAge=Date.now()-Date.parse(item.yahoo?.checkedAt||'');
@@ -261,7 +281,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   const broadSearchInterval=hasCurrentKnownOffer?broadSearchHours*3_600_000:Math.max(1,Number(settings.yahooFreshMinutes)||20)*60_000;
   const broadSearchDue=!knownOnly&&(settings.forceYahooBroadSearch===true||!Number.isFinite(lastBroadSearch)||lastBroadSearch>Date.now()+60_000||Date.now()-lastBroadSearch>=broadSearchInterval);
   if(!knownOnly&&(externalOwn||broadSearchDue||!ownBundle)){
-    try{search=await getResult(searchUrl,settings);searchObservedAt=search?(search.observedAt||new Date().toISOString()):null}catch(error){searchError=String(error)}
+    try{search=await getResult(searchUrl,settings);searchObservedAt=search?(search.observedAt||new Date().toISOString()):null}catch(error){if(isRequestDeferred(error))throw error;searchError=String(error)}
   }
   if(!search&&!ownBundle)throw new Error(`搜索与商品页均失败：${searchError}; ${itemPageError}`);
   if(knownOnly){
@@ -326,7 +346,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
       recommendationCards=ownBundle.recommendations||[];cards=mergeCards([searchCards,recommendationCards,priorCards]);
       rejected.length=0;preliminary=screenCards(cards);
     }
-    catch(error){itemPageError=String(error)}
+    catch(error){if(isRequestDeferred(error))throw error;itemPageError=String(error)}
   }
   const ownImages=[...(ownDetail?.images||[]).map(image=>typeof image==='string'?image:image?.url).filter(Boolean),ownDetail?.thumbnailImageUrl,...(knownOnly?[]:[...(item.yahoo?.ownImages||[]),item.image])].filter(Boolean);
   const maxImages=Math.max(3,Math.min(10,Number(settings.maxYahooImages)||8));
@@ -507,7 +527,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
         ...(reviewedIdentity?{identityEvidence:reviewedIdentity}:{}),
         ...(knownOnly?{checkedAt:new Date().toISOString(),shippingJPY:0,shippingSource:bundle.shipping.shippingSource,priceSource:'current_target_detail'}:{}),
         matchMethod:reviewedIdentity?'reviewed_sealed_box_identity':sealedBoxEquivalent?'same_sealed_single_box_primary':lotteryEquivalent?'lottery_release_prize_character':assortmentEquivalent?'same_packaging_assortment':exactTitleEquivalent?'exact_bidirectional_title_identity':visualEquivalent?'strong_visual_primary_product':textEquivalent?'detail_type_quantity_equivalent_text':'detail_type_quantity_text_images'});
-    }catch(error){rejected.push({id:card.id,price:card.price,reason:'detail_error',error:String(error)})}
+    }catch(error){if(isRequestDeferred(error))throw error;rejected.push({id:card.id,price:card.price,reason:'detail_error',error:String(error)})}
     finally{
       const rejection=[...rejected].reverse().find(row=>row.id===card.id);
       const inspectedImageMismatch=['collectible_variant_image_unconfirmed','primary_variant_unconfirmed','physical_image_unconfirmed','lottery_series_unconfirmed'].includes(rejection?.reason)&&Number.isFinite(currentPrimaryImageScore);

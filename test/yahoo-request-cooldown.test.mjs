@@ -144,3 +144,122 @@ test('aggregate gate statistics are isolated snapshots and include the active ob
   now=START+6000;wake.resolve();await next;
   assert.deepEqual(gate.stats(),{turns:2,waitMs:6000,cooldownExtensions:1,nextRequestAt:START+11500});
 });
+
+test('a finite run rejects an inadmissible or indefinite hold without waiting or shortening it',async()=>{
+ for(const hold of [START+3600000,Infinity]){
+  const gate=createRequestCooldown({now:()=>START,wait:async()=>{throw Error('must not sleep')}});
+  gate.deferUntil(hold);
+  await assert.rejects(gate.turn({deadline:START+720000}),error=>error.code==='request_deferred'&&error.reason==='request_cooldown_deadline'&&error.retryAt===(hold===Infinity?'indefinite':hold));
+  assert.equal(gate.stats().turns,0);assert.equal(gate.stats().nextRequestAt,hold);
+ }
+});
+
+test('an admitted short hold still waits in full and an expired caller cannot request',async()=>{
+ let clock=START;const sleeps=[];
+ const gate=createRequestCooldown({now:()=>clock,wait:async ms=>{sleeps.push(ms);clock+=ms}});
+ gate.deferUntil(START+60000);await gate.turn({deadline:START+120000});
+ assert.deepEqual(sleeps,[60000]);assert.equal(gate.stats().turns,1);
+ await assert.rejects(gate.turn({deadline:clock}),error=>error.reason==='request_deadline');
+ assert.equal(gate.stats().turns,1);
+});
+
+test('a queued finite caller times out behind a longer-lived caller and never later takes a turn',async t=>{
+ t.mock.timers.enable({apis:['Date','setTimeout'],now:START});
+ const gate=createRequestCooldown();gate.deferUntil(START+10000);
+ const long=gate.turn({deadline:START+120000});
+ const short=assert.rejects(gate.turn({deadline:START+20000}),error=>error.code==='request_deferred');await flush();
+ gate.deferUntil(START+60000);await flush();
+ t.mock.timers.tick(20000);await flush();await short;
+ assert.equal(gate.stats().turns,0);
+ t.mock.timers.tick(40000);await flush();await long;
+ assert.equal(gate.stats().turns,1);assert.equal(gate.stats().nextRequestAt,START+60000);
+});
+
+for(const [label,header,retryAt] of [['one hour','3600',START+3600000],['HTTP date',new Date(START+3600000).toUTCString(),START+3600000],['indefinite','9'.repeat(400),Infinity]])test(`Yahoo ${label} hold immediately defers finite-budget work and remains intact`,async t=>{
+ let requests=0;const {read,stats}=await fixture(t,async()=>{requests++;return limited(header)});
+ await assert.rejects(read('first',{yahooRequestDeadline:START+720000}),error=>error.code==='request_deferred'&&error.reason==='request_cooldown_deadline');
+ await assert.rejects(read('second',{yahooRequestDeadline:START+720000}),error=>error.code==='request_deferred');
+ assert.equal(requests,1);assert.equal(stats().nextRequestAt,retryAt);assert.equal(Date.now(),START);
+});
+
+test('concurrent Yahoo extension wakes admitted finite callers and drains the queue before the run deadline',async t=>{
+ const first=deferred();let requests=0;
+ const {read,advance,stats}=await fixture(t,async()=>{requests++;return first.promise});
+ const settings={yahooRequestDeadline:START+720000};
+ const all=Promise.allSettled([read('first',settings),read('second',settings),read('third',settings)]);await flush();
+ await advance(1000);first.resolve(limited('3600'));await flush();
+ const outcomes=await all;
+ assert.equal(outcomes.length,3);assert.ok(outcomes.every(row=>row.status==='rejected'&&row.reason.code==='request_deferred'));
+ assert.equal(requests,1);assert.equal(Date.now(),START+1000);assert.equal(stats().nextRequestAt,START+3601000);
+});
+
+test('Yahoo retries remain possible when the full hold fits inside the run budget',async t=>{
+ let requests=0;const {read,advance}=await fixture(t,async()=>++requests===1?limited('60'):ok());
+ const pending=read('within-budget',{yahooRequestDeadline:START+720000});await flush();
+ await advance(59999);assert.equal(requests,1);await advance(1);
+ assert.deepEqual(await pending,result);assert.equal(requests,2);
+});
+
+test('a response that runs out of budget never advances evidence and never retries',async t=>{
+ let requests=0;
+ const {read,advance}=await fixture(t,async(_url,{signal})=>{requests++;return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(Error('aborted')),{once:true}))});
+ const pending=assert.rejects(read('timeout',{yahooRequestDeadline:START+500}),error=>error.reason==='request_deadline');await flush();
+ await advance(500);await pending;assert.equal(requests,1);
+});
+
+test('a request queued before checkpoint failure rechecks the failure latch before fetching',async t=>{
+ const fs=(await import('node:fs/promises')).default,os=await import('node:os'),path=await import('node:path');
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'yahoo-checkpoint-failure-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+ const yahoo=await import('../scripts/lib/yahoo.mjs?cooldown-test='+crypto.randomUUID());
+ await yahoo.initializeYahooRequestAccess({root,password:'fixture-only-password'});
+ t.mock.method(fs,'rename',async()=>{throw Error('fixture checkpoint failure')});
+ t.mock.timers.enable({apis:['Date','setTimeout'],now:START});
+ let requests=0;t.mock.method(globalThis,'fetch',async()=>{requests++;return limited('60')});
+ const settings={yahooRequestDeadline:START+720000};
+ const first=yahoo.fetchYahooResult('https://fixture.invalid/one',settings);
+ const second=yahoo.fetchYahooResult('https://fixture.invalid/two',settings);
+ const outcomes=Promise.allSettled([first,second]);
+ // Complete real filesystem checkpoint work before advancing mocked time.
+ await assert.rejects(first,error=>error.reason==='yahoo_cooldown_state_unavailable');
+ t.mock.timers.tick(60000);await flush();
+ const settled=await outcomes;assert.equal(requests,1);
+ assert.ok(settled.every(row=>row.status==='rejected'&&row.reason.reason==='yahoo_cooldown_state_unavailable'));
+});
+
+test('a 429 extension between admission and fetch invalidates the ticket before network start',async t=>{
+ const first=deferred();let requests=0;
+ const {read,stats}=await fixture(t,async()=>{requests++;return requests===1?first.promise:ok()});
+ const settings={yahooRequestDeadline:START+30000};
+ const all=Promise.allSettled([read('first',settings),read('second',settings)]);await flush();
+ // Wake admission but keep its Promise/finally microtasks pending. A response
+ // becomes ready in that same turn, before the admitted caller starts fetch.
+ t.mock.timers.tick(5500);first.resolve(limited('60'));await flush();
+ const outcomes=await all;
+ assert.equal(requests,1);assert.equal(stats().nextRequestAt,START+65500);
+ assert.ok(outcomes.every(row=>row.status==='rejected'&&row.reason.reason==='request_cooldown_deadline'));
+});
+
+test('an expired deadline after admission but before fetch cannot issue a request',async t=>{
+ let requests=0;const {read}=await fixture(t,async()=>{requests++;return ok()});
+ const pending=assert.rejects(read('deadline',{yahooRequestDeadline:START+10}),error=>error.reason==='request_deadline');
+ // Admission runs before this continuation, but its public promise is still
+ // pending through the race/finally chain. Advance only the wall clock here.
+ await Promise.resolve();t.mock.timers.setTime(START+10);await flush();
+ await pending;assert.equal(requests,0);
+});
+
+test('a short post-admission server hold also invalidates a ticket inside its already-reserved spacing slot',async t=>{
+ const first=deferred();let requests=0;
+ const {read,advance}=await fixture(t,async()=>{requests++;return requests===1?first.promise:ok()});
+ const settings={yahooRequestDeadline:START+30000};
+ const all=Promise.all([read('first',settings),read('second',settings)]);await flush();
+ t.mock.timers.tick(5500);first.resolve(limited('1'));await flush();assert.equal(requests,1);
+ await advance(5500);assert.equal(requests,2);await advance(5500);await all;assert.equal(requests,3);
+});
+
+test('deferral aborts the transport for an unread 429 body instead of leaving it active',async t=>{
+ let signal,active=false;
+ const {read}=await fixture(t,async(_url,options)=>{signal=options.signal;active=true;signal.addEventListener('abort',()=>{active=false},{once:true});return limited('3600')});
+ await assert.rejects(read('unread-body',{yahooRequestDeadline:START+720000}),error=>error.reason==='request_cooldown_deadline');
+ assert.equal(signal.aborted,true);assert.equal(active,false);
+});

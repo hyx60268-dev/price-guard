@@ -124,6 +124,16 @@ jobs:
           XIANYU_STORAGE_STATE_B64: ${{ secrets.XIANYU_STORAGE_STATE_B64 }}
           SCAN_TRIGGER: ${{ github.event_name }}
           PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
+      # Persist full server holds even if scanning or later publication fails.
+      # This is separate from the final cache so later stage changes also survive.
+      - name: 保存扫描访问冷却与当前加密基准
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            state
+            public/data/share-images
+          key: price-guard-state-scan-${{ github.run_id }}-${{ github.run_attempt }}
       - name: 发布本轮价格、库存与成本
         run: node scripts/prepare-publication.mjs
         env:
@@ -161,11 +171,12 @@ jobs:
       - name: 保存本次加密基准
         run: test -s state/latest.json.enc
       - uses: actions/cache/save@v4
+        if: always()
         with:
           path: |
             state
             public/data/share-images
-          key: price-guard-state-${{ github.run_id }}
+          key: price-guard-state-${{ github.run_id }}-${{ github.run_attempt }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
