@@ -80,8 +80,16 @@ for(const href of ['/shop/test/page/2','/shop/test/page/1','/shop/test/page/4'])
   assert.deepEqual(requests,[profile,profile+'/page/2']);
 });
 
+async function isolatedRakumaCollector(t){
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'rakuma-profile-access-'));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const module=await import('../scripts/lib/rakuma.mjs?isolated-profile-proof='+crypto.randomUUID());
+  module.initializeRakumaRequestAccess({root});
+  return module;
+}
+
 test('actual collector HTTP body cannot turn a skipped page into a current complete profile',async t=>{
-  const {discoverRakumaProfile:discoverActual}=await import('../scripts/lib/rakuma.mjs?pagination-proof='+crypto.randomUUID());
+  const {discoverRakumaProfile:discoverActual}=await isolatedRakumaCollector(t);
   const requests=[];
   t.mock.method(globalThis,'fetch',async url=>{
     requests.push(url);const response=new Response(html('aa',next('/shop/test/page/3'))+' '.repeat(10000));
@@ -175,7 +183,7 @@ for(const source of ['rakuma','yahoo'])test(`${source} page-two response cannot 
   assert.equal(requests,2);
 });
 for(const source of ['rakuma','yahoo'])for(const scenario of ['foreign_final','foreign_redirect','same_url_redirect'])test(`${source} actual collector rejects ${scenario} profile transport`,async t=>{
-  const {requestedUrl,body,foreignUrl,code}=transportFixture(source),module=await import(`../scripts/lib/${source}.mjs?profile-transport=${crypto.randomUUID()}`),requests=[];
+  const {requestedUrl,body,foreignUrl,code}=transportFixture(source),module=source==='rakuma'?await isolatedRakumaCollector(t):await import(`../scripts/lib/${source}.mjs?profile-transport=${crypto.randomUUID()}`),requests=[];
   t.mock.method(globalThis,'fetch',async url=>{
     requests.push(url);const response=new Response(body+' '.repeat(10000));
     Object.defineProperty(response,'url',{value:scenario==='same_url_redirect'?requestedUrl:foreignUrl});
