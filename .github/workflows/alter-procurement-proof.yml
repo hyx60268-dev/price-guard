@@ -1,15 +1,18 @@
-name: 阿尔塔真实报价与自动成本分层验收
+name: 阿尔塔独立公开报价来源层
 on:
   workflow_dispatch:
   pull_request:
     paths:
       - scripts/lib/alter-procurement.mjs
+      - scripts/lib/alter-public-http.mjs
+      - scripts/lib/procurement-proof-access.mjs
       - scripts/lib/procurement-sources.mjs
       - scripts/lib/procurement-evidence.mjs
       - scripts/lib/procurement-authority.mjs
       - scripts/lib/reviewed-procurement-catalog.mjs
       - scripts/lib/procurement-reference.mjs
       - scripts/prove-alter-procurement.mjs
+      - test/alter-proof-access.test.mjs
       - .github/workflows/alter-procurement-proof.yml
 permissions:
   contents: read
@@ -24,6 +27,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
-      - name: 核对真实完整报价与错误目标排除
-        run: node scripts/prove-alter-procurement.mjs
+      # PR jobs have no shared source/session checkpoint or secrets. They must
+      # never perform an owned-inventory proof or bypass a marketplace hold.
+      - name: 核对独立公开来源（不代表当前库存或成本验收）
+        run: node scripts/prove-alter-procurement.mjs --source-only

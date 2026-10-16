@@ -46,7 +46,7 @@ test('reader never opens a page for wrong target and never accepts a login redir
  const page={goto:async()=>({status:()=>200}),url:()=>ALTER_NARBERAL_URL,waitForFunction:async()=>{},evaluate:async()=>read(),close:async()=>{closed++}};
  const context={newPage:async()=>{opened++;return page}};
  assert.equal((await readPublicProcurementDetail(ALTER_NARBERAL_URL,{item:{title:'ALTER アルベド so-bin 1/8'},context})).reason,'target_product_mismatch');assert.equal(opened,0);
- assert.equal((await readPublicProcurementDetail(ALTER_NARBERAL_URL,{item,context})).status,'quoted');assert.equal(opened,1);assert.equal(closed,1);
+ assert.equal((await readAlterProcurementDetail(ALTER_NARBERAL_URL,{item,context})).status,'quoted');assert.equal(opened,1);assert.equal(closed,1);
  page.url=()=> 'https://www.alter-shanghai.cn/m/login.html';
  assert.equal((await readAlterProcurementDetail(ALTER_NARBERAL_URL,{item,context})).reason,'target_redirect_mismatch');assert.equal(closed,2);
 });

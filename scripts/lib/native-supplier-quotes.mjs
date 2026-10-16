@@ -11,6 +11,7 @@ export function normalizeNativeSupplierDetail(item,observation={},options={}){
   source:observation.source,url:observation.finalUrl,canonicalUrl:nativeQuoteUrl(observation.finalUrl,observation.source,selected.productId,selected.skuId),
   productId:selected.productId,skuId:selected.skuId,sellerKey:selected.sellerKey,sellerName:selected.sellerName,
   detailTitle:observation.detailTitle,selectedVariant:selected.selectedVariant,quantity:selected.quantity,saleContents:selected.saleContents,
+  ...(selected.purchaseLimit!==undefined?{purchaseLimit:selected.purchaseLimit}:{}),
   nativePrice:selected.nativePrice,currency:selected.currency,priceKind:selected.priceKind,purchaseType:selected.purchaseType,priceCondition:selected.priceCondition,priceEvidence:selected.priceEvidence,currencyEvidence:selected.currencyEvidence,
   isOwn:false,checkedAt:observation.fetchedAt,
   provenance:{fetchedAt:observation.fetchedAt,finalUrl:observation.finalUrl,httpStatus:observation.httpStatus,pageKind:observation.pageKind,contentSha256:observation.contentSha256},
@@ -20,7 +21,15 @@ export function normalizeNativeSupplierDetail(item,observation={},options={}){
  return validNativeSupplierQuote(quote,item,options)?structuredClone(quote):null;
 }
 export function currentNativeSupplierQuotes(item={}, {matchCorrections={},...options}={}){
- return (Array.isArray(item.nativeSupplierQuotes)?item.nativeSupplierQuotes:[]).filter(quote=>validNativeSupplierQuote(quote,item,options)&&!rejectedByMemory(matchCorrections,item,'procurement',quote)&&!(quote.source==='xianyu'&&rejectedByMemory(matchCorrections,item,'xianyu',quote))).slice(0,5);
+ const rows=[...(Array.isArray(item.nativeSupplierQuotes)?item.nativeSupplierQuotes:[]),...(Array.isArray(item.procurementSource?.nativeSupplierQuotes)?item.procurementSource.nativeSupplierQuotes:[])];
+ const source=item.procurementSource||{},target=nativeQuoteTarget(item),attemptAt=Date.parse(source.checkedAt||'');
+ const targetMatches=Object.entries(target).every(([key,value])=>source.target?.[key]===value);
+ // A newer explicit stock-out is evidence, not a network failure. Retire the
+ // superseded in-stock observation only for this exact target and source URL.
+ const stockOut=quote=>source.attempted===true&&targetMatches&&attemptAt<=(options.now??Date.now())&&attemptAt>=Date.parse(quote.checkedAt)&&
+  (Array.isArray(source.diagnostics)?source.diagnostics:[]).some(row=>row.reason==='out_of_stock'&&row.url===quote.canonicalUrl);
+ const current=rows.filter(quote=>validNativeSupplierQuote(quote,item,options)&&!stockOut(quote)&&!rejectedByMemory(matchCorrections,item,'procurement',quote)&&!(quote.source==='xianyu'&&rejectedByMemory(matchCorrections,item,'xianyu',quote))).sort((a,b)=>Date.parse(b.checkedAt)-Date.parse(a.checkedAt));
+ const seen=new Set();return current.filter(quote=>{const key=quote.canonicalUrl+'|'+quote.skuId;if(seen.has(key))return false;seen.add(key);return true}).slice(0,5);
 }
 export function ownedNativeSupplierSellerKeys(accounts=[],items=[]){
  const keys=[],platforms=new Map(accounts.map(account=>[account.id,account.platform]));
