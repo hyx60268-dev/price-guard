@@ -12,7 +12,7 @@ import { parseShopProfile } from '../../public/shop-profile.js';
 
 const UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140 Safari/537.36';
 let requestGate=Promise.resolve(),nextRequestAt=0;
-let proxyPreferredUntil=0;
+let sourceAccessHold=null;
 const wait=milliseconds=>new Promise(resolve=>setTimeout(resolve,milliseconds));
 
 function decodeHtml(value=''){
@@ -37,51 +37,43 @@ function requestTurn(interval=1200){
   requestGate=turn.catch(()=>{});return turn;
 }
 
-async function responseHtml(response){
-  if(!response.ok)throw new Error(`HTTP ${response.status}`);
-  const html=await response.text();
-  if(html.length<8000)throw new Error(`页面内容异常短 (${html.length} bytes)`);
-  return html;
+function denySource(response){
+  const raw=response.headers.get('retry-after'),date=Date.parse(raw||'');
+  const retryAfter=raw&&/^\d{1,10}$/.test(raw)?raw:Number.isFinite(date)?new Date(date).toUTCString():null;
+  const error=new Error(`ラクマ access denied: HTTP ${response.status}; no alternate source route`);
+  Object.assign(error,{code:'RAKUMA_SOURCE_ACCESS_DENIED',httpStatus:response.status,retryAfter,observedAt:new Date().toISOString()});
+  sourceAccessHold=error;return error;
 }
-
-async function fetchViaReader(url,settings={},fetchImpl=fetch,attempts=2){
-  // Rakuma currently returns HTTP 403 to GitHub-hosted runner IPs even for its
-  // public pages. Reader fetches only the same public URL and returns full HTML;
-  // no account, cookie or private data is sent through it.
-  const readerUrl=`https://r.jina.ai/${url}`;
-  let last;
-  for(let attempt=1;attempt<=attempts;attempt++){
-    await requestTurn(Math.max(1500,Number(settings.rakumaRequestIntervalMs)||1200));
-    const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),45000);
-    try{
-      const response=await fetchImpl(readerUrl,{headers:{'user-agent':UA,'accept-language':'ja-JP,ja;q=0.9','x-return-format':'html','x-no-cache':'true'},signal:controller.signal,redirect:'follow'});
-      return await responseHtml(response);
-    }catch(error){last=error;if(attempt<attempts)await wait(1200*attempt)}finally{clearTimeout(timeout)}
-  }
-  throw new Error(`ラクマ公开页面代理请求失败：${String(last)}`);
+export function rakumaAccessDiagnostic(){
+  if(!sourceAccessHold)return null;
+  const {code,httpStatus,retryAfter,observedAt}=sourceAccessHold;return {code,httpStatus,retryAfter,observedAt};
 }
 
 export async function fetchRakumaHtml(url,settings={},dependencies={},attempts=2){
   if(!/^https:\/\/(?:fril\.jp|item\.fril\.jp)\//i.test(url||''))throw new Error('ラクマ公开链接无效');
-  const directFetch=dependencies.fetchImpl||fetch,readerFetch=dependencies.readerFetchImpl||fetch;
-  if(Date.now()<proxyPreferredUntil)return fetchViaReader(url,settings,readerFetch,attempts);
+  // Do not route around access denials. The hold lasts for this worker process,
+  // including already-queued calls; callers retain prior inventory as stale.
+  if(sourceAccessHold)throw sourceAccessHold;
+  const directFetch=dependencies.fetchImpl||fetch;
   let last;
   for(let attempt=1;attempt<=attempts;attempt++){
     await requestTurn(settings.rakumaRequestIntervalMs);
+    if(sourceAccessHold)throw sourceAccessHold;
     const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),20000);
     try{
       const response=await directFetch(url,{headers:{'user-agent':UA,'accept':'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8','accept-language':'ja-JP,ja;q=0.9','cache-control':'no-cache','referer':'https://fril.jp/'},signal:controller.signal,redirect:'follow'});
-      return await responseHtml(response);
+      if([401,403,429].includes(response.status))throw denySource(response);
+      if(!response.ok)throw new Error(`HTTP ${response.status}`);
+      const html=await response.text();
+      if(html.length<8000)throw new Error(`页面内容异常短 (${html.length} bytes)`);
+      return html;
     }catch(error){
       last=error;
-      // Do not send dozens of requests that Rakuma has already rejected. The
-      // fallback remains preferred for this process after a 403.
-      if(/HTTP 403/.test(String(error))){if(!dependencies.disableProxyMemory)proxyPreferredUntil=Date.now()+6*60*60_000;break}
+      if(sourceAccessHold)throw sourceAccessHold;
       if(attempt<attempts)await wait(900*attempt);
     }finally{clearTimeout(timeout)}
   }
-  try{return await fetchViaReader(url,settings,readerFetch,attempts)}
-  catch(readerError){throw new Error(`ラクマ请求失败：${String(last)}；${String(readerError)}`)}
+  throw new Error(`ラクマ请求失败：${String(last)}`);
 }
 
 const fetchHtml=fetchRakumaHtml;
@@ -234,7 +226,7 @@ export async function rakumaCompare(item,settings={},dependencies={}){
       if(!detail.shippingKnown){rejected.push({...card,reason:'shipping_unconfirmed'});continue}
       const queryFamily=productFamily(`${item.title}\n${ownDescription}`,ownCategory),candidateFamily=productFamily(`${detail.title}\n${detail.description}`,detail.category);
       competitors.push({...card,...detail,platform:'rakuma',image:detail.images[0]||card.image,imageScore,primaryImageScore,queryFamily,candidateFamily,matchMethod:visualEquivalent?'strong_visual_primary_product':'detail_type_quantity_equivalent_text'});
-    }catch(error){rejected.push({...card,reason:'detail_error',error:String(error)})}
+    }catch(error){if(error?.code==='RAKUMA_SOURCE_ACCESS_DENIED')throw error;rejected.push({...card,reason:'detail_error',error:String(error)})}
   }
   competitors.sort((a,b)=>a.price-b.price);
   const unresolved=[...screened.slice(preliminary.length),...rejected.filter(row=>['availability_unconfirmed','shipping_unconfirmed','detail_error','sale_description_unavailable','collectible_variant_image_unconfirmed','primary_variant_unconfirmed'].includes(row.reason))];
