@@ -23,6 +23,7 @@ jobs:
       enabled: ${{ steps.anchor.outputs.enabled }}
       epoch: ${{ steps.anchor.outputs.epoch }}
       code_sha: ${{ steps.anchor.outputs.code_sha }}
+      priority_item_ids: ${{ steps.anchor.outputs.priority_item_ids }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -41,6 +42,7 @@ jobs:
       cadence_epoch: ${{ needs.anchor.outputs.epoch }}
       cadence_slot: '0'
       cadence_expected_sha: ${{ needs.anchor.outputs.code_sha }}
+      priority_item_ids: ${{ needs.anchor.outputs.priority_item_ids }}
   acceptance-0:
     needs: slot-0
     if: ${{ !cancelled() && needs.slot-0.result == 'success' && needs.slot-0.outputs.admitted == 'true' }}

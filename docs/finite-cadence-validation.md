@@ -25,3 +25,7 @@ GitHub Actions cache remains best-effort and evictable. A crash or a failed unre
 Report actual source start/end times, inventory completeness, price checks, verified cost and simultaneous completion for every slot. Final acceptance requires six real observations, valid complete denominators and price/cost counts, both original product checkers passing, and both start/completion gaps and scan duration within 20 minutes. Deployment or a successful operational transaction alone is not product acceptance. Current missing supplier coverage remains a known reason acceptance will fail.
 
 For a regression, disable the config in a reviewed main commit; the new main SHA fences future slots in the old window. An in-flight writer is allowed to finish safely. If the extracted transaction itself regresses, restore the previous ordinary workflow entry and retain source-access safety fixes and encrypted state. Do not erase state, shorten a server hold, or retry blocked sources to force a green result.
+
+### Bounded reported-item verification
+
+`priorityItemIds` may name at most two confirmed current listing IDs for slot 0 only. The existing scan priority input reorders tasks already admitted from current inventory; it does not add listings, raise request budgets/rates, change account membership or the all-inventory coverage denominator. Remaining five slots use ordinary priorities. Do not copy historical closed IDs into activation configuration; identify current live listings from the restored results first. Disabled configuration has no priorities.

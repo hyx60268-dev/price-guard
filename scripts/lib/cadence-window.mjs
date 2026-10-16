@@ -1,4 +1,11 @@
 import {VALIDATION_SLOTS,SCAN_INTERVAL_MS} from './scan-admission.mjs';
+// A bounded first-slot sample reprioritizes existing tasks only. It cannot add
+// listings, change the full inventory denominator, or persist into later slots.
+export function cadencePriorityItemIds(config={}){
+ const ids=config.priorityItemIds??[];
+ if(!Array.isArray(ids)||ids.length>2||ids.some(id=>typeof id!=='string'||!/^[a-zA-Z0-9_-]{1,80}$/.test(id)))throw Error('Invalid bounded sample item IDs');
+ return [...new Set(ids)].join(',');
+}
 export function cadenceActivation({event,config={},message='',attempt='1'}={}){
  if(attempt!=='1')throw Error('Finite validation cannot be restarted by workflow rerun');
  if(event==='workflow_dispatch')return true;

@@ -27,6 +27,7 @@ jobs:
       enabled: \${{ steps.anchor.outputs.enabled }}
       epoch: \${{ steps.anchor.outputs.epoch }}
       code_sha: \${{ steps.anchor.outputs.code_sha }}
+      priority_item_ids: \${{ steps.anchor.outputs.priority_item_ids }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -46,7 +47,7 @@ jobs:
       cadence_epoch: \${{ needs.anchor.outputs.epoch }}
       cadence_slot: '${i}'
       cadence_expected_sha: \${{ needs.anchor.outputs.code_sha }}
-${i?`      cadence_previous_artifact: \${{ needs.slot-${i-1}.outputs.state_artifact }}\n`:''}  acceptance-${i}:
+${i===0?`      priority_item_ids: \${{ needs.anchor.outputs.priority_item_ids }}\n`:''}${i?`      cadence_previous_artifact: \${{ needs.slot-${i-1}.outputs.state_artifact }}\n`:''}  acceptance-${i}:
     needs: slot-${i}
     if: \${{ !cancelled() && needs.slot-${i}.result == 'success' && needs.slot-${i}.outputs.admitted == 'true' }}
     runs-on: ubuntu-latest

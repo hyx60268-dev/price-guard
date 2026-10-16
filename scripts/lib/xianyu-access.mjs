@@ -33,3 +33,11 @@ export async function loadXianyuAccess(root,key,{clock=Date.now}={}) {
 export function deferredXianyuAccess(access) {
   return {status:'deferred_access',accessReason:access.reason,retryAt:access.retryAt,samples:[],averageCNY:null};
 }
+
+// Public operational logs must not expand arbitrary restored legacy values.
+// This projection does not change the gate, its original state or its deadline.
+export function xianyuAccessObservation(value={}){
+ const retryAt=typeof value.retryAt==='string'&&Number.isFinite(Date.parse(value.retryAt))&&new Date(value.retryAt).toISOString()===value.retryAt?value.retryAt:null;
+ return {allowed:value.allowed===true,reason:['blocked','login_required'].includes(value.reason)?value.reason:null,retryAt,
+  failures:Number.isInteger(value.failures)&&value.failures>=0&&value.failures<=4?value.failures:null};
+}

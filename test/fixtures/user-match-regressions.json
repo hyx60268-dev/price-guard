@@ -616,5 +616,35 @@
     "candidateDescription": "新品 レッド 1個 现货 全国包邮",
     "primaryImageScore": 1,
     "expected": "description_color_mismatch"
+  },
+  {
+    "case": "2026-10-16 拿箱Violet真实标题允许召回，实际详情仍须核验",
+    "ownTitle": "APEX ヴァイオレット・エヴァーガーデン 自動手記人形Ver. 1/7 フィギュア 特典付き",
+    "candidateTitle": "APEX『ヴァイオレット・エヴァーガーデン』ヴァイオレット・エヴァーガーデン自動手記人形Ver.1/7スケール フィギュア特典付き",
+    "ownDescription": "新品 未使用 フィギュア1点",
+    "candidateDescription": "新品 未使用 フィギュア1点",
+    "primaryImageScore": 1,
+    "expected": null,
+    "evidenceNote": "Only titles are transcribed from the user screenshots. Descriptions and image score are controlled test evidence; candidate z704300094 has a historical production match at 28500 JPY, while the later screenshot ordinary price is 28000 JPY."
+  },
+  {
+    "case": "2026-10-16 撑伞Violet真实标题允许召回，品牌标签不证明款式",
+    "ownTitle": "ヴァイオレット・エヴァーガーデン フィギュア 中国限定 正規品フィギュア",
+    "candidateTitle": "ヴァイオレット・エヴァーガーデン フィギュア グッドスマイルカンパニー",
+    "ownDescription": "新品 未使用 フィギュア1点",
+    "candidateDescription": "新品 未使用 フィギュア1点",
+    "primaryImageScore": 1,
+    "expected": null,
+    "evidenceNote": "Only titles are transcribed from the user screenshots. Descriptions and image score are controlled test evidence. Current competitor ID and the historical matching rejection reason remain unknown."
+  },
+  {
+    "case": "2026-10-16 APEX自動手記人形标题不能混入另一品牌撑伞款",
+    "ownTitle": "APEX ヴァイオレット・エヴァーガーデン 自動手記人形Ver. 1/7 フィギュア 特典付き",
+    "candidateTitle": "ヴァイオレット・エヴァーガーデン フィギュア グッドスマイルカンパニー",
+    "ownDescription": "新品 未使用 フィギュア1点",
+    "candidateDescription": "新品 未使用 フィギュア1点",
+    "primaryImageScore": 1,
+    "expected": "explicit_variant_mismatch",
+    "evidenceNote": "Titles from different physical products in the reported recommendation rails; controlled detail text and deliberately identical image score must not override the explicit model conflict."
   }
 ]

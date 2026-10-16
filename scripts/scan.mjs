@@ -18,6 +18,7 @@ import { mercariCompare } from './lib/mercari.mjs';
 import { pricingDecision,requiredPricingPlatforms,pricingItemsForPlatform,pricingScopeLabel } from '../public/pricing-policy.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { xianyuAccessObservation } from './lib/xianyu-access.mjs';
 import { loadXianyuSession } from './lib/xianyu-session.mjs';
 import { deferredXianyuAccess } from './lib/xianyu-access.mjs';
 import { fileURLToPath } from 'node:url';
@@ -61,7 +62,9 @@ await Promise.all(['data','public/data','.auth','state'].map(directory=>fs.mkdir
 
 
 async function xianyuStateFromEnv(){
-  sessionManager=await loadXianyuSession(root);return sessionManager.file;
+  sessionManager=await loadXianyuSession(root);
+  console.log('[闲鱼访问冷却恢复]',JSON.stringify(xianyuAccessObservation(sessionManager.access())));
+  return sessionManager.file;
 }
 
 async function previousSnapshot(){
@@ -94,6 +97,9 @@ const previous=await previousSnapshot();
 await initializeYahooRequestAccess({root,password,initial:previous?.yahooRequestAccess});
 initializeRakumaRequestAccess({root,password,initial:previous?.rakumaRequestAccess});
 await initializeExternalSearchAccess({root,password,initial:previous?.externalSearchAccess});
+// Only validated source status/deadlines, never credentials or inventory. These
+// observations let consecutive runs verify that original holds were restored.
+console.log('[市场访问冷却恢复]',JSON.stringify({yahoo:yahooRequestAccessSnapshot(),rakuma:rakumaRequestAccessSnapshot()}));
 console.log('[公开搜索访问]',JSON.stringify({stage:'scan',providers:externalSearchAccessSnapshot()}));
 const matchCorrections=previous?.matchCorrections||{};
 if(previous?.items)previous.items=previous.items.map(item=>invalidateCorrectedMatches(item,matchCorrections));
@@ -471,4 +477,5 @@ const result={
     comparisonMode:settings.comparisonMode||'cross_platform',comparisonTasks:graphEnabled?Object.fromEntries(['yahoo','rakuma','mercari'].map(source=>[source,contexts.reduce((sum,context)=>sum+context.activeItems.filter(item=>requiredPricingPlatforms(item).includes(source)).length,0)])):{yahoo:yahooTasks.length,rakuma:rakumaTasks.length,mercari:mercariTasks.length},budgetMinutes:Number(settings.scanBudgetMinutes)||12,profileConcurrency,yahooConcurrency,rakumaConcurrency,mercariConcurrency,rakumaLimit:Number.isFinite(rakumaLimit)?rakumaLimit:null,mercariLimit:Number.isFinite(mercariLimit)?mercariLimit:null,xianyuLimit}
 };
 const {summary}=await writeOutputs({root,result,previous,password});
+console.log('[访问冷却基准已保存]',JSON.stringify({yahoo:result.yahooRequestAccess,rakuma:result.rakumaRequestAccess,search:result.externalSearchAccess,xianyu:xianyuAccessObservation(sessionManager.access())}));
 console.log(summary);

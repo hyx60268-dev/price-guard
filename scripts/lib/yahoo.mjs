@@ -499,6 +499,22 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   // 仅推荐页/详情检查不得充当广搜时间，否则未搜索也会反复推迟下一次广搜。
   if(externalOwn){if(item.sourceDetail)ownBundle={detail:item.sourceDetail,recommendations:[]};else itemPageError='ラクマ自有商品详情未读取'}
   else try{ownBundle=await getBundle(item.id,settings)}catch(error){if(isRequestDeferred(error))throw error;itemPageError=String(error)}
+  // A saved inventory can outlive its listing. The known-offer lane already
+  // rejects a non-OPEN own detail; broad discovery must not then turn the same
+  // closed listing into a fresh completed comparison. Do not remove inventory
+  // here: only the complete profile reconciliation may make that decision.
+  const observedOwn=ownBundle?.detail;
+  if(!knownOnly&&observedOwn&&Object.hasOwn(observedOwn,'status')&&observedOwn.status!=='OPEN'){
+    const reason=['SOLD','CLOSED','DELETED','ENDED','STOPPED'].includes(observedOwn.status)?'own_not_open':'own_availability_unconfirmed';
+    return {rulesVersion:MATCHING_RULES_VERSION,status:reason,evidenceStatus:reason,cacheReason:reason,
+      checkedAt:item.yahoo?.checkedAt||null,searchCheckedAt:item.yahoo?.searchCheckedAt||null,
+      query,searchUrl,lowestPrice:null,lowestUrl:'',recommendedPrice:Number(item.ownPrice),
+      candidates:[],rejected:[],cardCount:0,searchCardCount:0,recommendationCardCount:0,preliminaryCount:0,detailCheckedCount:0,competitorCount:0,
+      comparisonStatus:'verification_incomplete',matchConfidence:'需复核',
+      matchLabel:reason==='own_not_open'?'自有刊登当前不在售，等待库存刷新':'自有刊登在售状态未确认，暂不比价',
+      audit:{ownItemId:item.id,accountId:item.accountId||null,rulesVersion:MATCHING_RULES_VERSION},
+      sourceStatus:{itemPage:reason,search:'not_requested_own_unavailable'}};
+  }
   const broadSearchHours=Math.max(1,Number(settings.yahooBroadSearchHours)||6);
   const lastBroadSearch=Date.parse(item.yahoo?.searchCheckedAt||'');
   const quoteAge=Date.now()-Date.parse(item.yahoo?.checkedAt||'');

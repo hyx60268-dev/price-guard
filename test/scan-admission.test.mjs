@@ -107,3 +107,11 @@ test('real activation push cedes scan to exactly one finite slot while ordinary 
  await fs.writeFile(eventFile,JSON.stringify({head_commit:{message:'ordinary repair'}}));
  assert.match(await run({}),/reason=recent_scan/);assert.match(await run({GITHUB_EVENT_NAME:'schedule'}),/reason=recent_scan/);
 });
+
+
+test('finite sample priorities apply only to slot zero and preserve the normal scan entry',()=>{
+ const workflow=finiteCadenceWorkflow();
+ assert.match(workflow,/slot-0:[\s\S]*?priority_item_ids: \$\{\{ needs.anchor.outputs.priority_item_ids \}\}/);
+ assert.equal((workflow.match(/priority_item_ids: \$\{\{ needs.anchor.outputs.priority_item_ids \}\}/g)||[]).length,1);
+ assert.equal((workflow.match(/uses: \.\/.github\/workflows\/price-scan-transaction.yml/g)||[]).length,6);
+});

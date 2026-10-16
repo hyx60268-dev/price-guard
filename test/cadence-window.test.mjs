@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {promisify} from 'node:util';
 import {execFile} from 'node:child_process';
-import {cadenceActivation,cadenceSlotReport,cadenceWindowReport} from '../scripts/lib/cadence-window.mjs';
+import {cadenceActivation,cadencePriorityItemIds,cadenceSlotReport,cadenceWindowReport} from '../scripts/lib/cadence-window.mjs';
 const execute=promisify(execFile),START=Date.parse('2026-10-16T12:00:00Z'),sha='a'.repeat(40);
 test('one-time push requires explicit matching marker and enabled reviewed configuration',()=>{
  const config={enabled:true,requestId:'approved-test-20261016',slots:6},message='repair [price-guard-cadence:approved-test-20261016]';
@@ -42,4 +42,12 @@ test('finite acceptance requires complete inventory, consistent counts and both 
  for(const values of [{inventoryComplete:false},{inventoryComplete:undefined},{priceComplete:0},{costVerified:0},{priceComplete:101},{total:'100',completeItems:'100',costVerified:'100',priceComplete:'100'}])assert.equal(cadenceWindowReport(observed(values)).accepted,false);
  for(const key of ['cost_exit','coverage_exit'])for(const value of ['1','',undefined]){const needs=observed();needs['slot-1'].outputs[key]=value;assert.ok(cadenceWindowReport(needs).reasons.includes('slot_product_acceptance_failed_or_missing'));}
  const delayed=observed();const row=JSON.parse(delayed['slot-3'].outputs.slot_report);row.finishedAt=new Date(Date.parse(row.finishedAt)+1000).toISOString();delayed['slot-3'].outputs.slot_report=JSON.stringify(row);assert.ok(cadenceWindowReport(delayed).reasons.includes('observed_completion_cadence_not_20_minutes'));
+});
+
+
+test('sample priorities are explicit, bounded, and cannot inject output or create inventory',()=>{
+ assert.equal(cadencePriorityItemIds({}),'');
+ assert.equal(cadencePriorityItemIds({priorityItemIds:['z100','z200']}),'z100,z200');
+ assert.equal(cadencePriorityItemIds({priorityItemIds:['z100','z100']}),'z100');
+ for(const priorityItemIds of ['z100',['z100\nready=true'],['z1','z2','z3'],[null],['']])assert.throws(()=>cadencePriorityItemIds({priorityItemIds}));
 });

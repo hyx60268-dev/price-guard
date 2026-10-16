@@ -1,5 +1,6 @@
 {
   "enabled": false,
   "requestId": "",
-  "slots": 6
+  "slots": 6,
+  "priorityItemIds": []
 }

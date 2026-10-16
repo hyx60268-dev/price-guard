@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cadenceActivation } from './lib/cadence-window.mjs';
+import { cadenceActivation,cadencePriorityItemIds } from './lib/cadence-window.mjs';
 import { cadenceSlot,claimScanAdmission } from './lib/scan-admission.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const mode=process.argv[2]||'admit',env=process.env;
@@ -21,10 +21,11 @@ async function activationInput(){
  return {event:env.GITHUB_EVENT_NAME,config,message:event.head_commit?.message||'',attempt:env.GITHUB_RUN_ATTEMPT};
 }
 if(mode==='anchor'){
- const enabled=cadenceActivation(await activationInput());
+ const activation=await activationInput();
+ const enabled=cadenceActivation(activation);
  if(enabled){
   if(env.GITHUB_REF!=='refs/heads/main'||await currentMain()!==env.GITHUB_SHA)throw Error('Finite cadence must begin on current main');
-  await output({enabled:true,epoch:new Date().toISOString(),code_sha:env.GITHUB_SHA});
+  await output({enabled:true,epoch:new Date().toISOString(),code_sha:env.GITHUB_SHA,priority_item_ids:cadencePriorityItemIds(activation.config)});
  }else await output({enabled:false});
 }else if(mode==='wait'){
  const slot=cadenceSlot({epoch:env.CADENCE_EPOCH,slot:env.CADENCE_SLOT});

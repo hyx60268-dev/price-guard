@@ -124,6 +124,11 @@ jobs:
           CADENCE_EPOCH: ${{ inputs.cadence_epoch }}
           CADENCE_SLOT: ${{ inputs.cadence_slot }}
           CADENCE_EXPECTED_SHA: ${{ inputs.cadence_expected_sha }}
+      - name: 只读记录两款反馈商品的保存证据
+        if: ${{ steps.admission.outputs.admitted == 'true' }}
+        run: node scripts/pricing-target-diagnostics.mjs
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
       - run: npm ci
         if: ${{ (steps.admission.outputs.admitted == 'true' || (github.event_name == 'push' && inputs.cadence_epoch == '')) }}
       - name: 验证比价与成本回归测试
@@ -192,6 +197,11 @@ jobs:
           XIANYU_STORAGE_STATE_B64: ${{ secrets.XIANYU_STORAGE_STATE_B64 }}
           SCAN_TRIGGER: ${{ github.event_name }}
           PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
+      - name: 只读记录两款反馈商品的本轮结果
+        if: ${{ steps.admission.outputs.admitted == 'true' }}
+        run: node scripts/pricing-target-diagnostics.mjs
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
       # Persist full server holds even if scanning or later publication fails.
       # This is separate from the final cache so later stage changes also survive.
       - name: 保存扫描访问冷却与当前加密基准
