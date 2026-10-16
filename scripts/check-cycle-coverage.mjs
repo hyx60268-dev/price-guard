@@ -1,18 +1,16 @@
 import fs from 'node:fs/promises';
 import { cycleAcceptance } from './lib/cycle-coverage.mjs';
+import { observePublication } from './lib/publication-observation.mjs';
 
 // After deployment: failed acceptance must not prevent publishing real progress.
 const status=JSON.parse(await fs.readFile(new URL('../public/data/status.json',import.meta.url),'utf8'));
 const report=cycleAcceptance(status,{codeSha:process.env.GITHUB_SHA});
 report.publicationObservedAt=null;
 if(process.env.PUBLISHED_STATUS_URL){
- try{
-  const response=await fetch(process.env.PUBLISHED_STATUS_URL,{cache:'no-store',signal:AbortSignal.timeout(20_000)});
-  if(!response.ok)throw new Error('HTTP '+response.status);
-  const published=await response.json();
-  if(published.codeSha!==status.codeSha||published.cycleCoverage?.finishedAt!==status.cycleCoverage?.finishedAt||published.dataRevision!==status.dataRevision)throw new Error('Published revision differs');
-  report.publicationObservedAt=new Date().toISOString();
- }catch{report.reasons.push('current_publication_not_observed');report.accepted=false;}
+ const observation=await observePublication({url:process.env.PUBLISHED_STATUS_URL,expected:status});
+ report.publicationObservedAt=observation.observedAt;
+ report.publicationObservation=observation.attempts;
+ if(!observation.observedAt){report.reasons.push('current_publication_not_observed');report.accepted=false;}
 }
 console.log('[FULL CYCLE ACCEPTANCE]',JSON.stringify(report));
 if(process.env.GITHUB_STEP_SUMMARY){

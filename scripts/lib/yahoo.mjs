@@ -633,20 +633,23 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   // lower. Otherwise a third known link could consume a reserved discovery slot.
   preliminary=[...knownCards.slice(0,recheckLimit),...preliminary.filter(card=>!knownIds.has(card.id)),...knownCards.slice(recheckLimit)];
   const detailQueue=knownOnly?null:planYahooDetailQueue({item,detail:ownDetail,candidates:preliminary,knownIds,knownLimit:recheckLimit,limit:maxDetailChecks,prior:item.yahoo?.detailQueue});
-  if(detailQueue)preliminary=detailQueue.cards;
+  // Backoff changes selection only. Every recalled card stays in preliminary
+  // for unresolved-lower/raise guards and incomplete-coverage accounting.
+  const detailCandidates=detailQueue?.cards||preliminary;
   const ownCondition=typeof ownDetail?.condition==='string'?ownDetail.condition:
     ownDetail?.condition?.name||ownDetail?.condition?.text||ownDetail?.condition?.label||ownDetail?.condition?.key||'';
   const ownConditionText=`${item.title}\n${ownDetail?.title||''}\n${ownDetail?.description||''}\n${ownCondition}`;
 
   const competitors=[];
   let detailCheckedCount=0;
-  for(let index=0;index<preliminary.length&&detailCheckedCount<maxDetailChecks;index++){
-    const card=preliminary[index];
+  for(let index=0;index<detailCandidates.length&&detailCheckedCount<maxDetailChecks;index++){
+    const card=detailCandidates[index];
     if(knownOnly&&Date.now()>=settings.yahooKnownRefreshDeadline)break;
     detailCheckedCount++;
-    let currentDetailRead=false,currentPrimaryImageScore=null;
+    let currentDetailRead=false,currentPrimaryImageScore=null,currentTargetResponse=false;
     try{
       const bundle=await getBundle(card.id,settings),detail=bundle.detail;
+      currentTargetResponse=detail?.id===card.id&&Boolean(detail?.title?.trim()&&detail?.status)&&Number.isFinite(Number(detail?.price))&&Number(detail.price)>0;
       const evaluation=await evaluateYahooDetail({item,card,bundle,ownDetail,knownOnly,ownSellerId,ownConditionText,ownCategory,
         exactQuery,maxImages,ownFingerprints,ownImageEvidence,settings},{imageFingerprints:fingerprint});
       currentDetailRead=evaluation.currentDetailRead;currentPrimaryImageScore=evaluation.currentPrimaryImageScore;
@@ -657,6 +660,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
       const inspectedImageMismatch=['collectible_variant_image_unconfirmed','primary_variant_unconfirmed','physical_image_unconfirmed','lottery_series_unconfirmed'].includes(rejection?.reason)&&Number.isFinite(currentPrimaryImageScore);
       const incompleteRead=/unavailable|error/.test(rejection?.reason||'')||/unconfirmed/.test(rejection?.reason||'')&&!inspectedImageMismatch;
       if(currentDetailRead&&!incompleteRead)detailQueue?.record(card);
+      else if(currentTargetResponse)detailQueue?.recordSchedulingAttempt(card,rejection?.reason);
     }
   }
 
@@ -673,7 +677,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   const reviewReasons=new Set(['detail_price_unavailable','primary_variant_unconfirmed','sale_description_unavailable','collectible_variant_image_unconfirmed','lottery_series_unconfirmed','physical_image_unconfirmed','detail_error']);
   const pendingReviews=rejected.filter(candidate=>reviewReasons.has(candidate.reason));
   const unconfirmedLowerCandidates=rejected.filter(candidate=>reviewReasons.has(candidate.reason)&&Number(candidate.price)<Number(item.ownPrice));
-  const verificationIncomplete=knownOnly||Boolean(broadSearchDue&&!search)||uncheckedLowerCandidates.length>0||unconfirmedLowerCandidates.length>0||!competitors.length&&pendingReviews.length>0||!ownDetail?.description?.trim();
+  const verificationIncomplete=knownOnly||Boolean(broadSearchDue&&!search)||Boolean(detailQueue?.deferredCount)||uncheckedLowerCandidates.length>0||unconfirmedLowerCandidates.length>0||!competitors.length&&pendingReviews.length>0||!ownDetail?.description?.trim();
   const recommended=verificationIncomplete?Number(item.ownPrice):lowest&&!lowest.isOwn?Math.max(1,Math.floor(lowest.price)-1):market.recommendedPrice;
   const sourceCovered=Boolean(search||ownBundle);
   const matchLabel=verificationIncomplete?'存在待核验候选或详情缺失，暂不改价':lowest&&!lowest.isOwn?'已核验在售同款':underpriced?'与下一家同款存在提价空间':competitors.length?'已核验同款，你当前最低':'未发现同款';
