@@ -68,7 +68,8 @@ export function compactDashboardResult(result={}, {now=Date.now()}={}){
     const nativeSupplierQuotes=currentNativeSupplierQuotes(item,{now,matchCorrections:result.matchCorrections,ownedSellerKeys});
     const nativeBinding=nativeSupplierQuotes[0]?.target;
     return {...item,sourceDetail:undefined,cachedYahoo:undefined,
-      ...(Object.hasOwn(item,'nativeSupplierQuotes')?{nativeSupplierQuotes}:{}),
+      ...(Object.hasOwn(item,'nativeSupplierQuotes')||item.procurementSource?.nativeSupplierQuotes?{nativeSupplierQuotes}:{}),
+      ...(item.procurementSource?.nativeSupplierQuotes?{procurementSource:{...item.procurementSource,nativeSupplierQuotes:[]}}:{}),
       ...(binding||xianyuBinding||nativeBinding?{description:(binding||xianyuBinding||nativeBinding).description,condition:(binding||xianyuBinding||nativeBinding).condition}:{}),
       ...(item.referenceProvider==='xianyu'&&!xianyu?{averageCNY:null,referenceProvider:null,referenceCheckedAt:null}:{}),
       yahoo:compactComparison(item.yahoo),rakuma:compactComparison(item.rakuma),mercari:compactComparison(item.mercari),
@@ -168,7 +169,7 @@ export async function writeOutputs({root,result,previous,password}){
   const previousByKey=new Map((previous?.items||[]).map(item=>[JSON.stringify([item.accountId,item.id]),item]));
   const nativeOwnedSellers=ownedNativeSupplierSellerKeys([...(result.accounts||[]),...(result.managedAccounts||[])],result.items||[]);
   result.items=(result.items||[]).map(raw=>{
-    const native=Object.hasOwn(raw,'nativeSupplierQuotes')?{...raw,nativeSupplierQuotes:currentNativeSupplierQuotes(raw,{matchCorrections:result.matchCorrections,ownedSellerKeys:nativeOwnedSellers})}:raw;
+    const native=Object.hasOwn(raw,'nativeSupplierQuotes')||raw.procurementSource?.nativeSupplierQuotes?{...raw,nativeSupplierQuotes:currentNativeSupplierQuotes(raw,{matchCorrections:result.matchCorrections,ownedSellerKeys:nativeOwnedSellers})}:raw;
     const item=withRakumaDiscovery(currentPurchasableOffers(native,result.matchCorrections),
       previousByKey.get(JSON.stringify([raw.accountId,raw.id]))||{},{matchCorrections:result.matchCorrections,ownedOffers:ownership});
     const clean=excludeOwnedOffers(item,ownership);if(clean.yahoo===item.yahoo&&clean.rakuma===item.rakuma&&clean.mercari===item.mercari)return item;

@@ -1,6 +1,8 @@
 import { reviewedProcurementCatalogIdentity,verifiedProcurementOwnPrimaryImage } from './reviewed-procurement-catalog.mjs';
 import { PUBLIC_PURCHASABLE_VERIFICATION } from './procurement-evidence.mjs';
-import { ALTER_NARBERAL_URL,isAlterNarberalTarget,readAlterProcurementDetail,procurementSourcePlanVersion } from './alter-procurement.mjs';
+import { ALTER_NARBERAL_URL,isAlterNarberalTarget,procurementSourcePlanVersion } from './alter-procurement.mjs';
+import { readAlterPublicHTTP } from './alter-public-http.mjs';
+import { normalizeNativeSupplierDetail } from './native-supplier-quotes.mjs';
 import { publicHtml,searchExternalImages,externalImageQueries,externalSearchQueries,externalPublicUrl,publicAccessRoute } from './external-images.mjs';
 import { imageFingerprints,primaryProductSimilarity } from './image.mjs';
 import { offerIdentityGuard } from './offer-identity.mjs';
@@ -202,11 +204,11 @@ export async function ensureYouzanSelection(page,chosen,{deadline=Date.now()+150
  }
  return {...settled,diagnostic:{...settled.diagnostic,selectionAttempts}};
 }
-export async function readPublicProcurementDetail(url,{item,context,getContext,deadline=Date.now()+45000,html=publicHtml}={}){
+export async function readPublicProcurementDetail(url,{item,context,getContext,deadline=Date.now()+45000,html=publicHtml,request}={}){
  const source=procurementSource(url);if(!source)return {status:'unsupported',reason:'unsupported_source',reviewComplete:false};
  const remaining=()=>Math.max(1,Math.min(15000,deadline-Date.now()));
  const staticRead=async()=>{try{const response=await html(url,{deadline,withMetadata:true});return parsePublicProcurementDetail(typeof response==='string'?response:response?.html,url,{metadata:typeof response==='string'?{}:response?.metadata||{}});}catch(error){return {status:'unavailable',reason:'detail_fetch_error',reviewComplete:false,diagnostic:safeProcurementDiagnostic({...fetchDiagnostic(error.publicMetadata||{},url),failureKind:detailFailureKind(error)})};}};
- if(source==='alter_shanghai')return readAlterProcurementDetail(url,{item,context,getContext,deadline});
+ if(source==='alter_shanghai')return readAlterPublicHTTP(url,{item,deadline,request});
  if(source!=='youzan')return staticRead();
  const browser=context||await getContext?.();
  if(!browser)return staticRead();
@@ -252,10 +254,22 @@ export function knownProcurementUrls(item={}){
   ?['https://detail.youzan.com/show/goods?alias=2osy35s5abbdhtd']:[];
 }
 export async function alternativeProcurementCost(item,{deadline=Date.now()+90000,maxDetails=8,search=searchExternalImages,detail=readPublicProcurementDetail,fingerprint=imageFingerprints,matchCorrections={},context,getContext}={}){
- const target=procurementTarget(item),checkedAt=new Date().toISOString(),report={status:'incomplete',averageCNY:null,samples:[],purchasableOffers:[],sellerCount:0,verification:PUBLIC_PROCUREMENT_VERIFICATION,sourcePlanVersion:procurementSourcePlanVersion(item),checkedAt,target,diagnostics:[],searched:0,detailCheckedCount:0,searchResults:[],unsupportedTargets:0,duplicateUrls:0};
+ const target=procurementTarget(item),checkedAt=new Date().toISOString(),report={status:'incomplete',averageCNY:null,samples:[],purchasableOffers:[],nativeSupplierQuotes:[],sellerCount:0,verification:PUBLIC_PROCUREMENT_VERIFICATION,sourcePlanVersion:procurementSourcePlanVersion(item),checkedAt,target,diagnostics:[],searched:0,detailCheckedCount:0,searchResults:[],unsupportedTargets:0,duplicateUrls:0};
  const diagnose=row=>{if(report.diagnostics.length<16)report.diagnostics.push({...row,source:row.source?diagnosticText(row.source,32):undefined,url:row.url&&row.url.length<=512?canonicalProcurementUrl(row.url)||undefined:undefined,reason:diagnosticText(row.reason)})};
  if(['accountId','id','title','image'].some(key=>!target[key])){diagnose({stage:'target',reason:'target_identity_missing'});return {...report,reason:'target_identity_missing'};}
  if(Date.now()>=deadline)return {...report,status:'deferred',reason:'budget_exhausted'};
+ // Known exact catalogue URLs can supply a useful native observation even if
+ // image comparison cannot run. This does not assert a physical match or cost.
+ const prefetched=new Map();
+ if(isAlterNarberalTarget(item)){
+  try{
+   const quote=await detail(ALTER_NARBERAL_URL,{item,context,getContext,deadline});
+   prefetched.set(ALTER_NARBERAL_URL,quote);report.detailCheckedCount++;
+   if(quote.status!=='quoted')diagnose({source:'alter_shanghai',reason:quote.reason,url:ALTER_NARBERAL_URL,...(quote.diagnostic?{detail:safeProcurementDiagnostic(quote.diagnostic)}:{})});
+   const native=quote.nativeObservation&&normalizeNativeSupplierDetail(item,quote.nativeObservation);
+   if(native&&!rejected(matchCorrections,item,quote))report.nativeSupplierQuotes.push(native);
+  }catch(error){prefetched.set(ALTER_NARBERAL_URL,{status:'unavailable',reason:'detail_read_error',reviewComplete:false});report.detailCheckedCount++;diagnose({source:'alter_shanghai',reason:'detail_read_error',url:ALTER_NARBERAL_URL})}
+ }
  const own=await fingerprint(verifiedProcurementOwnPrimaryImage(item)||item.image);if(!own){diagnose({stage:'target',reason:'target_image_unavailable'});return {...report,status:'unavailable',reason:'target_image_unavailable'};}
  const seen=new Set();let sourcesCompleted=0,sourceFailure=false;
  const selectCandidates=(rows,summary)=>{const unique=new Set(),accepted=[];for(const row of rows){const url=canonicalProcurementUrl(row.url);let reason;
@@ -266,7 +280,7 @@ export async function alternativeProcurementCost(item,{deadline=Date.now()+90000
  }return accepted;};
  const consume=async rows=>{for(const row of rows){if(Date.now()>=deadline||seen.size>=maxDetails)return;
   const url=canonicalProcurementUrl(row.url);if(!url||seen.has(url))continue;seen.add(url);
-  try{const quote=await detail(url,{item,context,getContext,deadline});report.detailCheckedCount++;
+  try{const quote=prefetched.has(url)?prefetched.get(url):await detail(url,{item,context,getContext,deadline});if(!prefetched.has(url))report.detailCheckedCount++;
    if(quote.status!=='quoted'){if(quote.status==='unavailable'||quote.status==='error'||quote.reviewComplete===false)sourceFailure=true;diagnose({source:procurementSource(url),reason:quote.reason,url,...(quote.diagnostic?{detail:safeProcurementDiagnostic(quote.diagnostic)}:{})});continue}
    if(rejected(matchCorrections,item,quote)){diagnose({source:quote.source,reason:'rejected_by_memory',url});continue}
    const query=externalImageQueries(item.title)[0],candidate=colorText([quote.brand,quote.series,quote.detailTitle,quote.selectedVariant].filter(Boolean).join(' '));
@@ -292,12 +306,14 @@ export async function alternativeProcurementCost(item,{deadline=Date.now()+90000
     const physicalCompatible=guard.accepted||guard.reason==='condition_or_packaging_mismatch';
     const catalogIdentity=physicalCompatible&&quote.condition==='retail_unspecified'&&!sealConflict.test(candidateOriginal)&&titleMatch>=.62
      ?reviewedProcurementCatalogIdentity({item,quote,ownPrimary:own,sourcePrimary:fp}):null;
-    if(catalogIdentity)report.purchasableOffers.push({...quote,checkedAt:new Date().toISOString(),verification:PUBLIC_PURCHASABLE_VERIFICATION,
+    if(catalogIdentity){const native=report.nativeSupplierQuotes.find(value=>value.canonicalUrl===quote.canonicalUrl);if(native)native.identity={status:'catalog_only',evidence:'目录款式比对记录 '+catalogIdentity.id+'；不包含未拆封保证'};}
+    if(catalogIdentity&&quote.shippingKnown===true)report.purchasableOffers.push({...quote,checkedAt:new Date().toISOString(),verification:PUBLIC_PURCHASABLE_VERIFICATION,
      target,catalogIdentity,eligibility:'condition_unconfirmed',condition:'retail_unspecified',
      identity:{method:'reviewed_catalog_identity',accepted:true,titleScore:titleMatch,primaryImageScore}});
-    diagnose({source:quote.source,reason:'sealed_condition_unconfirmed',url,titleScore:titleMatch,primaryImageScore,purchasableOffer:Boolean(catalogIdentity)});continue;
+    diagnose({source:quote.source,reason:'sealed_condition_unconfirmed',url,titleScore:titleMatch,primaryImageScore,purchasableOffer:Boolean(catalogIdentity&&quote.shippingKnown===true)});continue;
    }
    if(!guard.accepted||!(primaryImageScore>=.98)||titleMatch<.62){diagnose({source:quote.source,reason:guard.accepted?'identity_unconfirmed':guard.reason,url,titleScore:titleMatch,primaryImageScore});continue}
+   if(quote.shippingKnown!==true){diagnose({source:quote.source,reason:'shipping_destination_unconfirmed',url});continue}
    report.samples.push({...quote,sellerIdentityKey:procurementSellerIdentity(quote.sellerName),checkedAt:new Date().toISOString(),verification:PUBLIC_PROCUREMENT_VERIFICATION,target,identity:{accepted:true,titleScore:titleMatch,primaryImageScore}});
    if(verifiedPublicCostEvidence(report.samples,{target}).ready)return;
   }catch(e){sourceFailure=true;diagnose({source:procurementSource(url),reason:String(e?.message||e).slice(0,160),url})}

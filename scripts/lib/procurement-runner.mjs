@@ -2,6 +2,7 @@ import { procurementSourcePlanVersion,currentProcurementSourcePlan } from './alt
 import { mapLimit } from './worker-pool.mjs';
 import { bindProcurementTarget,verifiedPublicProcurementCache,sameProcurementTarget,verifiedPurchasableProcurementOffers } from './procurement-reference.mjs';
 import { knownProcurementUrls } from './procurement-sources.mjs';
+import { currentNativeSupplierQuotes } from './native-supplier-quotes.mjs';
 
 const logText=value=>String(value??'').replace(/<[^>]*>/g,' ').replace(/https?:\/\/[^\s"'<>]+/gi,'[url omitted]').replace(/\b(?:set-cookie|cookie|authorization|token|password|session)\s*[:=][^,;\n]*/gi,'[sensitive omitted]').replace(/\s+/g,' ').trim().slice(0,160);
 
@@ -9,7 +10,8 @@ const logText=value=>String(value??'').replace(/<[^>]*>/g,' ').replace(/https?:\
 // Xianyu access state, with their own bounded admission and shared scan deadline.
 export async function runPublicProcurement(buckets,{lookup,hydrate=async item=>item,deadline,limit=8,concurrency=2,priorityItemIds=[],matchCorrections={},now=Date.now,log=()=>{}}={}){
  const results=new Map(),tasks=[];
- const currentOffers=(reference,item)=>({...reference,purchasableOffers:verifiedPurchasableProcurementOffers({...item,procurementSource:reference},{now:now(),matchCorrections})});
+ const currentOffers=(reference,item)=>({...reference,purchasableOffers:verifiedPurchasableProcurementOffers({...item,procurementSource:reference},{now:now(),matchCorrections}),
+  nativeSupplierQuotes:currentNativeSupplierQuotes({...item,nativeSupplierQuotes:[],procurementSource:reference},{now:now(),matchCorrections})});
  for(let n=0;n<Math.max(0,...buckets.map(b=>b.length));n++)for(const bucket of buckets)if(bucket[n])tasks.push(bucket[n]);
  // Priorities reorder only existing, account-bound tasks. The cache, retry and
  // admission checks below apply unchanged to every prioritized task.
@@ -31,7 +33,7 @@ export async function runPublicProcurement(buckets,{lookup,hydrate=async item=>i
   reference=bindProcurementTarget({...reference,sourcePlanVersion:procurementSourcePlanVersion(observedItem),attempted:true,checkedAt:reference.checkedAt||new Date(now()).toISOString()},observedItem);
   reference=currentOffers(reference,observedItem);
   results.set(key,reference);
-  log({key,status:reference.status,reason:logText(reference.reason),sellers:reference.sellerCount||0,purchasableOffers:reference.purchasableOffers.length,averageCNY:reference.averageCNY??null,searched:reference.searched||0,detailCheckedCount:reference.detailCheckedCount||0,unsupportedTargets:reference.unsupportedTargets||0,duplicateUrls:reference.duplicateUrls||0,searchResults:(reference.searchResults||[]).slice(0,4),diagnostics:(reference.diagnostics||[]).slice(0,16)});
+  log({key,status:reference.status,reason:logText(reference.reason),sellers:reference.sellerCount||0,purchasableOffers:reference.purchasableOffers.length,nativeSupplierQuotes:reference.nativeSupplierQuotes.length,averageCNY:reference.averageCNY??null,searched:reference.searched||0,detailCheckedCount:reference.detailCheckedCount||0,unsupportedTargets:reference.unsupportedTargets||0,duplicateUrls:reference.duplicateUrls||0,searchResults:(reference.searchResults||[]).slice(0,4),diagnostics:(reference.diagnostics||[]).slice(0,16)});
  });
  return results;
 }

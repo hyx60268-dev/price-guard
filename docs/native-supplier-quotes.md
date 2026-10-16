@@ -60,3 +60,27 @@ Promotion requires a separate source-specific adapter and verified physical offe
 identity, current payable selected-SKU price/stock and applicable domestic freight.
 A reliable authoritative supplier may qualify on one actual offer; the legacy
 multi-seller benchmark rule is not an authority substitute.
+
+## ALTER AL20744 public HTTP producer
+
+The production public reader now parses the bounded public HTML response for the
+reviewed AL20744 catalogue URL without opening a browser, running page scripts,
+following redirects, or accessing cart/account endpoints. It recognizes only the
+observed full-payment template and checks model, reissue, scale, complete-product
+category, one-unit quantity, matching RMB price, visible stock text and limit.
+Template changes fail closed. HTTP access errors are not retried through another
+route.
+
+A native observation preserves the actual fetch time and response-content SHA-256.
+It can be retained before image comparison, but its physical identity remains
+pending until the separate matching evidence supports it. Published ZTO free
+shipping is recorded as a source term; China alone does not confirm receiving-region
+coverage. Applicable freight and landed cost stay unknown. The source does not
+establish unopened condition. None of these observations supplies automatic cost,
+profit, or full-cycle completion. The page displays the one-unit purchase limit.
+
+The source-layer proof script continues to report automaticCostAccepted separately.
+It can validate publication of an incomplete native quote, but that is not a pass
+of the whole-inventory cost acceptance. It requires current own-detail hydration;
+unit tests and captured-response replays using historical target fixtures do not
+establish that the current owned listing is still open or unchanged.

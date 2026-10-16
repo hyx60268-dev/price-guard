@@ -1,5 +1,4 @@
 import {createHash} from 'node:crypto';
-import {openContext} from './lib/browser.mjs';
 import {readPublicProcurementDetail,alternativeProcurementCost} from './lib/procurement-sources.mjs';
 import {ALTER_NARBERAL_URL} from './lib/alter-procurement.mjs';
 import {verifiedProcurementAuthority} from './lib/procurement-authority.mjs';
@@ -9,16 +8,17 @@ import {runPublicProcurement} from './lib/procurement-runner.mjs';
 import {verifiedProcurementOwnPrimaryImage} from './lib/reviewed-procurement-catalog.mjs';
 import {compactDashboardResult} from './lib/publish.mjs';
 import {visiblePurchasableOffers} from '../public/procurement-view.js';
+import {validNativeSupplierQuote,nativeSupplierQuotesMarkup} from '../public/native-supplier-quotes.js';
 import {imageFingerprints,primaryProductSimilarity,imageFingerprintDiagnostic} from './lib/image.mjs';
 import {titleScore} from './lib/rules.mjs';
 import {externalImageQueries} from './lib/external-images.mjs';
 import {verifiedPurchasableProcurementOffers} from './lib/procurement-reference.mjs';
-const opened=await openContext();let passed=true,observedQuote=null;
+let passed=true,observedQuote=null;
 try{
  for(const [label,title]of [['target','ALTER オーバーロード ナーベラル・ガンマ so-bin Ver. フィギュア'],['wrong_character','ALTER アルベド so-bin Ver. 1/8'],['wrong_scale','ALTER ナーベラル・ガンマ so-bin Ver. 1/7']]){
-  const quote=await readPublicProcurementDetail(ALTER_NARBERAL_URL,{item:{title},context:opened.context,deadline:Date.now()+45000});
+  const quote=await readPublicProcurementDetail(ALTER_NARBERAL_URL,{item:{title},deadline:Date.now()+45000});
   const authority=quote.status==='quoted'?verifiedProcurementAuthority(quote):null;
-  const valid=label==='target'?quote.status==='quoted'&&quote.skuId==='AL20744'&&quote.unitCNY>0&&quote.inStock===true&&quote.shippingCNY===0&&quote.purchaseLimit===1&&quote.shippingScope==='source_displayed_zto_delivery'&&authority?.type==='reviewed_retailer':quote.reason===(label==='wrong_scale'?'target_scale_mismatch':'target_product_mismatch');
+  const valid=label==='target'?quote.status==='quoted'&&quote.skuId==='AL20744'&&quote.unitCNY>0&&quote.inStock===true&&quote.shippingKnown===false&&quote.shippingCNY===null&&quote.purchaseLimit===1&&quote.shippingScope==='source_displayed_zto_delivery'&&authority?.type==='reviewed_retailer'&&quote.provenance?.fetchedAt===quote.checkedAt:quote.reason===(label==='wrong_scale'?'target_scale_mismatch':'target_product_mismatch');
   if(label==='target')observedQuote=quote;
   console.log('[阿尔塔公开采购来源实测]',JSON.stringify({label,checkedAt:new Date().toISOString(),status:quote.status,reason:quote.reason,skuId:quote.skuId,unitCNY:quote.unitCNY,shippingCNY:quote.shippingCNY,deliveryTerms:quote.deliveryTerms,purchaseLimit:quote.purchaseLimit,inStock:quote.inStock,sourceReadAccepted:valid,condition:quote.condition,diagnostic:quote.diagnostic}));
   passed&&=valid;
@@ -34,7 +34,7 @@ try{
  const results=await runPublicProcurement([[{item:sourceItem,prior:{}}]],{
   deadline:Date.now()+90000,limit:1,concurrency:1,
   hydrate:async(item,prior)=>{hydrated=await loader.hydrate(item,prior);return hydrated;},
-  lookup:(item,options)=>alternativeProcurementCost(item,{...options,context:opened.context,
+  lookup:(item,options)=>alternativeProcurementCost(item,{...options,
    fingerprint:async url=>{const value=await imageFingerprints(url);observedFingerprints.set(url,value);return value;},
    search:async()=>[],detail:async url=>url===ALTER_NARBERAL_URL?observedQuote:{status:'unsupported',reason:'proof_source_outside_scope',reviewComplete:false}})
  });
@@ -56,16 +56,23 @@ try{
  const publishedRow={...sourceItem,procurementSource:reference};
  const purchasableOffers=verifiedPurchasableProcurementOffers(publishedRow);
  const compact=compactDashboardResult({items:[publishedRow]}).items[0];
+ const nativeQuote=compact.nativeSupplierQuotes?.[0];
+ const nativeQuotePublished=validNativeSupplierQuote(nativeQuote,compact)&&nativeQuote.skuId==='AL20744'&&
+  nativeQuote.nativePrice===observedQuote.unitCNY&&nativeQuote.checkedAt===observedQuote.provenance.fetchedAt&&
+  nativeQuote.target.id===sourceItem.id&&nativeQuote.purchaseLimit===1&&nativeQuote.shipping.applicability==='unconfirmed'&&
+  reference.averageCNY===null&&reference.samples.length===0&&!reference.selectedQuote&&nativeSupplierQuotesMarkup(compact).includes('尚未计入成本');
  const purchasableOfferPublishedCandidate=purchasableOffers.length===1&&purchasableOffers[0].skuId==='AL20744'&&
   purchasableOffers[0].price===observedQuote.price&&purchasableOffers[0].purchaseLimit===1&&
   reference.averageCNY===null&&reference.samples.length===0&&!reference.selectedQuote&&
   compact.image===listingImage&&visiblePurchasableOffers(compact).length===1;
  console.log('[阿尔塔公开同款全流程实测]',JSON.stringify({checkedAt:new Date().toISOString(),targetId:sourceItem.id,status:reference.status,reason:reference.reason,detailCheckedCount:reference.detailCheckedCount,
-  entry:'profile_card_hydrate_runner_compact',sourceReadAccepted:passed,purchasableOfferPublishedCandidate,automaticCostAccepted,averageCNY:reference.averageCNY,
+  entry:'profile_card_hydrate_runner_compact',sourceReadAccepted:passed,purchasableOfferPublishedCandidate,nativeQuotePublished,automaticCostAccepted,averageCNY:reference.averageCNY,
+  nativeQuote:nativeQuote?{skuId:nativeQuote.skuId,nativePrice:nativeQuote.nativePrice,currency:nativeQuote.currency,checkedAt:nativeQuote.checkedAt,availability:nativeQuote.availability,condition:nativeQuote.condition,shipping:nativeQuote.shipping,purchaseLimit:nativeQuote.purchaseLimit}:null,
   purchasableOffers:purchasableOffers.map(offer=>({skuId:offer.skuId,price:offer.price,shippingCNY:offer.shippingCNY,inStock:offer.inStock,purchaseLimit:offer.purchaseLimit,deliveryTerms:offer.deliveryTerms,eligibility:offer.eligibility,condition:offer.condition,checkedAt:offer.checkedAt,verification:offer.verification,identity:offer.identity})),
   identityDiagnostics,diagnostics:reference.diagnostics,privateInventoryVerified:false}));
  // A displayed quote with unknown sealing is distinct from automatic cost.
- passed&&=purchasableOfferPublishedCandidate||automaticCostAccepted;
+ // This source-layer proof can pass with an honestly incomplete native quote.
+ // Full-cycle cost acceptance remains separate and still counts this as missing.
+ passed&&=nativeQuotePublished||purchasableOfferPublishedCandidate||automaticCostAccepted;
 }catch(error){console.error('[阿尔塔公开实测错误]',String(error?.message||error).replace(/https?:\/\/\S+/g,'[url omitted]').slice(0,200));passed=false}
-finally{await opened.browser.close()}
 if(!passed)process.exitCode=1;
