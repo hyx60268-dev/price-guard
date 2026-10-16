@@ -11,6 +11,7 @@ import { cloudCostStatus } from './cloud-cost-status.mjs';
 import { pricingCoverage } from './pricing-coverage.mjs';
 import { scopeCycleCoverage } from './cycle-coverage.mjs';
 import { FRONTEND_VERSION } from '../../public/build-version.js';
+import { withRakumaDiscovery } from './rakuma-discovery-hints.mjs';
 
 function safeUsername(value=''){return String(value).trim().toLowerCase().replace(/[^a-z0-9_-]/g,'').slice(0,48)}
 function safeEmail(value=''){
@@ -31,7 +32,8 @@ function compactComparison(value={}){
   const keep=['searchComplete','status','evidenceStatus','raiseGuardMinPrice','plausibleMinPrice','checkedAt','lastAttemptAt','ownLastAttemptAt','knownLastAttemptAt','lastFullAttemptAt','searchCheckedAt','knownRefresh','detailQueue','cacheReason','deferredReason','retryAt','rulesVersion','lowestPrice','lowestUrl','searchUrl','marketMedianPrice','marketMinPrice','marketMaxPrice','marketSampleCount','cardCount','detailCheckedCount','preliminaryCount','unresolvedCandidateCount','uncheckedLowerCandidateCount','unconfirmedLowerCandidateCount','unconfirmedLowerCount','matchLabel','matchConfidence','averageCNY','verifiedCount','sellerCount'];
   const output={};
   for(const key of keep)if(value[key]!==undefined)output[key]=value[key];
-  if(value.audit)output.audit={accountId:value.audit.accountId,ownItemId:value.audit.ownItemId,rulesVersion:value.audit.rulesVersion};
+  if(value.audit)output.audit={accountId:value.audit.accountId,ownItemId:value.audit.ownItemId,rulesVersion:value.audit.rulesVersion,
+    ...(value.audit.discoveryBinding?{discoveryBinding:value.audit.discoveryBinding}:{})};
   output.candidates=(value.candidates||[]).slice(0,5).map(compactCandidate).filter(Boolean);
   output.rejected=(value.rejected||[]).slice(-12).map(compactCandidate).filter(Boolean);
   if(value.samples)output.samples=value.samples.slice(0,5).map(compactCandidate).filter(Boolean);
@@ -163,10 +165,12 @@ export function dashboardSummary(result,changeSummary){
 export async function writeOutputs({root,result,previous,password}){
   await Promise.all(['data','public/data','state'].map(directory=>fs.mkdir(path.join(root,directory),{recursive:true})));
   const ownership=buildOwnedOffers([...(result.accounts||[]),...(result.managedAccounts||[])],result.items||[]);
+  const previousByKey=new Map((previous?.items||[]).map(item=>[JSON.stringify([item.accountId,item.id]),item]));
   const nativeOwnedSellers=ownedNativeSupplierSellerKeys([...(result.accounts||[]),...(result.managedAccounts||[])],result.items||[]);
   result.items=(result.items||[]).map(raw=>{
     const native=Object.hasOwn(raw,'nativeSupplierQuotes')?{...raw,nativeSupplierQuotes:currentNativeSupplierQuotes(raw,{matchCorrections:result.matchCorrections,ownedSellerKeys:nativeOwnedSellers})}:raw;
-    const item=currentPurchasableOffers(native,result.matchCorrections);
+    const item=withRakumaDiscovery(currentPurchasableOffers(native,result.matchCorrections),
+      previousByKey.get(JSON.stringify([raw.accountId,raw.id]))||{},{matchCorrections:result.matchCorrections,ownedOffers:ownership});
     const clean=excludeOwnedOffers(item,ownership);if(clean.yahoo===item.yahoo&&clean.rakuma===item.rakuma&&clean.mercari===item.mercari)return item;
     const decision=pricingDecision(clean);return {...clean,...decision,lowestPrice:decision.lowest?.price??clean.ownPrice,lowestUrl:decision.lowest?.url||clean.url,
       afterProfitJPY:Number.isFinite(clean.costJPY)?decision.recommendedPrice-clean.costJPY:null,

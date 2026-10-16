@@ -10,6 +10,8 @@ import {
 } from './rules.mjs';
 import { exactQueryFor } from './yahoo.mjs';
 import { parseShopProfile } from '../../public/shop-profile.js';
+import { createRakumaHintSession,definitiveRakumaRejection } from './rakuma-discovery-hints.mjs';
+import { marketplaceShippingEvidence } from './marketplace-shipping-evidence.mjs';
 
 const UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140 Safari/537.36';
 let requestGate=Promise.resolve(),nextRequestAt=0;
@@ -229,14 +231,23 @@ async function observedRakumaPage(url,settings,dependencies){
   const page=dependencies.fetchPage?await dependencies.fetchPage(url,settings):dependencies.fetchHtml?{html:await dependencies.fetchHtml(url,settings),observedAt:new Date().toISOString()}:await fetchRakumaPage(url,settings,dependencies);
   const observed=typeof page?.observedAt==='number'?page.observedAt:Date.parse(page?.observedAt||'');
   if(typeof page?.html!=='string'||!Number.isFinite(observed)||observed>Date.now())throw new Error('ラクマ page observation unavailable');
-  return {html:page.html,observedAt:new Date(observed).toISOString()};
+  return {...page,html:page.html,observedAt:new Date(observed).toISOString()};
+}
+
+// URL-only recall has no independent search card. Require the real response
+// target, not a request URL copied onto redirected or provenance-free HTML.
+export function rakumaDetailPageBound(page,url){
+  if(page?.status!==200||page.fromCache!==false||page.redirected!==false)return false;
+  const reported=['url','finalUrl','finalURL','responseUrl','responseURL'].filter(field=>page[field]!==undefined);
+  if(!reported.length)return false;
+  return reported.every(field=>{try{return new URL(page[field]).href===new URL(url).href}catch{return false}});
 }
 
 export async function fetchRakumaItem(item,settings={},dependencies={}){
   const url=item.url||item.ownUrl;
   if(!/^https:\/\/item\.fril\.jp\/[a-f0-9]+\/?$/i.test(url||''))throw new Error('ラクマ商品链接无效');
   const page=await observedRakumaPage(url,settings,dependencies);
-  return {...extractRakumaDetail(page.html,url),sourceObservedAt:page.observedAt};
+  return {...extractRakumaDetail(page.html,url),sourceObservedAt:page.observedAt,sourceTargetVerified:rakumaDetailPageBound(page,url)};
 }
 
 export function extractRakumaDetail(html='',url=''){
@@ -348,6 +359,8 @@ export async function rakumaCompare(item,settings={},dependencies={}){
   const getPage=async url=>{const page=await observedRakumaPage(url,settings,dependencies);observations.push(Date.parse(page.observedAt));return page;};
   const query=exactQueryFor(item.title),searchUrl=`https://fril.jp/s?query=${encodeURIComponent(query)}&transaction=selling&sort=sell_price&order=asc`;
   const context=createRakumaVerificationContext(item,dependencies),{ownDescription}=context,rejected=[];
+  const hints=createRakumaHintSession(item,settings,dependencies);
+  const selectedHint=hints.next();
   const collected=new Map();let nextPage=searchUrl,searchPages=0;
   const maxPages=Math.max(1,Math.min(10,Number(settings.maxRakumaSearchPages)||5));
   while(nextPage&&searchPages<maxPages){
@@ -363,25 +376,65 @@ export async function rakumaCompare(item,settings={},dependencies={}){
     if(decision.accepted)screened.push(decision.card);else rejected.push(decision.rejection);
   }
   screened.sort((a,b)=>a.price-b.price||b.titleScore-a.titleScore);
-  const preliminary=screened.slice(0,Math.max(1,Number(settings.maxRakumaDetailChecks)||6));
+  const hint=selectedHint,limit=Math.max(1,Number(settings.maxRakumaDetailChecks)||6);
+  const preliminary=[...(hint?[{id:hint.id,url:hint.url,discoveryHint:true}]:[]),...screened.filter(card=>card.id!==hint?.id)].slice(0,limit);
   const competitors=[];
   for(const card of preliminary){
+    hints.attempted(card.id,card.discoveryHint===true);
     try{
       const page=await getPage(card.url),detail=extractRakumaDetail(page.html,card.url);
-      const decision=await verifyRakumaDetail(item,card,detail,settings,{...dependencies,observedAt:page.observedAt},context);
+      const bound=rakumaDetailPageBound(page,card.url);
+      const freight=marketplaceShippingEvidence({source:'rakuma',chargeKnown:detail.shippingKnown,proofSource:'listing_shipping_fee_row',
+        amount:detail.shippingJPY,currency:detail.currency,destination:settings.rakumaShippingDestination??'JP',
+        title:detail.title,description:detail.description,feeText:detail.shippingText,method:detail.shippingMethod});
+      let decision;
+      if(card.discoveryHint){
+        if(!bound)throw new Error('ラクマ known detail response target unproven');
+        const own=item.sourceDetail;
+        const currentItem={...item,title:own.title,description:own.description,category:own.category,
+          image:own.images[0],images:own.images,yahoo:undefined,
+          sourceDetail:{...own,description:[own.description,own.condition].filter(Boolean).join('\n')}};
+        const currentCard={id:detail.id,url:detail.url,title:detail.title,price:detail.price,sellerId:detail.sellerId,
+          category:detail.category,image:detail.images[0],itemStatus:detail.status};
+        const currentContext=createRakumaVerificationContext(currentItem,dependencies);
+        const screened=screenRakumaCard(currentItem,currentCard,settings,currentContext);
+        const identity=offerIdentityGuard({ownTitle:currentItem.title,ownDescription:currentContext.ownDescription,candidateTitle:detail.title,
+          candidateDescription:detail.description,ownCategory:currentContext.ownCategory,candidateCategory:detail.category,checkImages:false});
+        decision=detail.status==='SOLD'?{accepted:false,rejection:{...currentCard,reason:'not_open'}}:
+          detail.sellerId&&detail.sellerId===currentContext.ownSellerId?{accepted:false,rejection:{...currentCard,reason:'own_seller'}}:
+          !screened.accepted&&definitiveRakumaRejection(currentItem,detail,screened.rejection.reason)?{accepted:false,rejection:screened.rejection}:
+          !identity.accepted&&definitiveRakumaRejection(currentItem,detail,identity.reason)?{accepted:false,rejection:{...currentCard,reason:identity.reason}}:
+          !detail.sellerId?{accepted:false,rejection:{...currentCard,reason:'seller_unconfirmed'}}:
+          !detail.images.length?{accepted:false,rejection:{...currentCard,reason:'image_unavailable'}}:
+          detail.currency!=='JPY'?{accepted:false,rejection:{...currentCard,reason:'currency_unconfirmed'}}:
+          !freight.shippingChargeKnown?{accepted:false,rejection:{...currentCard,reason:'shipping_unconfirmed'}}:
+          !screened.accepted?{accepted:false,rejection:screened.rejection}:
+          await verifyRakumaDetail(currentItem,currentCard,{...detail,description:[detail.description,detail.condition].filter(Boolean).join('\n')},settings,{...dependencies,observedAt:page.observedAt},currentContext);
+      }else decision=await verifyRakumaDetail(item,card,detail,settings,{...dependencies,observedAt:page.observedAt},context);
+      if(!decision.accepted)decision.rejection.definitive=bound&&definitiveRakumaRejection(item,detail,decision.rejection.reason);
       if(decision.accepted)competitors.push(decision.competitor);else rejected.push(decision.rejection);
-    }catch(error){if(error?.code==='RAKUMA_SOURCE_ACCESS_DENIED')throw error;rejected.push({...card,reason:'detail_error',error:String(error)})}
+      if(bound){
+        if(decision.accepted&&detail.sellerId&&detail.images.length&&detail.currency==='JPY'&&freight.shippingChargeKnown)hints.observed(decision.competitor,page.observedAt,card.discoveryHint===true);
+        else if(!decision.accepted)hints.rejected(card.id,decision.rejection.reason,page.observedAt,decision.rejection.definitive);
+      }
+      if(!decision.accepted&&!decision.rejection.definitive)hints.unknown(card.discoveryHint);
+    }catch(error){hints.unknown(card.discoveryHint);if(error?.code==='RAKUMA_SOURCE_ACCESS_DENIED')throw error;rejected.push({...card,reason:'detail_error',error:String(error)})}
   }
   competitors.sort((a,b)=>a.price-b.price);
-  const unresolved=[...screened.slice(preliminary.length),...rejected.filter(row=>['availability_unconfirmed','shipping_unconfirmed','detail_error','sale_description_unavailable','collectible_variant_image_unconfirmed','primary_variant_unconfirmed'].includes(row.reason))];
+  const selected=new Set(preliminary.map(card=>card.id));
+  const unresolved=[...screened.filter(card=>!selected.has(card.id)),...rejected.filter(row=>['availability_unconfirmed','shipping_unconfirmed','seller_unconfirmed','currency_unconfirmed','detail_error','sale_description_unavailable','collectible_variant_image_unconfirmed','primary_variant_unconfirmed'].includes(row.reason))];
+  const unresolvedPrices=unresolved.map(row=>row.price).filter(value=>Number.isFinite(value)&&value>0);
+  const hintUnknown=hint&&rejected.some(row=>row.id===hint.id&&!row.definitive);
+  const hintStats=hints.stats(),hintPendingCount=hints.pending();
   const lowerUnconfirmed=unresolved.filter(row=>Number(row.price)<Number(item.ownPrice));
   return {
-    audit:{ownItemId:item.id,accountId:item.accountId||null,ownDetailLoaded:Boolean(ownDescription.trim())},
-    rulesVersion:MATCHING_RULES_VERSION,query,searchUrl,searchPages,searchComplete,status:!searchComplete||lowerUnconfirmed.length||!ownDescription.trim()||!competitors.length&&unresolved.length?'incomplete':'ok',
+    audit:{ownItemId:item.id,accountId:item.accountId||null,ownDetailLoaded:Boolean(ownDescription.trim()),discoveryBinding:hints.binding()},
+    rulesVersion:MATCHING_RULES_VERSION,query,searchUrl,searchPages,searchComplete,status:!searchComplete||hintUnknown||hintPendingCount||lowerUnconfirmed.length||!ownDescription.trim()||!competitors.length&&unresolved.length?'incomplete':'ok',
     lowestPrice:competitors[0]?.price??null,lowestUrl:competitors[0]?.url??searchUrl,
     candidates:competitors.slice(0,5),cardCount:cards.length,preliminaryCount:preliminary.length,
     detailCheckedCount:preliminary.length,competitorCount:competitors.length,rejected:rejected.slice(-30),
-    unconfirmedLowerCount:lowerUnconfirmed.length,plausibleMinPrice:unresolved.length?Math.min(...unresolved.map(row=>row.price)):null,
+    hintStats,hintPendingCount,
+    unconfirmedLowerCount:lowerUnconfirmed.length,plausibleMinPrice:unresolvedPrices.length?Math.min(...unresolvedPrices):null,
     matchLabel:lowerUnconfirmed.length?'存在尚未核验的ラクマ低价候选':competitors.length?'已核验ラクマ在售同款':'ラクマ未发现同款',
     checkedAt:new Date(Math.min(...observations)).toISOString()
   };
