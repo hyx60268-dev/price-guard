@@ -51,11 +51,12 @@ jobs:
           XIANYU_STORAGE_STATE_GZIP_B64: ${{ secrets.XIANYU_STORAGE_STATE_GZIP_B64 }}
           XIANYU_STORAGE_STATE_B64: ${{ secrets.XIANYU_STORAGE_STATE_B64 }}
       - uses: actions/cache/save@v4
+        if: always()
         with:
           path: |
             state
             public/data/share-images
-          key: price-guard-state-${{ github.run_id }}
+          key: price-guard-state-${{ github.run_id }}-${{ github.run_attempt }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

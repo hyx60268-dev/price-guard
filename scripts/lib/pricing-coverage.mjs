@@ -7,6 +7,13 @@ export function cachedComparison(value,reason='fresh_cache'){
   if(!['ok','incomplete'].includes(evidenceStatus))return null;
   return {...value,status:'cached',evidenceStatus,cacheReason:reason==='fresh_cache'&&value.cacheReason==='request_error'?'request_error':reason};
 }
+// Deferral is an attempted read, not fresh evidence. Keep accepted quote and
+// broad-search clocks unchanged; the existing request_error policy disables it.
+export function deferredYahooComparison(prior={},error={}){
+  return {...prior,status:prior.checkedAt?'cached':'deferred_budget',evidenceStatus:prior.evidenceStatus||prior.status,
+    checkedAt:prior.checkedAt||null,cacheReason:'request_error',deferredReason:error.reason||'request_deadline',
+    retryAt:error.retryAt??null};
+}
 export function comparisonIncomplete(value={}){
   return !['ok','cached'].includes(value.evidenceStatus||value.status)||value.cacheReason==='request_error';
 }
