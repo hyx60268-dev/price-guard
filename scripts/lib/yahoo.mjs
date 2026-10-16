@@ -1,4 +1,5 @@
 import { isOwnedOffer } from '../../public/owned-offers.js';
+import { createRequestCooldown,retryAfterDeadline } from './request-cooldown.mjs';
 import { parseShopProfile } from '../../public/shop-profile.js';
 import {planYahooDetailQueue} from './yahoo-detail-queue.mjs';
 import { knownYahooCandidates,yahooTargetShipping } from './yahoo-known-refresh.mjs';
@@ -15,23 +16,8 @@ const UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, l
 const DEFAULT_REQUEST_INTERVAL_MS=5500;
 const DEFAULT_RATE_LIMIT_COOLDOWN_MS=60000;
 let requestIntervalMs=DEFAULT_REQUEST_INTERVAL_MS,rateLimitCooldownMs=DEFAULT_RATE_LIMIT_COOLDOWN_MS;
-let requestGate=Promise.resolve(),nextRequestAt=0;
-
-function wait(milliseconds){return new Promise(resolve=>setTimeout(resolve,milliseconds))}
-
-function yahooRequestTurn(){
-  const turn=requestGate.then(async()=>{
-    const delay=Math.max(0,nextRequestAt-Date.now());
-    if(delay)await wait(delay);
-    nextRequestAt=Date.now()+requestIntervalMs;
-  });
-  requestGate=turn.catch(()=>{});
-  return turn;
-}
-
-function yahooCooldown(milliseconds){
-  nextRequestAt=Math.max(nextRequestAt,Date.now()+milliseconds);
-}
+const requestCooldown=createRequestCooldown({intervalMs:()=>requestIntervalMs});
+export function yahooRequestStats(){return requestCooldown.stats()}
 
 function applyYahooSettings(settings={}){
   requestIntervalMs=Math.max(4000,Number(settings.yahooRequestIntervalMs)||DEFAULT_REQUEST_INTERVAL_MS);
@@ -97,18 +83,18 @@ export function extractCategoryIds(raw={}){
 async function fetchHtml(url,attempts=2){
   let last;
   for(let attempt=1;attempt<=attempts;attempt++){
-    await yahooRequestTurn();
+    await requestCooldown.turn();
     const controller=new AbortController();
     const timeout=setTimeout(()=>controller.abort(),15000);
     try{
       const response=await fetch(url,{headers:{'user-agent':UA,'accept-language':'ja-JP,ja;q=0.9'},signal:controller.signal,redirect:'follow'});
       if(response.status===429){
-        const retryAfter=Number(response.headers.get('retry-after'));
-        const waitMs=Number.isFinite(retryAfter)&&retryAfter>0
-          ?Math.min(120000,retryAfter*1000)
-          :Math.min(120000,rateLimitCooldownMs*attempt);
-        yahooCooldown(waitMs);
-        if(attempt<attempts){console.warn(`[Yahoo 限流] ${Math.ceil(waitMs/1000)} 秒后重试 (${attempt}/${attempts})`);await new Promise(resolve=>setTimeout(resolve,waitMs));continue}
+        const now=Date.now();
+        const deadline=retryAfterDeadline(response.headers.get('retry-after'),now)
+          ??now+Math.min(120000,rateLimitCooldownMs*attempt);
+        requestCooldown.deferUntil(deadline);
+        // The shared gate owns the wait, including any later 429 extension.
+        if(attempt<attempts){console.warn(`[Yahoo 限流] ${Math.ceil((deadline-now)/1000)} 秒后重试 (${attempt}/${attempts})`);continue}
       }
       if(!response.ok) throw new Error(`HTTP ${response.status}`);
       const html=await response.text();
