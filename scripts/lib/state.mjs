@@ -1,3 +1,5 @@
+import { mergeScanAdmission } from './scan-admission.mjs';
+import { mergeSourceAccessHolds } from './source-access-hold.mjs';
 import { mergeYahooRequestAccess } from './yahoo-request-access.mjs';
 import { mergeExternalSearchAccess } from './search-access.mjs';
 import { mergeMerchantConfigs } from '../../public/merchant-config.js';
@@ -120,9 +122,11 @@ export function reconcileDurableState(cache={},published={}){
   });
   return {
     ...base,
+    scanAdmission:mergeScanAdmission(cache.scanAdmission,published.scanAdmission),
     ...(base.items?{items}:{}),
     externalSearchAccess:mergeExternalSearchAccess(cache.externalSearchAccess,published.externalSearchAccess),
     yahooRequestAccess:mergeYahooRequestAccess(cache.yahooRequestAccess,published.yahooRequestAccess),
+    rakumaRequestAccess:mergeSourceAccessHolds(cache.rakumaRequestAccess,published.rakumaRequestAccess),
     merchantMonitors:mergeMerchantConfigs(cache.merchantMonitors||[],published.merchantMonitors||[]),
     manualCosts:mergeManualCosts(cache.manualCosts||{},published.manualCosts||{}),
     dismissedDiscoveries:mergeDismissedDiscoveries(cache.dismissedDiscoveries||{},published.dismissedDiscoveries||{}),

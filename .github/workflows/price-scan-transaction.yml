@@ -1,0 +1,317 @@
+name: 价格扫描发布事务
+on:
+  workflow_call:
+    inputs:
+      pricing_engine:
+        type: string
+        default: legacy
+      full_audit:
+        type: boolean
+        default: false
+      priority_item_ids:
+        type: string
+        default: ''
+      cadence_epoch:
+        type: string
+        default: ''
+      cadence_slot:
+        type: string
+        default: ''
+      cadence_expected_sha:
+        type: string
+        default: ''
+      cadence_previous_artifact:
+        type: string
+        default: ''
+    outputs:
+      slot_report:
+        value: ${{ jobs.scan-and-publish.outputs.slot_report }}
+      admitted:
+        value: ${{ jobs.scan-and-publish.outputs.admitted }}
+      cost_exit:
+        value: ${{ jobs.scan-and-publish.outputs.cost_exit }}
+      coverage_exit:
+        value: ${{ jobs.scan-and-publish.outputs.coverage_exit }}
+      state_artifact:
+        value: ${{ jobs.scan-and-publish.outputs.state_artifact || inputs.cadence_previous_artifact }}
+permissions:
+  contents: read
+  issues: write
+  pages: write
+  id-token: write
+jobs:
+  cadence-wait:
+    if: inputs.cadence_epoch != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    permissions:
+      contents: read
+    outputs:
+      ready: ${{ steps.wait.outputs.ready }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - id: wait
+        run: node scripts/scan-admission.mjs wait
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CADENCE_EPOCH: ${{ inputs.cadence_epoch }}
+          CADENCE_SLOT: ${{ inputs.cadence_slot }}
+          CADENCE_EXPECTED_SHA: ${{ inputs.cadence_expected_sha }}
+  scan-and-publish:
+    needs: cadence-wait
+    if: ${{ !cancelled() && !failure() && ((inputs.cadence_epoch == '' && needs.cadence-wait.result == 'skipped') || (inputs.cadence_epoch != '' && needs.cadence-wait.result == 'success' && needs.cadence-wait.outputs.ready == 'true')) }}
+    outputs:
+      slot_report: ${{ steps.slot_report.outputs.slot_report }}
+      admitted: ${{ steps.admission.outputs.admitted }}
+      cost_exit: ${{ steps.cost.outputs.exit_code }}
+      coverage_exit: ${{ steps.coverage.outputs.exit_code }}
+      state_artifact: ${{ steps.checkpoint.outputs.artifact_name }}
+    # Hold the shared state/session lock for the entire restore-to-publish transaction.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.full_audit && 360 || 25 }}
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 恢复上次加密基准
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            state
+            public/data/share-images
+          key: price-guard-state-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.cadence_slot || 'single' }}
+          restore-keys: |
+            price-guard-state-
+      - name: 恢复上一槽已确认保存的加密状态
+        if: inputs.cadence_previous_artifact != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.cadence_previous_artifact }}
+          path: .cadence-state
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: 保守合并上一槽与当前缓存的冷却和完整状态
+        if: inputs.cadence_previous_artifact != ''
+        run: node scripts/restore-cadence-state.mjs
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          XIANYU_AUTH_PART_1: ${{ secrets.XIANYU_AUTH_PART_1 }}
+          XIANYU_AUTH_PART_2: ${{ secrets.XIANYU_AUTH_PART_2 }}
+          XIANYU_AUTH_PART_3: ${{ secrets.XIANYU_AUTH_PART_3 }}
+          XIANYU_STORAGE_STATE_GZIP_B64: ${{ secrets.XIANYU_STORAGE_STATE_GZIP_B64 }}
+          XIANYU_STORAGE_STATE_B64: ${{ secrets.XIANYU_STORAGE_STATE_B64 }}
+      - name: 合并网页已发布状态，防止账号和成本被旧缓存覆盖
+        run: node scripts/restore-published-state.mjs
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          PUBLISHED_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data
+          PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
+      - name: 在共享写锁内核对本轮启动，保留真实数据时钟
+        id: admission
+        run: node scripts/scan-admission.mjs admit
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          GITHUB_TOKEN: ${{ github.token }}
+          CADENCE_EPOCH: ${{ inputs.cadence_epoch }}
+          CADENCE_SLOT: ${{ inputs.cadence_slot }}
+          CADENCE_EXPECTED_SHA: ${{ inputs.cadence_expected_sha }}
+      - run: npm ci
+        if: ${{ (steps.admission.outputs.admitted == 'true' || (github.event_name == 'push' && inputs.cadence_epoch == '')) }}
+      - name: 验证比价与成本回归测试
+        if: ${{ (steps.admission.outputs.admitted == 'true' || (github.event_name == 'push' && inputs.cadence_epoch == '')) }}
+        run: npm test
+      - name: 合并等待中的多人同步请求
+        if: ${{ (steps.admission.outputs.admitted == 'true' || (github.event_name == 'push' && inputs.cadence_epoch == '')) }}
+        id: sync
+        run: node scripts/process-sync-queue.mjs
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
+          GITHUB_TOKEN: ${{ github.token }}
+      # 用户登录文件很小。合并到新用户后先发布一次，不让用户等待后面的全量扫描。
+      - name: 为新版本恢复完整看板数据
+        if: ${{ (steps.admission.outputs.admitted == 'true' || (github.event_name == 'push' && inputs.cadence_epoch == '')) && ((github.event_name == 'push' && inputs.cadence_epoch == '')) }}
+        run: node scripts/repack-dashboard.mjs
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
+      - name: 配置账号和新版界面快速发布
+        if: ${{ (steps.admission.outputs.admitted == 'true' || (github.event_name == 'push' && inputs.cadence_epoch == '')) && ((github.event_name == 'push' && inputs.cadence_epoch == '') || steps.sync.outputs.processed != '0') }}
+        uses: actions/configure-pages@v5
+      - name: 上传账号快速发布包
+        if: ${{ (steps.admission.outputs.admitted == 'true' || (github.event_name == 'push' && inputs.cadence_epoch == '')) && ((github.event_name == 'push' && inputs.cadence_epoch == '') || steps.sync.outputs.processed != '0') }}
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+          name: github-pages-users-${{ github.run_attempt }}-${{ inputs.cadence_slot || 'single' }}
+      - name: 立即发布新用户和账号
+        if: ${{ (steps.admission.outputs.admitted == 'true' || (github.event_name == 'push' && inputs.cadence_epoch == '')) && ((github.event_name == 'push' && inputs.cadence_epoch == '') || steps.sync.outputs.processed != '0') }}
+        uses: actions/deploy-pages@v4
+        with:
+          artifact_name: github-pages-users-${{ github.run_attempt }}-${{ inputs.cadence_slot || 'single' }}
+      - name: 确认已发布同步请求
+        if: ${{ (steps.admission.outputs.admitted == 'true' || (github.event_name == 'push' && inputs.cadence_epoch == '')) && (steps.sync.outputs.processed != '0') }}
+        run: node scripts/ack-sync-queue.mjs
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: 保存有限窗口的启动占位凭据
+        if: ${{ inputs.cadence_epoch != '' && steps.admission.outputs.admitted == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: cadence-claim-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.cadence_slot }}
+          path: state/scan-admission.json
+          if-no-files-found: error
+          retention-days: 1
+      - run: npx playwright install --with-deps chromium
+        if: ${{ steps.admission.outputs.admitted == 'true' }}
+      - name: 并行检查三平台价格与闲鱼成本
+        if: ${{ steps.admission.outputs.admitted == 'true' }}
+        run: npm run scan
+        env:
+          # The legacy engine is restored after monitored graph coverage regressed.
+          # Graph mode remains an explicit validation option. Publication
+          # timestamps do not establish full-inventory coverage or cadence.
+          PRICE_SCAN_ENGINE: ${{ inputs.pricing_engine || 'legacy' }}
+          FULL_PRICE_AUDIT: ${{ inputs.full_audit && '1' || '0' }}
+          PRICE_AUDIT_ITEM_IDS: ${{ inputs.priority_item_ids || '' }}
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          XIANYU_AUTH_PART_1: ${{ secrets.XIANYU_AUTH_PART_1 }}
+          XIANYU_AUTH_PART_2: ${{ secrets.XIANYU_AUTH_PART_2 }}
+          XIANYU_AUTH_PART_3: ${{ secrets.XIANYU_AUTH_PART_3 }}
+          XIANYU_STORAGE_STATE_GZIP_B64: ${{ secrets.XIANYU_STORAGE_STATE_GZIP_B64 }}
+          XIANYU_STORAGE_STATE_B64: ${{ secrets.XIANYU_STORAGE_STATE_B64 }}
+          SCAN_TRIGGER: ${{ github.event_name }}
+          PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
+      # Persist full server holds even if scanning or later publication fails.
+      # This is separate from the final cache so later stage changes also survive.
+      - name: 保存扫描访问冷却与当前加密基准
+        if: ${{ always() && steps.admission.outputs.admitted == 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            state
+            public/data/share-images
+          key: price-guard-state-scan-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.cadence_slot || 'single' }}
+      - name: 发布本轮价格、库存与成本
+        if: ${{ steps.admission.outputs.admitted == 'true' }}
+        run: node scripts/prepare-publication.mjs
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          PORTAL_USERS_JSON: ${{ secrets.PORTAL_USERS_JSON }}
+      - uses: actions/configure-pages@v5
+        if: ${{ steps.admission.outputs.admitted == 'true' }}
+      - uses: actions/upload-pages-artifact@v3
+        if: ${{ steps.admission.outputs.admitted == 'true' }}
+        with:
+          path: public
+          name: github-pages-prices-${{ github.run_attempt }}-${{ inputs.cadence_slot || 'single' }}
+      - uses: actions/deploy-pages@v4
+        if: ${{ steps.admission.outputs.admitted == 'true' }}
+        with:
+          artifact_name: github-pages-prices-${{ github.run_attempt }}-${{ inputs.cadence_slot || 'single' }}
+      # Catch up a missed daily observation without appending twenty-minute
+      # partial-detail/image retries to every pricing writer's publication lock.
+      - name: 补执行到期的每日商家监控
+        if: ${{ steps.admission.outputs.admitted == 'true' }}
+        run: node scripts/merchant-monitor.mjs
+        env:
+          MERCHANT_MONITOR_DAILY_CATCHUP: '1'
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          XIANYU_AUTH_PART_1: ${{ secrets.XIANYU_AUTH_PART_1 }}
+          XIANYU_AUTH_PART_2: ${{ secrets.XIANYU_AUTH_PART_2 }}
+          XIANYU_AUTH_PART_3: ${{ secrets.XIANYU_AUTH_PART_3 }}
+          XIANYU_STORAGE_STATE_GZIP_B64: ${{ secrets.XIANYU_STORAGE_STATE_GZIP_B64 }}
+          XIANYU_STORAGE_STATE_B64: ${{ secrets.XIANYU_STORAGE_STATE_B64 }}
+      - name: 准备手机以图搜索图片
+        if: ${{ steps.admission.outputs.admitted == 'true' }}
+        run: npm run prepare:share-images
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+      - name: 数据变化时发送手机提醒
+        if: ${{ steps.admission.outputs.admitted == 'true' }}
+        run: npm run notify
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DASHBOARD_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+      - name: 保存本次加密基准
+        if: ${{ steps.admission.outputs.admitted == 'true' }}
+        run: test -s state/latest.json.enc
+      - uses: actions/cache/save@v4
+        if: ${{ always() && steps.admission.outputs.admitted == 'true' }}
+        with:
+          path: |
+            state
+            public/data/share-images
+          key: price-guard-state-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.cadence_slot || 'single' }}
+      - uses: actions/configure-pages@v5
+        if: ${{ steps.admission.outputs.admitted == 'true' }}
+      - uses: actions/upload-pages-artifact@v3
+        if: ${{ steps.admission.outputs.admitted == 'true' }}
+        with:
+          path: public
+          name: github-pages-${{ github.run_attempt }}-${{ inputs.cadence_slot || 'single' }}
+      - name: 发布网页
+        if: ${{ steps.admission.outputs.admitted == 'true' }}
+        id: deployment
+        uses: actions/deploy-pages@v4
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}-${{ inputs.cadence_slot || 'single' }}
+      - name: 记录云端成本验收退出码（保留失败）
+        id: cost
+        if: steps.admission.outputs.admitted == 'true'
+        run: node scripts/record-product-acceptance.mjs cost
+      - name: 记录完整周期验收退出码（保留失败）
+        id: coverage
+        if: steps.admission.outputs.admitted == 'true'
+        run: node scripts/record-product-acceptance.mjs coverage
+        env:
+          PUBLISHED_STATUS_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data/status.json
+      - name: 验收全账号价格覆盖（全量运行）
+        if: ${{ inputs.full_audit && steps.admission.outputs.admitted == 'true' }}
+        run: node scripts/check-price-coverage.mjs
+      - name: 记录实际槽结果和原始采集时钟
+        id: slot_report
+        if: inputs.cadence_epoch != ''
+        run: node scripts/report-cadence-window.mjs slot
+        env:
+          SLOT_ADMITTED: ${{ steps.admission.outputs.admitted }}
+          SLOT_REASON: ${{ steps.admission.outputs.reason }}
+          CADENCE_SLOT: ${{ inputs.cadence_slot }}
+      - name: 确认下一槽需要的完整状态存在
+        if: inputs.cadence_epoch != ''
+        run: test -s state/latest.json.enc
+      - name: 保存下一槽的加密状态与访问冷却
+        id: state_upload
+        if: inputs.cadence_epoch != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: cadence-state-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.cadence_slot }}
+          path: |
+            state/latest.json.enc
+            state/discovery.json.enc
+            state/yahoo-request-access.json.enc
+            state/search-access.json.enc
+            state/xianyu-access.json.enc
+            state/rakuma-request-access.json
+            state/rakuma-request-access.json.pending
+            state/scan-admission.json
+          if-no-files-found: error
+          retention-days: 1
+      - name: 确认已保存的槽状态
+        id: checkpoint
+        if: inputs.cadence_epoch != ''
+        env:
+          ARTIFACT_ID: ${{ steps.state_upload.outputs.artifact-id }}
+        run: |
+          test -n "$ARTIFACT_ID"
+          echo "artifact_name=cadence-state-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.cadence_slot }}" >> "$GITHUB_OUTPUT"

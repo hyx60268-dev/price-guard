@@ -1,7 +1,13 @@
 import { externalSearchQueries,searchExternalImages } from './lib/external-images.mjs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {requireRestoredSearchProofAccess} from './lib/procurement-proof-access.mjs';
 
 // Public search recall check, not photograph or procurement acceptance.
-// No marketplace sessions, costs or private account configuration are loaded.
+// A live diagnostic requires the controlled caller's restored shared access state.
+// PR CI uses offline regression cases and never invokes this network path.
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+await requireRestoredSearchProofAccess({root,password:process.env.DASHBOARD_PASSWORD,restored:process.env.PROOF_SHARED_STATE_RESTORED==='1'});
 const querySet=process.env.IMAGE_SOURCE_PROOF_SET||'baseline';
 if(!['baseline','procurement'].includes(querySet))throw Error('Unknown public search proof set');
 const titles=querySet==='procurement'?[

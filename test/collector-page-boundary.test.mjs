@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {createRequestCooldown} from '../scripts/lib/request-cooldown.mjs';
 import {encrypt,decrypt} from '../scripts/lib/crypto.mjs';
+import {isolateRakumaAccess} from './fixtures/rakuma-access-fixture.mjs';
 
 // Recovery tests use the deployed parsers directly; no experimental adapter is
 // required to validate the real collector boundary and its original timestamps.
@@ -22,6 +23,7 @@ function response(html,{status=200,url='',body,headers={}}={}){
 }
 async function clockFixture(t,source){
   const module=await fresh(source);
+  if(source==='rakuma')await isolateRakumaAccess(t,module);
   t.mock.timers.enable({apis:['Date','setTimeout'],now:START});
   t.mock.method(console,'warn',()=>{});
   return {module,read:module[source==='yahoo'?'fetchYahooPage':'fetchRakumaPage'],

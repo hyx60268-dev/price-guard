@@ -57,3 +57,14 @@ export async function loadXianyuSession(root,{env=process.env,now=Date.now(),log
     log('[闲鱼会话] 已加密保存详情访问成功后的更新；这不等于同款成本核验通过');return true;
   }};
 }
+
+// For conservative merging of finite-window cooldown checkpoints only. This
+// derives the existing access key without creating or refreshing a session.
+export function xianyuAccessKey(env=process.env){
+ const parts=['XIANYU_AUTH_PART_1','XIANYU_AUTH_PART_2','XIANYU_AUTH_PART_3'].map(name=>env[name]||'').join('');
+ for(const [seed,compressed] of [[parts,true],[env.XIANYU_STORAGE_STATE_GZIP_B64,true],[env.XIANYU_STORAGE_STATE_B64,false]]){
+  if(!seed)continue;
+  try{const bytes=Buffer.from(seed,'base64');if(validState(JSON.parse((compressed?zlib.gunzipSync(bytes):bytes).toString())))return hash(`price-guard/xianyu-session/v2\n${seed}`)}catch{}
+ }
+ return hash('price-guard/anonymous-access/v1');
+}

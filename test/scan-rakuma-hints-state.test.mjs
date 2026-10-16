@@ -56,7 +56,7 @@ for(const denied of [false,true])test(`real legacy scan preserves URL-only state
    const snapshot=JSON.parse(decrypt(await fs.readFile(path.join(root,file)),password).toString('utf8')),row=snapshot.items[0],hint=row.competitorDiscovery.rakuma.links[0];
    assert.equal(snapshot.scanMeta.pricingEngine,'legacy');assert.equal(hint.url,url(id));assert.equal(hint.identityObservedAt,ownAt);
    assert.ok(Date.parse(hint.lastAttemptAt)>=now);assert.equal(hint.retiredAt,undefined);
-   if(denied){assert.equal(hint.lastVerifiedAt,old);assert.equal(row.rakuma.checkedAt,old);assert.equal(row.rakuma.cacheReason,'request_error');assert.equal(pricingDecision(row).canRecommend,false);}
+   if(denied){assert.equal(snapshot.rakumaRequestAccess.httpStatus,403);assert.equal(snapshot.rakumaRequestAccess.holdReason,'internal_fallback');assert.equal(snapshot.rakumaRequestAccess.retryAfter,null);assert.ok(Date.parse(snapshot.rakumaRequestAccess.observedAt)>=now);assert.equal(snapshot.rakumaRequestAccess.retryAt,Date.parse(snapshot.rakumaRequestAccess.observedAt)+3600000);assert.equal(hint.lastVerifiedAt,old);assert.equal(row.rakuma.checkedAt,old);assert.equal(row.rakuma.cacheReason,'request_error');assert.equal(pricingDecision(row).canRecommend,false);}
    else{assert.equal(row.rakuma.candidates[0].price,8500);assert.ok(Date.parse(row.rakuma.candidates[0].checkedAt)>=now);assert.equal(hint.lastVerifiedAt,row.rakuma.candidates[0].checkedAt);}
   }
   assert.equal(requests.filter(value=>value===url(id)).length,1);assert.equal(requests.includes(url(ownId)),false,'cached own identity must not trigger an extra request');

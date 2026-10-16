@@ -99,8 +99,8 @@ test('scan applies the original startedAt budget before profile discovery and ch
  assert.ok(scan.indexOf('const deadline=startedAt+')<scan.indexOf('const contexts=await mapLimit'));
  assert.ok(scan.indexOf('await initializeYahooRequestAccess')<scan.indexOf('const contexts=await mapLimit'));
  assert.match(scan,/settings\.yahooRequestDeadline=deadline/);assert.match(scan,/fetchYahooItemBundle\(id,settings\)/);assert.match(scan,/fetchYahooResult\(url,settings\)/);
- const workflow=await fs.readFile(new URL('../.github/workflows/price-guard.yml',import.meta.url),'utf8');
- assert.match(workflow,/保存扫描访问冷却与当前加密基准\n\s+if: always\(\)/);
+ const workflow=await fs.readFile(new URL('../.github/workflows/price-scan-transaction.yml',import.meta.url),'utf8');
+ assert.match(workflow,/保存扫描访问冷却与当前加密基准\n\s+if: \$\{\{ always\(\) && steps.admission.outputs.admitted == 'true' \}\}/);
  assert.ok(workflow.indexOf('price-guard-state-scan-')<workflow.indexOf('node scripts/prepare-publication.mjs'));
 });
 

@@ -1,3 +1,4 @@
+import { rakumaRequestAccessSnapshot } from './lib/rakuma.mjs';
 import { initializeYahooRequestAccess,yahooRequestAccessSnapshot } from './lib/yahoo.mjs';
 import { initializeExternalSearchAccess,externalSearchAccessSnapshot } from './lib/external-images.mjs';
 import { xianyuAccessDiagnostic } from './lib/xianyu-evidence.mjs';
@@ -114,7 +115,7 @@ const curated=curateMerchantProducts(merchantProducts(Object.fromEntries(Object.
 for(const excluded of curated.reviewedOwnedExclusions)console.log('[已核对自有卡面排除]',JSON.stringify(excluded));
 const products=curated.products;
 const checkedAt=new Date().toISOString();
-const result={externalSearchAccess:externalSearchAccessSnapshot(),yahooRequestAccess:yahooRequestAccessSnapshot(),version:monitorVersion,merchantPrimaryImages,mode:'merchant_monitor',configDigest,checkedAt,codeSha:process.env.GITHUB_SHA||null,merchantListings:records,merchants:sources,products,errors,
+const result={externalSearchAccess:externalSearchAccessSnapshot(),yahooRequestAccess:yahooRequestAccessSnapshot(),rakumaRequestAccess:rakumaRequestAccessSnapshot(),version:monitorVersion,merchantPrimaryImages,mode:'merchant_monitor',configDigest,checkedAt,codeSha:process.env.GITHUB_SHA||null,merchantListings:records,merchants:sources,products,errors,
  stats:{merchants:merchants.length,total:products.length,details,imageLookups,publicImageLookups,images:imageCoverage(products),excludedOwned:curated.excludedOwned,mergedListings:curated.mergedListings},login:{xianyuRequired:!session.access().allowed}};
 const status={version:monitorVersion,mode:result.mode,checkedAt,codeSha:result.codeSha,total:products.length,sourceStats:result.stats,errors,merchants:sources};
 const sealed=encrypt(Buffer.from(JSON.stringify(result)),password);

@@ -1,3 +1,4 @@
+import { scanAdmissionSnapshot } from './lib/scan-admission.mjs';
 import { createLiveInventoryGraph } from './lib/live-inventory-graph.mjs';
 import { isRequestDeferred } from './lib/request-cooldown.mjs';
 import { initializeExternalSearchAccess,externalSearchAccessSnapshot } from './lib/external-images.mjs';
@@ -22,7 +23,7 @@ import { deferredXianyuAccess } from './lib/xianyu-access.mjs';
 import { fileURLToPath } from 'node:url';
 import { openContext } from './lib/browser.mjs';
 import { discoverYahooProfile,fetchYahooItemBundle,fetchYahooResult,marketPriceDecision,yahooCompare,yahooRequestStats,initializeYahooRequestAccess,yahooRequestAccessSnapshot } from './lib/yahoo.mjs';
-import { discoverRakumaProfile,fetchRakumaItem,fetchRakumaPage,rakumaCompare,rakumaAccessDiagnostic } from './lib/rakuma.mjs';
+import { discoverRakumaProfile,fetchRakumaItem,fetchRakumaPage,rakumaCompare,rakumaAccessDiagnostic,initializeRakumaRequestAccess,rakumaRequestAccessSnapshot } from './lib/rakuma.mjs';
 import { cachedComparison,deferredYahooComparison,comparisonIncomplete as isComparisonIncomplete,pricingCoverage } from './lib/pricing-coverage.mjs';
 import { cycleCoverage } from './lib/cycle-coverage.mjs';
 import { xianyuCost } from './lib/xianyu.mjs';
@@ -91,6 +92,7 @@ function cachedRakuma(prior,reason='fresh_cache'){
 
 const previous=await previousSnapshot();
 await initializeYahooRequestAccess({root,password,initial:previous?.yahooRequestAccess});
+initializeRakumaRequestAccess({root,password,initial:previous?.rakumaRequestAccess});
 await initializeExternalSearchAccess({root,password,initial:previous?.externalSearchAccess});
 console.log('[公开搜索访问]',JSON.stringify({stage:'scan',providers:externalSearchAccessSnapshot()}));
 const matchCorrections=previous?.matchCorrections||{};
@@ -458,7 +460,8 @@ const checkedAt=new Date().toISOString(),allItems=accountResults.flatMap(account
 // them to active inventory or assigning an inferred sale/first-seen date.
 const {listingHistory,ownedTitleHistory}=mergeOwnedListingHistory({previous,contexts,items:allItems,relistAliases});
 const result={
-  externalSearchAccess:externalSearchAccessSnapshot(),yahooRequestAccess:yahooRequestAccessSnapshot(),
+  scanAdmission:await scanAdmissionSnapshot(root),
+  externalSearchAccess:externalSearchAccessSnapshot(),yahooRequestAccess:yahooRequestAccessSnapshot(),rakumaRequestAccess:rakumaRequestAccessSnapshot(),
   merchantMonitors:previous?.merchantMonitors||[],listingHistory,pricingCoverage:pricingCoverage(allItems,accountResults),
   cycleCoverage:cycleCoverage(allItems,accountResults,{startedAt,finishedAt:checkedAt,previousCoverage:previous?.cycleCoverage}),
   version:6,checkedAt,dataRevision:checkedAt,settings:{...settings,yahooRequestDeadline:undefined,rakumaRequestDeadline:undefined},accounts:accountResults,managedAccounts,portalUsers,appliedSyncIssues:previous?.appliedSyncIssues||{},

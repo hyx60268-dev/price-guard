@@ -1,11 +1,19 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {requireRestoredYahooProofAccess} from './lib/procurement-proof-access.mjs';
 import { fetchYahooItemBundle,yahooCompare } from './lib/yahoo.mjs';
-import { rakumaCompare } from './lib/rakuma.mjs';
+import { rakumaCompare,initializeRakumaRequestAccess } from './lib/rakuma.mjs';
 import { mercariCompare } from './lib/mercari.mjs';
 import { openContext } from './lib/browser.mjs';
 import { pricingDecision } from '../public/pricing-policy.js';
 
 // Public diagnostic only: never publishes a partial inventory or changes prices.
+// A fresh proof checkout cannot establish that earlier source holds expired.
+// It must restore shared access state before Rakuma can be contacted.
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+await requireRestoredYahooProofAccess({root,password:process.env.DASHBOARD_PASSWORD,restored:process.env.PROOF_SHARED_STATE_RESTORED==='1'});
+initializeRakumaRequestAccess({requireRestoredState:true});
 const id=process.env.PRICING_PROOF_ITEM_ID||'z691562730';
 if(!/^z\d+$/.test(id))throw Error('Invalid Yahoo item ID');
 const settings=JSON.parse(await fs.readFile(new URL('../config/settings.json',import.meta.url)));
