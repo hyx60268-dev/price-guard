@@ -28,7 +28,10 @@ export function cycleCoverage(items=[],accounts=[],options={}){
  const priorAccounts=new Map((options.previousCoverage?.accounts||[]).map(row=>[row.accountId,row]));
  const inCycle=value=>{const t=stamp(value);return Number.isFinite(t)&&Number.isFinite(start)&&Number.isFinite(end)&&t>=start&&t<=end};
  const rows=accounts.map(account=>{
-  const row={accountId:account.id,inventoryComplete:account.profileStatus==='live',total:0,priceObserved:0,priceComplete:0,costVerified:0,completeItems:0};
+  const observation=account.inventoryObservation;
+  const inventoryCurrent=account.profileStatus==='live'&&(observation===undefined||
+    observation?.complete===true&&observation.truncated!==true&&observation.fromCache===false&&inCycle(observation.observedAt));
+  const row={accountId:account.id,inventoryComplete:inventoryCurrent,total:0,priceObserved:0,priceComplete:0,costVerified:0,completeItems:0};
   for(const item of items.filter(item=>item.accountId===account.id)){
    row.total++;
    const required=requiredPricingPlatforms(item);

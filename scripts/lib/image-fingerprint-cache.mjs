@@ -46,13 +46,16 @@ export function createFingerprintLoader({directory,fetchImage,fingerprint,now=Da
   if(!directory)return null;
   try{return JSON.parse(await fs.readFile(path.join(directory,name),'utf8'))}catch{return null}
  };
- const write=async(name,value)=>{
-  if(!directory)return;
+ const write=async(name,value,stopped=()=>false)=>{
+  if(!directory||stopped())return;
   let temporary;
   try{
    await fs.mkdir(directory,{recursive:true});
+   if(stopped())return;
    const file=path.join(directory,name);temporary=file+'.'+randomUUID()+'.tmp';
-   await fs.writeFile(temporary,JSON.stringify(value));await fs.rename(temporary,file);stats.writes++;writesSincePrune++;
+   await fs.writeFile(temporary,JSON.stringify(value));
+   if(stopped()){await fs.rm(temporary,{force:true});return}
+   await fs.rename(temporary,file);stats.writes++;writesSincePrune++;
   }catch{if(temporary)await fs.rm(temporary,{force:true}).catch(()=>{});/* A cache write must never prevent a current source observation. */}
  };
  const readContent=async sha=>{
@@ -60,28 +63,68 @@ export function createFingerprintLoader({directory,fetchImage,fingerprint,now=Da
   const entry=await read('body-'+sha+'.json');
   return entry?.version===version&&entry.fingerprint?.contentSha256===sha&&entry.checksum===hash(JSON.stringify(entry.fingerprint))?entry.fingerprint:null;
  };
- async function get(url){
+ // Bounds are per caller. In particular, never make another caller's pending
+ // download inherit this signal/deadline. Fully verified persisted content is safe.
+ async function get(url,options){
+  if(!options?.signal&&!Number.isFinite(options?.deadlineAt))return load(url);
+  const controller=new AbortController(),clock=options.now||now;
+  const context={...options,signal:controller.signal,now:clock};
+  let timer;
+  const abort=()=>controller.abort();
+  const stopped=()=>{
+   if(Number.isFinite(context.deadlineAt)&&clock()>=context.deadlineAt)abort();
+   return controller.signal.aborted;
+  };
+  const cancelled=new Promise(resolve=>controller.signal.addEventListener('abort',()=>resolve(null),{once:true}));
+  options.signal?.addEventListener('abort',abort,{once:true});
+  if(options.signal?.aborted)abort();
+  const scheduleDeadline=()=>{
+   if(stopped()||!Number.isFinite(context.deadlineAt))return;
+   timer=setTimeout(scheduleDeadline,Math.min(2_147_483_647,Math.max(1,context.deadlineAt-clock())));
+  };
+  try{
+   scheduleDeadline();
+   if(stopped())return null;
+   // A non-cooperative injected reader may settle later. load() checks bounds
+   // after every stage so that late results cannot compute or populate cache.
+   return await Promise.race([load(url,context,stopped),cancelled]);
+  }finally{clearTimeout(timer);options.signal?.removeEventListener('abort',abort)}
+ }
+ async function load(url,context,stopped=()=>false){
+  if(stopped())return null;
   if(!initialized){initialized=true;await prune()}
+  if(stopped())return null;
   const key='url-'+hash(url)+'.json',cached=await read(key),time=now();
+  if(stopped())return null;
   if(cached?.version===version&&Number.isFinite(cached.observedAt)&&Number.isFinite(cached.expiresAt)&&cached.observedAt>=0&&cached.observedAt<=time&&cached.expiresAt>time&&cached.expiresAt-cached.observedAt<=24*3600_000){
    const value=await readContent(cached.contentSha256);
+   if(stopped())return null;
    if(value){stats.httpFreshReuses++;return {...value,url,imageObservedAt:new Date(cached.observedAt).toISOString(),imageCacheExpiresAt:cached.expiresAt,imageCacheSource:'http_fresh'}};
   }
-  stats.imageFetches++;const response=await fetchImage(url);
-  if(!response?.buffer)return null;
+  if(stopped())return null;
+  stats.imageFetches++;const response=await fetchImage(url,context);
+  if(stopped()||!response?.buffer)return null;
   stats.downloadBytes+=response.buffer.length;
   const observedAt=now(),sha=hash(response.buffer),canStore=!/\bno-store\b/i.test(response.cacheControl||'');
   let value=canStore?await readContent(sha):null;
+  if(stopped())return null;
   if(value)stats.contentReuses++;
-  else{const start=performance.now();value=await fingerprint(response.buffer,url);stats.computeDurationMs+=performance.now()-start;if(!value)return null;stats.computed++;}
+  else{
+   const start=performance.now();value=await fingerprint(response.buffer,url);stats.computeDurationMs+=performance.now()-start;
+   if(stopped()||!value)return null;
+   stats.computed++;
+  }
   const {url:_url,imageObservedAt:_observed,imageCacheExpiresAt:_expiry,imageCacheSource:_source,...content}=value;
   content.contentSha256=sha;
   const expiresAt=observedAt+freshLifetime(response,observedAt);
   if(canStore){
-   await write('body-'+sha+'.json',{version,fingerprint:content,checksum:hash(JSON.stringify(content))});
-   await write(key,{version,contentSha256:sha,observedAt,expiresAt});
+   await write('body-'+sha+'.json',{version,fingerprint:content,checksum:hash(JSON.stringify(content))},stopped);
+   if(stopped())return null;
+   await write(key,{version,contentSha256:sha,observedAt,expiresAt},stopped);
+   if(stopped())return null;
    if(writesSincePrune>=Math.min(100,maxFiles))await prune();
   }
+  if(stopped())return null;
   return {...content,url,imageObservedAt:new Date(observedAt).toISOString(),imageCacheExpiresAt:expiresAt,imageCacheSource:'current_body'};
  }
  return {get,stats,prune};

@@ -4,12 +4,17 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      pricing_engine:
+        description: 价格执行器（全量图为有界验证模式，不能代表20分钟验收通过）
+        type: choice
+        options: [legacy, full_inventory_graph]
+        default: full_inventory_graph
       full_audit:
-        description: 全量核验所有账号全部商品（Yahoo与Rakuma）
+        description: 旧执行器维护核验（须选择 legacy，不代表20分钟周期）
         type: boolean
         default: false
       priority_item_ids:
-        description: 优先复查的已录入商品ID（逗号分隔，最多20个，不跳过核验）
+        description: legacy 优先复查商品ID（逗号分隔，最多20个，不跳过核验）
         type: string
         default: ''
   schedule:
@@ -44,7 +49,7 @@ jobs:
       group: pages
       cancel-in-progress: false
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: ${{ inputs.full_audit && 360 || 25 }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -110,10 +115,10 @@ jobs:
       - name: 并行检查三平台价格与闲鱼成本
         run: npm run scan
         env:
-          # Normal pushes and scheduled runs use the bounded rotating scan so a
-          # fresh dashboard is published every cycle. Full audit remains an
-          # explicit maintenance action; its progress is still accumulated by
-          # the same encrypted baseline instead of blocking ordinary updates.
+          # All-inventory obligations run inside the same bounded writer. The
+          # legacy option remains an explicit rollback path. Publication
+          # timestamps do not establish full-inventory coverage or cadence.
+          PRICE_SCAN_ENGINE: ${{ inputs.pricing_engine || 'full_inventory_graph' }}
           FULL_PRICE_AUDIT: ${{ inputs.full_audit && '1' || '0' }}
           PRICE_AUDIT_ITEM_IDS: ${{ inputs.priority_item_ids || '' }}
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
