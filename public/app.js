@@ -7,6 +7,7 @@ import { buildOwnedOffers,excludeOwnedOffers } from './owned-offers.js';
 import { selectMerchantProducts, merchantCardsMarkup } from './merchant-view.js';
 import { pricingStatus, pricingSummary } from './pricing-status.js';
 import { pricingDecision, requiredPricingPlatforms, PLATFORM_LABELS } from './pricing-policy.js';
+import { comparisonObservationsMarkup } from './comparison-observations.js';
 import { mergeAccounts,resolveCostRecord,createCostResolver } from './durable-state.js';
 import { FRONTEND_VERSION } from './build-version.js';
 import { candidateId, correctionKey, mergeMatchCorrections, rejectedByMemory, invalidateCorrectedMatches } from './match-memory.js';
@@ -422,6 +423,7 @@ function detail(id,accountId){
     <p class="muted">${escapeHtml(item.listingAge?.message||'上架时长待云端确认')} · ${item.listingAge?.source==='platform_open_date'?'平台上架时间':item.listingAge?.source==='first_observed'?'系统首次确认在售时间':'尚无时间依据'}</p>
     <div class="detailhead"><img src="${escapeHtml(item.image)}" alt=""><div><h2>${escapeHtml(item.title)}</h2><p id="detailMatch">${pill(item)}　同款匹配：${escapeHtml(matchLabel)}</p></div></div>
     <div class="detailgrid"><div><small>我的售价</small><br><b>${money(item.ownPrice)}</b></div><div id="detailLowest" class="lowest-offer"><small>已核验最低同款${lowest?' · '+escapeHtml(PLATFORM_LABELS[lowest.platform]):''}</small><br><b>${lowest?money(lowest.price):'待核验'}</b>${lowest?`<a target="_blank" rel="noopener" href="${escapeHtml(lowest.url)}">查看商品 ↗</a>`:''}</div><div><small>建议售价</small><br><b id="detailRecommendation">${decision.canRecommend?money(decision.recommendedPrice):'暂无建议'}</b></div><div><small>当前成本</small><br><b id="previewCost">${money(item.costJPY)}</b></div><div><small>当前利润</small><br><b id="previewCurrentProfit">${money(item.currentProfitJPY)}</b></div><div><small>建议价利润</small><br><b id="previewAfterProfit">${decision.canRecommend?money(item.afterProfitJPY):'—'}</b></div></div><p id="detailCoverage" class="coverage-note">${escapeHtml(coverageText)}。比价统一核对在售状态、规格与运费；最低同款仅代表已取得的有效样本。</p>
+    <div id="detailSavedQuotes">${comparisonObservationsMarkup(item,{ownershipIndex:currentOwnership(),corrections:matchCorrections,now:Date.now()})}</div>
     <section class="manualbox"><h3>补充人工费用</h3><p class="muted">实际采购价优先用于计算利润；留空时采用已核验的采购参考价。人肉费和日本物流费需填写。</p>
       <form id="manualCostForm" class="costform"><label><span>实际采购价（人民币，可选）</span><input id="purchaseCNY" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(saved.purchaseCNY??'')}" placeholder="留空则使用已核验参考价"><small>${escapeHtml(procurementLabel(item))}：${cny(item.automaticReferenceCNY)}</small></label><label><span>人肉费（人民币）</span><input id="manualFeeCNY" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(saved.manualFeeCNY??'')}" placeholder="由你填写"></label><label><span>日本物流费（日元）</span><input id="shippingJPY" type="number" min="0" step="1" inputmode="numeric" value="${escapeHtml(saved.shippingJPY??'')}" placeholder="由你填写"></label><div class="costactions"><button type="submit">保存本机并计算</button><button type="button" id="saveAndSync">保存并同步云端</button><button type="button" id="clearCost" class="soft">清空</button><span id="costSaveStatus"></span></div></form>
       <p><small>公式：((采购价 + 人肉费) × ${data.settings.exchangeRate} + 日本物流费) × ${data.settings.costMultiplier}，向上取整。</small></p></section>
@@ -461,6 +463,7 @@ function detail(id,accountId){
     $('#detailMatch').innerHTML=pill(next)+'　同款匹配：'+escapeHtml(label);
     $('#detailLowest').innerHTML=`<small>已核验最低同款${lowest?' · '+escapeHtml(PLATFORM_LABELS[lowest.platform]):''}</small><br><b>${lowest?money(lowest.price):'待核验'}</b>${lowest?`<a target="_blank" rel="noopener" href="${escapeHtml(lowest.url)}">查看商品 ↗</a>`:''}`;
     $('#detailRecommendation').textContent=decision.canRecommend?money(decision.recommendedPrice):'暂无建议';
+    $('#detailSavedQuotes').innerHTML=comparisonObservationsMarkup(next,{ownershipIndex:currentOwnership(),corrections:matchCorrections,now:Date.now()});
     $('#detailCoverage').textContent=pricingCoverageText(next)+'。比价统一核对在售状态、规格与运费；最低同款仅代表已取得的有效样本。';
     preview();
   };
@@ -604,7 +607,7 @@ addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPro
 if('serviceWorker'in navigator){
   const hadController=Boolean(navigator.serviceWorker.controller);let reloading=false;
   navigator.serviceWorker.addEventListener('controllerchange',()=>{if(hadController&&!reloading){reloading=true;location.reload()}});
-  navigator.serviceWorker.register('sw.js?v=25',{updateViaCache:'none'}).then(registration=>registration.update()).catch(()=>{});
+  navigator.serviceWorker.register('sw.js?v=26',{updateViaCache:'none'}).then(registration=>registration.update()).catch(()=>{});
 }
 checkCloudStatus(false);
 

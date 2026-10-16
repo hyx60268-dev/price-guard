@@ -382,7 +382,7 @@ export async function evaluateYahooDetail({item,card,bundle,ownDetail,knownOnly=
   const detail=bundle.detail;let currentPrimaryImageScore=null;
   const currentDetailRead=detail?.id===card.id&&Boolean(detail?.title?.trim()&&detail?.description?.trim()&&detail?.status)&&Number.isFinite(Number(detail?.price))&&Number(detail.price)>0;
   const reject=rejection=>({rejection,currentDetailRead,currentPrimaryImageScore});
-      if(knownOnly&&detail?.id!==card.id){return reject({id:card.id,reason:'detail_id_mismatch'});}
+      if(detail?.id!==card.id){return reject({id:card.id,price:card.price,reason:'detail_id_mismatch'});}
       if(knownOnly&&(!Array.isArray(detail?.images)||!detail.images.length)){return reject({id:card.id,reason:'detail_images_unavailable'});}
       if(knownOnly&&(!bundle.shipping?.shippingKnown||bundle.shipping.currency!=='JPY'||bundle.shipping.shippingJPY!==0)){return reject({id:card.id,reason:'shipping_unconfirmed'});}
       // Never compare against a title-only fallback when our sale description is missing.
@@ -474,6 +474,7 @@ export async function evaluateYahooDetail({item,card,bundle,ownDetail,knownOnly=
         text:`${detail.title}\n${detail.description||''}`,sellerId:String(detail.seller?.id||card.sellerId||''),image:detailImage,price:Number(detail.price),itemStatus:detail.status,
         titleScore:detailTitleScore,imageScore,primaryImageScore,semantic,queryFamily,candidateFamily,
         ...(reviewedIdentity?{identityEvidence:reviewedIdentity}:{}),
+        ...(sharedIdentity.bonusComparison?{bonusComparison:sharedIdentity.bonusComparison}:{}),
         ...(knownOnly?{checkedAt:new Date().toISOString(),shippingJPY:0,shippingSource:bundle.shipping.shippingSource,priceSource:'current_target_detail'}:{}),
         matchMethod:reviewedIdentity?'reviewed_sealed_box_identity':sealedBoxEquivalent?'same_sealed_single_box_primary':lotteryEquivalent?'lottery_release_prize_character':assortmentEquivalent?'same_packaging_assortment':exactTitleEquivalent?'exact_bidirectional_title_identity':visualEquivalent?'strong_visual_primary_product':textEquivalent?'detail_type_quantity_equivalent_text':'detail_type_quantity_text_images'},currentDetailRead,currentPrimaryImageScore};
 }
@@ -674,7 +675,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   const uncheckedLowerCandidates=preliminary.filter(candidate=>Number(candidate.price)<provisionalFloor&&!checkedIds.has(candidate.id));
   const market=marketPriceDecision(item.ownPrice,competitors,settings,{plausibleCompetitors:unresolvedCandidates,ownSellerId});
   const {marketPrices,marketMedianPrice,marketMinPrice,marketMaxPrice,underpriced}=market;
-  const reviewReasons=new Set(['detail_price_unavailable','primary_variant_unconfirmed','sale_description_unavailable','collectible_variant_image_unconfirmed','lottery_series_unconfirmed','physical_image_unconfirmed','detail_error']);
+  const reviewReasons=new Set(['detail_price_unavailable','primary_variant_unconfirmed','sale_description_unavailable','collectible_variant_image_unconfirmed','lottery_series_unconfirmed','physical_image_unconfirmed','detail_error','detail_id_mismatch','bonus_terms_unconfirmed']);
   const pendingReviews=rejected.filter(candidate=>reviewReasons.has(candidate.reason));
   const unconfirmedLowerCandidates=rejected.filter(candidate=>reviewReasons.has(candidate.reason)&&Number(candidate.price)<Number(item.ownPrice));
   const verificationIncomplete=knownOnly||Boolean(broadSearchDue&&!search)||Boolean(detailQueue?.deferredCount)||uncheckedLowerCandidates.length>0||unconfirmedLowerCandidates.length>0||!competitors.length&&pendingReviews.length>0||!ownDetail?.description?.trim();

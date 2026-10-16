@@ -1,3 +1,4 @@
+import {PRICING_RULES_VERSION} from '../public/pricing-policy.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -52,7 +53,7 @@ test('CLI reads encrypted restored state and emits only bounded target data, wit
 
 function knownOfferItem(){
  const source=item();return {...source,comparisonMode:'same_platform',recommendedPrice:27999,lowestPrice:28000,
-  yahoo:{...source.yahoo,rulesVersion:22,status:'incomplete',evidenceStatus:'incomplete',cacheReason:null,
+  yahoo:{...source.yahoo,rulesVersion:PRICING_RULES_VERSION,status:'incomplete',evidenceStatus:'incomplete',cacheReason:null,
    recommendedPrice:28499,knownRefresh:{mode:'details_only'},candidates:[{id:'fixture28k',price:28000,
     sellerId:'external-seller',matchMethod:'exact_bidirectional_title_identity',url:'https://paypayfleamarket.yahoo.co.jp/item/fixture28k'}]}};
 }
