@@ -7,6 +7,7 @@ import { mapLimit } from './lib/worker-pool.mjs';
 import { knownYahooRefreshTasks,runKnownYahooRefresh,yahooFullAttemptTime } from './lib/yahoo-known-refresh.mjs';
 import { buildOwnedOffers } from '../public/owned-offers.js';
 import { createOwnSourceLoader } from './lib/own-source.mjs';
+import { inventoryReadPlan } from './lib/inventory-read-plan.mjs';
 import { configureImageFingerprintCache } from './lib/image.mjs';
 import { xianyuReviewPlan,mergeXianyuReview } from './lib/xianyu-review-plan.mjs';
 import { mercariCompare } from './lib/mercari.mjs';
@@ -17,8 +18,8 @@ import { loadXianyuSession } from './lib/xianyu-session.mjs';
 import { deferredXianyuAccess } from './lib/xianyu-access.mjs';
 import { fileURLToPath } from 'node:url';
 import { openContext } from './lib/browser.mjs';
-import { discoverYahooProfile,fetchYahooItemBundle,fetchYahooResult,marketPriceDecision,yahooCompare } from './lib/yahoo.mjs';
-import { discoverRakumaProfile,fetchRakumaItem,rakumaCompare } from './lib/rakuma.mjs';
+import { discoverYahooProfile,fetchYahooItemBundle,fetchYahooResult,marketPriceDecision,yahooCompare,yahooRequestStats } from './lib/yahoo.mjs';
+import { discoverRakumaProfile,fetchRakumaItem,fetchRakumaHtml,rakumaCompare,rakumaAccessDiagnostic } from './lib/rakuma.mjs';
 import { cachedComparison,comparisonIncomplete as isComparisonIncomplete,pricingCoverage } from './lib/pricing-coverage.mjs';
 import { cycleCoverage } from './lib/cycle-coverage.mjs';
 import { xianyuCost } from './lib/xianyu.mjs';
@@ -117,6 +118,8 @@ const contexts=await mapLimit(accounts,Math.min(profileConcurrency,accounts.leng
 });
 
 settings.ownedOffers=buildOwnedOffers(accounts,contexts.flatMap(c=>[...c.previousItems,...c.activeItems]));
+try{console.log('[全量读取计划]',JSON.stringify(inventoryReadPlan(contexts)))}
+catch{console.warn('[全量读取计划] diagnostics_unavailable')}
 
 const relistAliases={...(previous?.relistAliases||{})};
 for(const context of contexts)for(const item of context.activeItems)if(item.relistedFrom)relistAliases[`${context.account.id}:${item.id}`]=item.relistedFrom;
@@ -147,7 +150,7 @@ const yahooTasks=prioritizePriceAuditItems(fairPriorityRoundRobin(yahooBuckets),
 
 // One in-flight read per own listing, shared across independent platform workers.
 // A deferred Yahoo task must not deprive Rakuma/Mercari/Xianyu of the sale description.
-const {hydrate:hydratedItem,yahooBundle:ownBundle,yahooResult:sharedYahooResult,stats:publicReadStats}=createOwnSourceLoader({fetchYahooBundle:id=>fetchYahooItemBundle(id,settings),fetchYahooResult:url=>fetchYahooResult(url,settings),fetchRakumaItem:item=>fetchRakumaItem(item,settings)});
+const {hydrate:hydratedItem,yahooBundle:ownBundle,yahooResult:sharedYahooResult,rakumaPage:sharedRakumaPage,stats:publicReadStats}=createOwnSourceLoader({fetchYahooBundle:id=>fetchYahooItemBundle(id,settings),fetchYahooResult:url=>fetchYahooResult(url,settings),fetchRakumaItem:item=>fetchRakumaItem(item,settings,{fetchPage:sharedRakumaPage}),fetchRakumaHtml:url=>fetchRakumaHtml(url,settings)});
 const yahooConcurrency=Math.max(1,Math.min(4,Number(settings.yahooConcurrency)||3));
 const yahooWork=(async()=>{
   // A small, separately bounded lane checks known external details before any
@@ -219,7 +222,7 @@ const rakumaWork=mapLimit(rakumaTasks,rakumaConcurrency,async(task,index)=>{
   const {context,item,prior}=task;
   if(index>=rakumaLimit||Date.now()>=deadline){context.rakumaById.set(item.id,cachedRakuma(prior,'rotation_limit')||{status:'deferred_limit',candidates:[],lowestPrice:null,checkedAt:null});return}
   try{
-    const result=await rakumaCompare(await hydratedItem(item,prior),{...settings,matchCorrections});
+    const result=await rakumaCompare(await hydratedItem(item,prior),{...settings,matchCorrections},{fetchPage:sharedRakumaPage});
     context.rakumaById.set(item.id,result);
     console.log(`[ラクマ ${index+1}/${Math.min(rakumaTasks.length,rakumaLimit)}] ${context.account.name} ${item.id} cards=${result.cardCount} matches=${result.competitorCount} lowest=${result.lowestPrice??'—'}`);
   }catch(error){
@@ -340,6 +343,7 @@ const procurementWork=runPublicProcurement(procurementBuckets,{
 }).finally(async()=>{await procurementBrowser?.close().catch(()=>{})});
 const [,,,,procurementResults]=await Promise.all([yahooWork,rakumaWork,mercariWork,xianyuWork,procurementWork]);
 
+console.log('[本轮公开读取统计]',JSON.stringify({publicReadStats,imageCacheStats,yahooGate:yahooRequestStats(),rakumaAccess:rakumaAccessDiagnostic(),notes:'Read wall time includes gate waiting; overlapping durations are not scan wall time.'}));
 const accountResults=[];
 for(const context of contexts){
   const rows=context.activeItems.map(item=>{

@@ -116,10 +116,18 @@ export async function discoverRakumaProfile(profileUrl,settings={},dependencies=
   return {items:[...items.values()],pages,totalResults:items.size,complete:true};
 }
 
+async function observedRakumaPage(url,settings,dependencies){
+  const page=dependencies.fetchPage?await dependencies.fetchPage(url,settings):{html:await (dependencies.fetchHtml||fetchHtml)(url,settings),observedAt:new Date().toISOString()};
+  const observed=Date.parse(page?.observedAt||'');
+  if(typeof page?.html!=='string'||!Number.isFinite(observed)||observed>Date.now())throw new Error('ラクマ page observation unavailable');
+  return {html:page.html,observedAt:new Date(observed).toISOString()};
+}
+
 export async function fetchRakumaItem(item,settings={},dependencies={}){
   const url=item.url||item.ownUrl;
   if(!/^https:\/\/item\.fril\.jp\/[a-f0-9]+\/?$/i.test(url||''))throw new Error('ラクマ商品链接无效');
-  return extractRakumaDetail(await (dependencies.fetchHtml||fetchHtml)(url,settings),url);
+  const page=await observedRakumaPage(url,settings,dependencies);
+  return {...extractRakumaDetail(page.html,url),sourceObservedAt:page.observedAt};
 }
 
 export function extractRakumaDetail(html='',url=''){
@@ -161,18 +169,19 @@ export function nextRakumaSearchPage(html,url){
 }
 
 export async function rakumaCompare(item,settings={},dependencies={}){
-  const getHtml=dependencies.fetchHtml||fetchHtml,fingerprint=dependencies.imageFingerprints||imageFingerprints;
+  const fingerprint=dependencies.imageFingerprints||imageFingerprints,observations=[];
+  const getPage=async url=>{const page=await observedRakumaPage(url,settings,dependencies);observations.push(Date.parse(page.observedAt));return page;};
   const query=exactQueryFor(item.title),searchUrl=`https://fril.jp/s?query=${encodeURIComponent(query)}&transaction=selling&sort=sell_price&order=asc`;
   const ownDescription=item.sourceDetail?.description||item.yahoo?.ownDescription||item.description||'';
   const ownCategory=item.sourceDetail?.category||item.yahoo?.ownCategory||item.category||'';
   const ownImages=[...(item.sourceDetail?.images||[]),...(item.yahoo?.ownImages||[]),...(item.images||[]),item.image].filter(Boolean);
   const ownSellerId=item.platform==='rakuma'?String(item.sourceDetail?.sellerId||item.sellerId||''):'';
-  const ownImageEvidence=await Promise.all([...new Set(ownImages)].slice(0,8).map(fingerprint));
-  const ownFingerprints=ownImageEvidence.filter(Boolean),rejected=[];
+  let ownImageEvidence=null,ownFingerprints=null;const rejected=[];
+  const ensureOwnImages=async()=>{if(!ownImageEvidence){ownImageEvidence=await Promise.all([...new Set(ownImages)].slice(0,8).map(fingerprint));ownFingerprints=ownImageEvidence.filter(Boolean);}};
   const collected=new Map();let nextPage=searchUrl,searchPages=0;
   const maxPages=Math.max(1,Math.min(10,Number(settings.maxRakumaSearchPages)||5));
   while(nextPage&&searchPages<maxPages){
-   const html=await getHtml(nextPage,settings);
+   const {html}=await getPage(nextPage);
    if(!/link_search_image|商品が見つかりません|商品はありません|該当する商品|0件の/.test(html))throw new Error('ラクマ搜索结果不可读，不能视为未发现同款');
    for(const card of extractRakumaSearchCards(html))collected.set(card.id,card);
    nextPage=nextRakumaSearchPage(html,nextPage);searchPages++;
@@ -198,13 +207,14 @@ export async function rakumaCompare(item,settings={},dependencies={}){
   const competitors=[];
   for(const card of preliminary){
     try{
-      const detail=extractRakumaDetail(await getHtml(card.url,settings),card.url);
+      const page=await getPage(card.url),detail=extractRakumaDetail(page.html,card.url);
       if(isOwnedOffer(settings.ownedOffers,'rakuma',{...card,...detail})||ownSellerId&&detail.sellerId===ownSellerId){rejected.push({...card,reason:'own_seller'});continue}
       if(detail.status!=='OPEN'){rejected.push({...card,reason:detail.status==='SOLD'?'not_open':'availability_unconfirmed'});continue}
       if(!ownDescription.trim()||!detail.description.trim()){rejected.push({...card,reason:'sale_description_unavailable'});continue}
       if(hasExplicitDefect(detail.title,detail.description)){rejected.push({...card,reason:'defect'});continue}
       const textIdentity=offerIdentityGuard({ownTitle:item.title,ownDescription,candidateTitle:detail.title,candidateDescription:detail.description,ownCategory,candidateCategory:detail.category,checkImages:false});
       if(!textIdentity.accepted){rejected.push({...card,reason:textIdentity.reason});continue}
+      await ensureOwnImages();
       const detailImages=[...detail.images,card.image].filter(Boolean);
       const detailEvidence=await Promise.all([...new Set(detailImages)].slice(0,8).map(fingerprint));
       const detailFingerprints=detailEvidence.filter(Boolean);
@@ -225,7 +235,7 @@ export async function rakumaCompare(item,settings={},dependencies={}){
       }
       if(!detail.shippingKnown){rejected.push({...card,reason:'shipping_unconfirmed'});continue}
       const queryFamily=productFamily(`${item.title}\n${ownDescription}`,ownCategory),candidateFamily=productFamily(`${detail.title}\n${detail.description}`,detail.category);
-      competitors.push({...card,...detail,platform:'rakuma',image:detail.images[0]||card.image,imageScore,primaryImageScore,queryFamily,candidateFamily,matchMethod:visualEquivalent?'strong_visual_primary_product':'detail_type_quantity_equivalent_text'});
+      competitors.push({...card,...detail,checkedAt:page.observedAt,platform:'rakuma',image:detail.images[0]||card.image,imageScore,primaryImageScore,queryFamily,candidateFamily,matchMethod:visualEquivalent?'strong_visual_primary_product':'detail_type_quantity_equivalent_text'});
     }catch(error){if(error?.code==='RAKUMA_SOURCE_ACCESS_DENIED')throw error;rejected.push({...card,reason:'detail_error',error:String(error)})}
   }
   competitors.sort((a,b)=>a.price-b.price);
@@ -239,6 +249,6 @@ export async function rakumaCompare(item,settings={},dependencies={}){
     detailCheckedCount:preliminary.length,competitorCount:competitors.length,rejected:rejected.slice(-30),
     unconfirmedLowerCount:lowerUnconfirmed.length,plausibleMinPrice:unresolved.length?Math.min(...unresolved.map(row=>row.price)):null,
     matchLabel:lowerUnconfirmed.length?'存在尚未核验的ラクマ低价候选':competitors.length?'已核验ラクマ在售同款':'ラクマ未发现同款',
-    checkedAt:new Date().toISOString()
+    checkedAt:new Date(Math.min(...observations)).toISOString()
   };
 }

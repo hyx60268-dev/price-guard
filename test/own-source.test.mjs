@@ -7,7 +7,7 @@ test('identical public query requests coalesce across workers without sharing mu
  const [a,b]=await Promise.all([loader.yahooResult('same-query'),loader.yahooResult('same-query')]);
  assert.equal(calls,1);a.items[0].price=1;assert.equal(b.items[0].price,100);
  clock=9000;const reused=await loader.yahooResult('same-query');assert.equal(reused.observedAt,new Date(1000).toISOString());
- await loader.yahooResult('different-query');assert.equal(calls,2);assert.deepEqual(loader.stats,{yahooResultRequests:2,yahooResultReuses:2});
+ await loader.yahooResult('different-query');assert.equal(calls,2);assert.deepEqual(loader.stats,{yahooResultRequests:2,yahooResultReuses:2,rakumaPageRequests:0,rakumaPageReuses:0,rakumaReadWallMs:0});
 });
 test('failed public queries can retry but never become a successful cached observation',async()=>{
  let calls=0;const loader=createOwnSourceLoader({fetchYahooResult:async()=>{if(++calls===1)throw Error('HTTP 429');return {items:[]}}});
@@ -49,4 +49,34 @@ test('unchanged profile thumbnail reuses details; changed or cleared thumbnail r
   assert.equal(hydrated.yahoo.ownImages[0],expectedReads?'https://fixture.test/original-new.jpg':'https://fixture.test/original-old.jpg');
   assert.equal(hydrated.sourceDetail.description,expectedReads?'new detail':'old detail');
  }
+});
+
+test('Rakuma raw HTML coalesces across workers without sliding the source observation or sharing mutations',async()=>{
+ let calls=0,clock=1000;
+ const loader=createOwnSourceLoader({now:()=>clock,fetchRakumaHtml:async url=>{calls++;await Promise.resolve();return `<html>${url}</html>`}});
+ const [a,b]=await Promise.all([loader.rakumaPage('https://fril.jp/s?query=blue'),loader.rakumaPage('https://fril.jp/s?query=blue')]);
+ assert.equal(calls,1);a.html='mutated';assert.match(b.html,/query=blue/);
+ clock=9000;const reused=await loader.rakumaPage('https://fril.jp/s?query=blue');
+ assert.equal(reused.observedAt,new Date(1000).toISOString());assert.match(reused.html,/query=blue/);
+ const different=await loader.rakumaPage('https://fril.jp/s?query=red');
+ assert.equal(calls,2);assert.match(different.html,/query=red/);assert.equal(different.observedAt,new Date(9000).toISOString());
+ assert.equal(loader.stats.rakumaPageRequests,2);assert.equal(loader.stats.rakumaPageReuses,2);assert.ok(loader.stats.rakumaReadWallMs>=0);
+});
+
+test('Rakuma shared failures are evicted and the bounded cache rereads evicted observations',async()=>{
+ let calls=0,clock=1000;
+ const loader=createOwnSourceLoader({now:()=>clock,fetchRakumaHtml:async()=>{if(++calls===1)throw Error('denied');return '<html>valid</html>'}});
+ const failed=await Promise.allSettled([loader.rakumaPage('first'),loader.rakumaPage('first')]);
+ assert.ok(failed.every(row=>row.status==='rejected'));assert.equal(calls,1);
+ clock=2000;assert.equal((await loader.rakumaPage('first')).observedAt,new Date(2000).toISOString());
+ for(let i=0;i<256;i++)await loader.rakumaPage('page-'+i);
+ clock=3000;assert.equal((await loader.rakumaPage('first')).observedAt,new Date(3000).toISOString());
+ assert.equal(calls,259);
+});
+
+test('Rakuma own-detail hydration retains the original shared HTML observation time',async()=>{
+ const sourceObservedAt='2026-10-15T00:00:00.000Z';
+ const loader=createOwnSourceLoader({now:()=>Date.parse('2026-10-16T00:00:00Z'),fetchRakumaItem:async()=>({description:'新品 1個',status:'OPEN',sourceObservedAt})});
+ const result=await loader.hydrate({id:'aa',platform:'rakuma',title:'fixture'});
+ assert.equal(result.sourceDetail.checkedAt,sourceObservedAt);
 });
