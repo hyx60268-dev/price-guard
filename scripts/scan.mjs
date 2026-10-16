@@ -1,6 +1,7 @@
+import { runAccountScanPhases } from './lib/account-scan-phases.mjs';
 import { scanAdmissionSnapshot } from './lib/scan-admission.mjs';
 import { createLiveInventoryGraph } from './lib/live-inventory-graph.mjs';
-import { isRequestDeferred } from './lib/request-cooldown.mjs';
+import { isRequestDeferred,RequestDeferredError } from './lib/request-cooldown.mjs';
 import { initializeExternalSearchAccess,externalSearchAccessSnapshot } from './lib/external-images.mjs';
 import { alternativeProcurementCost } from './lib/procurement-sources.mjs';
 import { chooseProcurementReference,mergeXianyuCostEvidence } from './lib/procurement-reference.mjs';
@@ -29,7 +30,7 @@ import { cachedComparison,deferredYahooComparison,comparisonIncomplete as isComp
 import { cycleCoverage } from './lib/cycle-coverage.mjs';
 import { xianyuCost } from './lib/xianyu.mjs';
 import { XIANYU_VERIFICATION,completedXianyuReview } from './lib/xianyu-evidence.mjs';
-import { comparisonAttemptTime,retainComparisonAttempt,currentInventoryAdditions,fairRoundRobin,fairPriorityRoundRobin,inventoryDelta,isFresh,isFreshMinutes,parsePriceAuditItemIds,prioritizePriceAuditItems,reconcileLiveItems,verifiedXianyuCache } from './lib/planner.mjs';
+import { comparisonAttemptTime,retainComparisonAttempt,currentInventoryAdditions,fairRoundRobin,inventoryDelta,isFresh,isFreshMinutes,parsePriceAuditItemIds,prioritizePriceAuditItems,reconcileLiveItems,verifiedXianyuCache } from './lib/planner.mjs';
 import { decrypt } from './lib/crypto.mjs';
 import { writeOutputs } from './lib/publish.mjs';
 import { calculateManualFields,manualCostFor,mergeAccountConfigs } from './lib/state.mjs';
@@ -53,7 +54,7 @@ if(graphEnabled&&fullPriceAudit)throw new Error('The full-inventory graph requir
 const deadline=startedAt+(fullPriceAudit?280:(Number(settings.scanBudgetMinutes)||12))*60_000;
 // Inventory discovery is part of the same run budget, before any price worker.
 settings.yahooRequestDeadline=deadline;
-if(graphEnabled)settings.rakumaRequestDeadline=deadline;
+settings.rakumaRequestDeadline=deadline;
 const imageCacheStats=configureImageFingerprintCache({directory:path.join(root,'state','image-fingerprints')});
 const accountsCfg=await readJson(path.join(root,'config','accounts.json'));
 const password=process.env.DASHBOARD_PASSWORD;
@@ -120,36 +121,74 @@ const contexts=await mapLimit(accounts,Math.min(profileConcurrency,accounts.leng
   }
   const previousItems=(previous?.items||[]).filter(item=>item.accountId?item.accountId===account.id:account.id===defaultAccountId);
   const previousById=new Map(previousItems.map(item=>[item.id,item]));
-  let activeItems=(previousItems.length?previousItems:catalogItems).map((item,index)=>({...item,accountId:account.id,seq:index+1}));
-  let profileStatus='cached',profileError='',profileDiscovery=null;
+  const activeItems=(previousItems.length?previousItems:catalogItems).map((item,index)=>({...item,accountId:account.id,seq:index+1,
+    platform:account.platform,comparisonMode:settings.comparisonMode==='same_platform'?'same_platform':'cross_platform'}));
+  return {account,accountIndex,catalogItems,previousItems,previousById,activeItems,profileStatus:'cached',profileError:'',
+    profileDelta:inventoryDelta(previousItems,activeItems),profileDiscovery:null,yahooById:new Map(),rakumaById:new Map(),mercariById:new Map(),xianyuById:new Map()};
+});
+const relistAliases={...(previous?.relistAliases||{})};
+const refreshOwnedOffers=()=>{settings.ownedOffers=buildOwnedOffers(accounts,contexts.flatMap(c=>[...c.previousItems,...c.activeItems]));};
+refreshOwnedOffers();
+async function discoverAccountPhase({contexts:phaseContexts}){
+ await mapLimit(phaseContexts,Math.min(profileConcurrency,phaseContexts.length),async context=>{
+  const {account,catalogItems,previousItems}=context;
   console.log(`\n=== 账号 ${account.name} (${account.id}) ===`);
+  if(Date.now()>=deadline){context.profileStatus='deferred_due_to_priority';context.profileError='shared_scan_deadline';return;}
   try{
     const discovered=account.platform==='rakuma'?await discoverRakumaProfile(account.profileUrl,settings):await discoverYahooProfile(null,account.profileUrl,settings);
     if(discovered.items.length||discovered.complete===true){
-      profileDiscovery=discovered;
-      activeItems=reconcileLiveItems(catalogItems,previousItems,discovered.items,account.id,Object.values(previous?.listingHistory||{}));
-      profileStatus='live';
-      console.log(`${account.platform} 主页成功：${discovered.pages} 页，${activeItems.length} 件当前在售`);
-    }else console.warn(`${account.platform} 主页返回 0 件；沿用保存清单 ${activeItems.length} 件`);
-  }catch(error){profileStatus=isRequestDeferred(error)?'deferred':'error';profileError=String(error);console.warn(`${account.platform} 主页失败；沿用保存清单：${profileError}`)}
-  const profileDelta=inventoryDelta(previousItems,activeItems);
-  activeItems=activeItems.map(item=>({...item,platform:account.platform,comparisonMode:settings.comparisonMode==='same_platform'?'same_platform':'cross_platform'}));
-  console.log(`清单变化：新增 ${profileDelta.added.length}、减少 ${profileDelta.removed.length}、重新上架 ${profileDelta.relisted.length}、复用 ${profileDelta.unchanged}`);
-  return {account,accountIndex,catalogItems,previousItems,previousById,activeItems,profileStatus,profileError,profileDelta,profileDiscovery,yahooById:new Map(),rakumaById:new Map(),mercariById:new Map(),xianyuById:new Map()};
-});
+      context.profileDiscovery=discovered;
+      context.activeItems=reconcileLiveItems(catalogItems,previousItems,discovered.items,account.id,Object.values(previous?.listingHistory||{}));
+      context.profileStatus='live';
+      console.log(`${account.platform} 主页成功：${discovered.pages} 页，${context.activeItems.length} 件当前在售`);
+    }else console.warn(`${account.platform} 主页返回 0 件；沿用保存清单 ${context.activeItems.length} 件`);
+  }catch(error){context.profileStatus=isRequestDeferred(error)?'deferred':'error';context.profileError=String(error);console.warn(`${account.platform} 主页失败；沿用保存清单：${context.profileError}`)}
+  context.profileDelta=inventoryDelta(previousItems,context.activeItems);
+  context.activeItems=context.activeItems.map(item=>({...item,platform:account.platform,comparisonMode:settings.comparisonMode==='same_platform'?'same_platform':'cross_platform'}));
+  for(const item of context.activeItems)if(item.relistedFrom)relistAliases[`${account.id}:${item.id}`]=item.relistedFrom;
+  console.log(`清单变化：新增 ${context.profileDelta.added.length}、减少 ${context.profileDelta.removed.length}、重新上架 ${context.profileDelta.relisted.length}、复用 ${context.profileDelta.unchanged}`);
+ });
+ refreshOwnedOffers();
+ for(const context of phaseContexts)context.activeItems=context.activeItems.map(item=>withRakumaDiscovery(item,priorFor(context,item),{...settings,matchCorrections}));
+}
 
-settings.ownedOffers=buildOwnedOffers(accounts,contexts.flatMap(c=>[...c.previousItems,...c.activeItems]));
-for(const context of contexts)context.activeItems=context.activeItems.map(item=>withRakumaDiscovery(item,priorFor(context,item),{...settings,matchCorrections}));
-try{console.log('[全量读取计划]',JSON.stringify(inventoryReadPlan(contexts)))}
-catch{console.warn('[全量读取计划] diagnostics_unavailable')}
+const priceAuditItemIds=parsePriceAuditItemIds(process.env.PRICE_AUDIT_ITEM_IDS);
+const yahooConcurrency=Math.max(1,Math.min(4,Number(settings.yahooConcurrency)||3));
+const rakumaConcurrency=Math.max(1,Math.min(4,Number(settings.rakumaConcurrency)||3));
+const mercariConcurrency=Math.max(1,Math.min(4,Number(settings.mercariConcurrency)||3));
+const rakumaLimit=Number.POSITIVE_INFINITY,mercariLimit=Number.POSITIVE_INFINITY;
+const xianyuLimit=Math.max(0,Number(settings.maxXianyuItemsPerRun)||3);
+const xianyuFreshHours=Number(settings.xianyuFreshHours)||168;
+let xianyuScheduled=0;
+const yahooAttemptStats={preAdmissionDeferred:0,noResponseDeferred:0,responseBeforeDeferred:0};
+const procurementResults=new Map(),rakumaHintStats=new Map(),accountPhaseObservations=[];
+const publicProcurementBudget={remaining:Math.max(1,Math.min(12,Number(settings.maxPublicProcurementItemsPerRun)||8)),deadline:null};
+const xianyuState=await xianyuStateFromEnv();
+const initialAccess=sessionManager.access();
+if(!initialAccess.allowed)console.log(`[闲鱼访问冷却] 原因=${initialAccess.reason} 下次允许检查=${initialAccess.retryAt}；本轮继续Yahoo与网页发布`);
+let xianyuMode=xianyuState?'saved':'anonymous',xianyuAuthExpired=false,anyXianyuLoginRequired=false;
+const {hydrate:legacyHydratedItem,yahooBundle:ownBundle,yahooResult:sharedYahooResult,rakumaPage:sharedRakumaPage,stats:publicReadStats}=createOwnSourceLoader({fetchYahooBundle:id=>fetchYahooItemBundle(id,settings),fetchYahooResult:url=>fetchYahooResult(url,settings),fetchRakumaItem:item=>fetchRakumaItem(item,settings,{fetchPage:sharedRakumaPage}),fetchRakumaPage:url=>fetchRakumaPage(url,settings)});
+let graphOutcome=null;
+function deferAccountPhase({contexts:phaseContexts},reason){
+ for(const context of phaseContexts){
+  if(context.profileStatus==='cached'){context.profileStatus=reason;context.profileError='shared_scan_deadline';}
+  context.priorityDeferredReason=reason;
+  for(const item of context.activeItems){
+   const prior=priorFor(context,item);
+   for(const platform of requiredPricingPlatforms(item))context[`${platform}ById`].set(item.id,{...(prior[platform]||{}),
+    status:reason,evidenceStatus:prior[platform]?.evidenceStatus||prior[platform]?.status,cacheReason:'request_error',deferredReason:reason,
+    checkedAt:prior[platform]?.checkedAt||null,candidates:prior[platform]?.candidates||[]});
+   context.xianyuById.set(item.id,{status:'deferred_limit',deferredReason:reason,samples:[],averageCNY:null});
+   if(prior.procurementSource)procurementResults.set(item.accountId+':'+item.id,{...prior.procurementSource,attempted:false,cacheStatus:reason});
+  }
+ }
+}
 
-const relistAliases={...(previous?.relistAliases||{})};
-for(const context of contexts)for(const item of context.activeItems)if(item.relistedFrom)relistAliases[`${context.account.id}:${item.id}`]=item.relistedFrom;
+async function runAccountPhase({contexts}){
 
 // 只有明确设置 FORCE_FULL_SCAN 才从头强制重扫。部署/手工重跑也沿用轮转缓存，
 // 否则每次都会在时间预算耗尽前反复检查前半段，后半段商品长期得不到核验。
 const forceYahoo=process.env.FORCE_FULL_SCAN==='1';
-const priceAuditItemIds=parsePriceAuditItemIds(process.env.PRICE_AUDIT_ITEM_IDS);
 const yahooFreshMinutes=Number(settings.yahooFreshMinutes)||20;
 const yahooBuckets=contexts.map(context=>{
   const currentAdditions=currentInventoryAdditions(context.profileDelta);
@@ -166,22 +205,19 @@ const yahooBuckets=contexts.map(context=>{
 }).sort((a,b)=>a.priority-b.priority||a.lastChecked-b.lastChecked||a.itemIndex-b.itemIndex);
 });
 // 每个店铺轮流取一件，不让商品多或旧缓存多的账号占满整轮预算。
-const yahooTasks=graphEnabled?[]:prioritizePriceAuditItems(fairPriorityRoundRobin(yahooBuckets),priceAuditItemIds);
+const yahooTasks=graphEnabled?[]:fairRoundRobin(yahooBuckets.map(bucket=>prioritizePriceAuditItems(bucket,priceAuditItemIds)));
 
 // One in-flight read per own listing, shared across independent platform workers.
 // A deferred Yahoo task must not deprive Rakuma/Mercari/Xianyu of the sale description.
 const graphSession=graphEnabled?createLiveInventoryGraph({accounts,contexts,settings:{...settings,matchCorrections},previous,startedAt,deadline}):null;
-const {hydrate:legacyHydratedItem,yahooBundle:ownBundle,yahooResult:sharedYahooResult,rakumaPage:sharedRakumaPage,stats:publicReadStats}=createOwnSourceLoader({fetchYahooBundle:id=>fetchYahooItemBundle(id,settings),fetchYahooResult:url=>fetchYahooResult(url,settings),fetchRakumaItem:item=>fetchRakumaItem(item,settings,{fetchPage:sharedRakumaPage}),fetchRakumaPage:url=>fetchRakumaPage(url,settings)});
 const hydratedItem=graphSession?item=>graphSession.hydrate(item):legacyHydratedItem;
-let graphOutcome=null;
 const graphWork=graphSession?graphSession.run().then(value=>{graphOutcome=value;console.log('[全量图执行]',JSON.stringify({summary:value.summary,reads:value.stats,costIntegration:'existing_independent_cost_workers'}));return value;}):Promise.resolve();
-const yahooConcurrency=Math.max(1,Math.min(4,Number(settings.yahooConcurrency)||3));
 const yahooWork=(async()=>{
   if(graphEnabled)return;
   // A small, separately bounded lane checks known external details before any
   // broad Yahoo search. The majority of this cycle remains for new candidates.
   const quickStarted=Date.now(),quickBudget=Math.max(0,Math.min(2*60_000,(deadline-quickStarted)*.2));
-  const knownTasks=knownYahooRefreshTasks(contexts,{...settings,matchCorrections},quickStarted);
+  const knownTasks=knownYahooRefreshTasks(contexts,{...settings,matchCorrections,accountOrder:contexts.map(context=>context.account.id)},quickStarted);
   const knownResults=await runKnownYahooRefresh(knownTasks,{
     deadline:quickStarted+quickBudget,concurrency:2,
     lookup:async({context,item,prior,candidates},{deadline:knownDeadline})=>{
@@ -209,6 +245,16 @@ const yahooWork=(async()=>{
   if(Date.now()>=deadline){
     context.yahooById.set(item.id,known||cachedYahoo(prior,item,'scan_budget')||{status:'deferred_budget',cacheReason:'rules_changed',rulesVersion:prior.yahoo?.rulesVersion??MATCHING_RULES_VERSION,checkedAt:null,lowestPrice:item.ownPrice,lowestUrl:item.url,recommendedPrice:item.ownPrice,candidates:[]});return;
   }
+  // The next gate turn may already be outside this cycle even while wall
+  // time has a few seconds left. Do not send every remaining item through an
+  // impossible request, or rotate its priority as though it was actually read.
+  const nextRequestAt=yahooRequestStats().nextRequestAt;
+  if(nextRequestAt>=deadline){
+    yahooAttemptStats.preAdmissionDeferred++;
+    context.yahooById.set(item.id,deferredYahooComparison(known||prior.yahoo,new RequestDeferredError('request_cooldown_deadline',nextRequestAt),item));return;
+  }
+  let sourceInputObserved=false,noResponseDeferral=false;
+  const observedInput=async(read,value)=>{const result=await read(value);if(result!=null)sourceInputObserved=true;return result;};
   try{
     if(item.platform==='rakuma'){
       item.sourceDetail=(await hydratedItem(item,prior)).sourceDetail;
@@ -216,14 +262,17 @@ const yahooWork=(async()=>{
       item.ownPrice=item.sourceDetail.price;
     }
     const profileSellerId=String(context.account.profileUrl||'').match(/\/user\/([^/?#]+)/i)?.[1]||'';
-    const result=await yahooCompare(null,known?.knownRefresh?.mode==='details_only'?{...item,yahoo:known}:item,{...settings,matchCorrections,ownSellerId:item.sellerId||profileSellerId,forceYahooBroadSearch:forceYahoo||task.priority<=1},{fetchYahooItemBundle:id=>ownBundle(id),fetchYahooResult:sharedYahooResult});context.yahooById.set(item.id,{...result,knownLastAttemptAt:known?.knownLastAttemptAt||prior.yahoo?.knownLastAttemptAt||null});
+    const result=await yahooCompare(null,known?.knownRefresh?.mode==='details_only'?{...item,yahoo:known}:item,{...settings,matchCorrections,ownSellerId:item.sellerId||profileSellerId,forceYahooBroadSearch:forceYahoo||task.priority<=1},{fetchYahooItemBundle:id=>observedInput(ownBundle,id),fetchYahooResult:url=>observedInput(sharedYahooResult,url)});context.yahooById.set(item.id,{...result,knownLastAttemptAt:known?.knownLastAttemptAt||prior.yahoo?.knownLastAttemptAt||null});
     console.log(`[Yahoo ${taskIndex+1}/${yahooTasks.length}] ${context.account.name} ${item.id} cards=${result.cardCount} matches=${result.competitorCount} lowest=${result.lowestPrice} source=${result.sourceStatus?.search||'unknown'}`);
   }catch(error){
+    noResponseDeferral=isRequestDeferred(error)&&!sourceInputObserved;
+    if(isRequestDeferred(error))yahooAttemptStats[noResponseDeferral?'noResponseDeferred':'responseBeforeDeferred']++;
     console.error(`[Yahoo ERROR][${context.account.id}:${item.id}]`,String(error));
-    context.yahooById.set(item.id,isRequestDeferred(error)?deferredYahooComparison(known||prior.yahoo,error):known?.knownRefresh?.mode==='details_only'?{...known,fullSearchError:true}:cachedYahoo(prior,item,'request_error')||{status:'error',error:String(error),rulesVersion:MATCHING_RULES_VERSION,checkedAt:new Date().toISOString(),candidates:[],lowestPrice:item.ownPrice,lowestUrl:item.url,recommendedPrice:item.ownPrice});
+    context.yahooById.set(item.id,isRequestDeferred(error)?deferredYahooComparison(known||prior.yahoo,error,item):known?.knownRefresh?.mode==='details_only'?{...known,fullSearchError:true}:cachedYahoo(prior,item,'request_error')||{status:'error',error:String(error),rulesVersion:MATCHING_RULES_VERSION,checkedAt:new Date().toISOString(),candidates:[],lowestPrice:item.ownPrice,lowestUrl:item.url,recommendedPrice:item.ownPrice});
   }finally{
-    const attemptedAt=new Date().toISOString();
-    context.yahooById.set(item.id,retainComparisonAttempt({...context.yahooById.get(item.id),lastFullAttemptAt:attemptedAt,knownLastAttemptAt:known?.knownLastAttemptAt||prior.yahoo?.knownLastAttemptAt||null},prior.yahoo,attemptedAt));
+    const attemptedAt=noResponseDeferral?undefined:new Date().toISOString();
+    const result={...context.yahooById.get(item.id),...(attemptedAt?{lastFullAttemptAt:attemptedAt}:{}),knownLastAttemptAt:known?.knownLastAttemptAt||prior.yahoo?.knownLastAttemptAt||null};
+    context.yahooById.set(item.id,retainComparisonAttempt(result,prior.yahoo,attemptedAt));
     if(!context.yahooById.get(item.id)?.deferredReason)await wait(550+Math.floor(Math.random()*350));
   }
   });
@@ -231,19 +280,16 @@ const yahooWork=(async()=>{
 
 // Bounded product workers share the run deadline and the platform request gate.
 const rakumaFreshHours=Math.max(1/60,Number(settings.rakumaFreshHours)||1/3);
-const rakumaLimit=Number.POSITIVE_INFINITY; // The deadline bounds admission; no arbitrary per-run item cap.
 const rakumaBuckets=contexts.map(context=>pricingItemsForPlatform(context.activeItems,'rakuma').map((item,itemIndex)=>{
   // Failed attempts rotate to the tail too, without becoming accepted cache.
   const prior=priorFor(context,item),cached=cachedRakuma(prior),checked=comparisonAttemptTime(prior.rakuma);
   return {context,item,prior,cached,itemIndex,lastChecked:Number.isFinite(checked)?checked:0};
 }).filter(task=>!task.cached||!isFresh(task.cached.checkedAt,rakumaFreshHours)).sort((a,b)=>a.lastChecked-b.lastChecked||a.itemIndex-b.itemIndex));
-const rakumaTasks=graphEnabled?[]:prioritizePriceAuditItems(fairRoundRobin(rakumaBuckets),priceAuditItemIds);
+const rakumaTasks=graphEnabled?[]:fairRoundRobin(rakumaBuckets.map(bucket=>prioritizePriceAuditItems(bucket,priceAuditItemIds)));
 for(const context of contexts)for(const item of context.activeItems){
   if(graphEnabled||!requiredPricingPlatforms(item).includes('rakuma'))continue;
   const cached=cachedRakuma(priorFor(context,item));if(cached&&isFresh(cached.checkedAt,rakumaFreshHours))context.rakumaById.set(item.id,cached);
 }
-const rakumaConcurrency=Math.max(1,Math.min(4,Number(settings.rakumaConcurrency)||3));
-const rakumaHintStats=new Map();
 const rakumaWork=mapLimit(rakumaTasks,rakumaConcurrency,async(task,index)=>{
   const {context,item,prior}=task;
   if(index>=rakumaLimit||Date.now()>=deadline){context.rakumaById.set(item.id,cachedRakuma(prior,'rotation_limit')||{status:'deferred_limit',candidates:[],lowestPrice:null,checkedAt:null});return}
@@ -262,14 +308,12 @@ const rakumaWork=mapLimit(rakumaTasks,rakumaConcurrency,async(task,index)=>{
 });
 
 // All accounts receive a fair turn. A failed source never becomes 'no offers'.
-const mercariLimit=Number.POSITIVE_INFINITY;
 const mercariBuckets=graphEnabled?[]:contexts.map(context=>pricingItemsForPlatform(context.activeItems,'mercari').map((item,itemIndex)=>{
  const prior=priorFor(context,item),cached=cachedComparison(prior.mercari),stamp=comparisonAttemptTime(prior.mercari);
  if(cached&&isFreshMinutes(cached.checkedAt,Number(settings.mercariFreshMinutes)||20)){context.mercariById.set(item.id,cached);return null}
  return {context,item,prior,itemIndex,lastChecked:Number.isFinite(stamp)?stamp:0};
 }).filter(Boolean).sort((a,b)=>a.lastChecked-b.lastChecked||a.itemIndex-b.itemIndex));
-const mercariTasks=prioritizePriceAuditItems(fairRoundRobin(mercariBuckets),priceAuditItemIds);
-const mercariConcurrency=Math.max(1,Math.min(4,Number(settings.mercariConcurrency)||3));
+const mercariTasks=fairRoundRobin(mercariBuckets.map(bucket=>prioritizePriceAuditItems(bucket,priceAuditItemIds)));
 const mercariWork=(async()=>{
  const pages=new Map();let opened;
  try{
@@ -288,17 +332,12 @@ const mercariWork=(async()=>{
  }finally{if(opened){const session=await opened.catch(()=>null);await session?.browser?.close().catch(()=>{})}}
 })();
 
-const xianyuState=await xianyuStateFromEnv();
-const initialAccess=sessionManager.access();
-if(!initialAccess.allowed)console.log(`[闲鱼访问冷却] 原因=${initialAccess.reason} 下次允许检查=${initialAccess.retryAt}；本轮继续Yahoo与网页发布`);
-let xBrowser,xContext,xPage,xianyuMode=xianyuState?'saved':'anonymous',xianyuAuthExpired=false,anyXianyuLoginRequired=false;
+let xBrowser,xContext,xPage;
 async function ensureXianyuPage(){
   if(xPage)return xPage;
   const opened=await openContext(xianyuState);xBrowser=opened.browser;xContext=opened.context;xPage=await xContext.newPage();return xPage;
 }
-const xianyuFreshHours=Number(settings.xianyuFreshHours)||168;
 const xianyuRetryHours=Number(settings.xianyuRetryHours)||24;
-const xianyuLimit=Math.max(0,Number(settings.maxXianyuItemsPerRun)||3);
 const xianyuBuckets=contexts.map(()=>[]);
 for(const [contextIndex,context] of contexts.entries())for(const item of context.activeItems){
   const prior=priorFor(context,item);
@@ -328,10 +367,10 @@ const xianyuWork=(async()=>{
 try{
   for(const [index,task] of xianyuTasks.entries()){
     const {context,item}=task;
-    // Yahoo owns the general scan budget, but the small fixed Xianyu batch must
-    // still run afterwards; otherwise a large inventory permanently starves cost
-    // refreshes before they start.
-    if(index>=xianyuLimit||Date.now()>=deadline){context.xianyuById.set(item.id,{status:'deferred_limit',samples:[],averageCNY:null});continue}
+    // Pricing and procurement share the account phase. The global allowance
+    // and original run deadline are never reset for a later platform.
+    if(xianyuScheduled>=xianyuLimit||Date.now()>=deadline){context.xianyuById.set(item.id,{status:'deferred_limit',samples:[],averageCNY:null});continue}
+    xianyuScheduled++;
     if(!sessionManager.access().allowed){context.xianyuById.set(item.id,deferredXianyuAccess(sessionManager.access()));continue}
     if(anyXianyuLoginRequired){context.xianyuById.set(item.id,{status:'deferred_auth',samples:[],averageCNY:null});continue}
     console.log(`[闲鱼 ${index+1}/${Math.min(xianyuTasks.length,xianyuLimit)}] ${context.account.name} ${item.title}`);
@@ -362,21 +401,43 @@ try{
 let procurementBrowser,procurementContextPromise;
 const getProcurementContext=()=>procurementContextPromise||=(async()=>{const opened=await openContext();procurementBrowser=opened.browser;return opened.context})();
 const procurementBuckets=contexts.map(context=>context.activeItems.map(item=>({item,prior:priorFor(context,item)})).sort((a,b)=>(Date.parse(a.prior.procurementSource?.checkedAt)||0)-(Date.parse(b.prior.procurementSource?.checkedAt)||0)));
+publicProcurementBudget.deadline??=Math.min(deadline,Date.now()+180000);
 const procurementWork=runPublicProcurement(procurementBuckets,{
  matchCorrections,
- priorityItemIds:priceAuditItemIds,
- deadline:Math.min(deadline,Date.now()+180000),limit:Math.max(1,Math.min(12,Number(settings.maxPublicProcurementItemsPerRun)||8)),concurrency:2,
+ priorityItemIds:priceAuditItemIds,accountFairness:!graphEnabled,
+ deadline:publicProcurementBudget.deadline,limit:publicProcurementBudget.remaining,concurrency:2,
  hydrate:hydratedItem,lookup:(item,options)=>alternativeProcurementCost(item,{...options,getContext:getProcurementContext,matchCorrections}),
  log:row=>console.log('[多渠道采购]',JSON.stringify(row))
 }).finally(async()=>{await procurementBrowser?.close().catch(()=>{})});
-let procurementResults;
-try{[,,,,procurementResults]=await Promise.all([yahooWork,rakumaWork,mercariWork,xianyuWork,procurementWork,graphWork]);}
-finally{graphSession?.close();}
+try{
+ // A phase barrier waits for every started worker, including on failure. The
+ // next platform cannot start while an earlier worker is still in flight.
+ const settled=await Promise.allSettled([yahooWork,rakumaWork,mercariWork,xianyuWork,procurementWork,graphWork]);
+ const failed=settled.find(result=>result.status==='rejected');if(failed)throw failed.reason;
+ const references=settled[4].value;
+ for(const [key,value] of references)procurementResults.set(key,value);
+ publicProcurementBudget.remaining=Math.max(0,publicProcurementBudget.remaining-[...references.values()].filter(value=>value.attempted).length);
+}finally{graphSession?.close();}
+}
+
+if(graphEnabled){
+ // The opt-in experimental graph retains its established all-root contract;
+ // production uses the explicitly phased legacy engine below.
+ await discoverAccountPhase({contexts});
+ await runAccountPhase({contexts,key:'experimental_graph'});
+}else await runAccountScanPhases(contexts,{
+ priorityAccountIds:settings.scanAccountPriorityIds||[],deadline,
+ discover:discoverAccountPhase,scan:runAccountPhase,defer:deferAccountPhase,
+ onPhase:row=>{accountPhaseObservations.push(row);console.log('[账号执行阶段]',JSON.stringify(row));}
+});
+refreshOwnedOffers();
+try{console.log('[全量读取计划]',JSON.stringify(inventoryReadPlan(contexts)))}
+catch{console.warn('[全量读取计划] diagnostics_unavailable')}
 console.log('[ラクマ既知URL継続]',JSON.stringify([...rakumaHintStats.values()].reduce((sum,row)=>{
   for(const [key,value] of Object.entries(row))sum[key]=(sum[key]||0)+value;return sum;
 },{})));
 
-console.log('[本轮公开读取统计]',JSON.stringify({publicReadStats,imageCacheStats,yahooGate:yahooRequestStats(),rakumaAccess:rakumaAccessDiagnostic(),notes:'Read wall time includes gate waiting; overlapping durations are not scan wall time.'}));
+console.log('[本轮公开读取统计]',JSON.stringify({publicReadStats,imageCacheStats,yahooAttemptStats,yahooGate:yahooRequestStats(),rakumaAccess:rakumaAccessDiagnostic(),notes:'Read wall time includes gate waiting; overlapping durations are not scan wall time.'}));
 const accountResults=[];
 for(const context of contexts){
   const rows=context.activeItems.map(item=>{
@@ -445,7 +506,7 @@ for(const context of contexts){
     yahooDeferred:yahooValues.filter(value=>value.deferredReason||value.status==='deferred_budget'||value.cacheReason==='scan_budget').length,
     rakuma:rows.filter(item=>requiredPricingPlatforms(item).includes('rakuma')).length,rakumaLive:rakumaValues.filter(value=>['ok','incomplete'].includes(value.status)).length,
     rakumaCached:rakumaValues.filter(value=>value.status==='cached').length,
-    rakumaDeferred:rakumaValues.filter(value=>value.status==='deferred_limit'||value.cacheReason==='rotation_limit').length,
+    rakumaDeferred:rakumaValues.filter(value=>value.deferredReason||value.status==='deferred_limit'||value.cacheReason==='rotation_limit').length,
     mercari:rows.filter(item=>requiredPricingPlatforms(item).includes('mercari')).length,mercariLive:mercariValues.filter(value=>['ok','incomplete'].includes(value.status)).length,mercariCached:mercariValues.filter(value=>value.status==='cached').length,
     xianyuRequested:xianyuValues.filter(value=>!['not_requested'].includes(String(value.status))).length,
     xianyuScanned:xianyuValues.filter(value=>['ok','manual_review','page_empty','login_required','blocked','detail_inaccessible','error'].includes(value.status)).length,
@@ -456,7 +517,7 @@ for(const context of contexts){
     xianyuRejectionReasons:xianyuValues.flatMap(value=>value.rejected||[]).reduce((counts,value)=>{counts[value.reason]=(counts[value.reason]||0)+1;return counts},{})
   };
   accountResults.push({id:context.account.id,name:context.account.name,platform:context.account.platform,profileUrl:context.account.profileUrl,managed:context.account.managed,
-    profileStatus:context.profileStatus,profileError:context.profileError,profileDelta:context.profileDelta,itemCount:rows.length,
+    profileStatus:context.profileStatus,profileError:context.profileError,priorityDeferredReason:context.priorityDeferredReason||null,profileDelta:context.profileDelta,itemCount:rows.length,
     ...(graphEnabled?{inventoryObservation:{observedAt:context.profileDiscovery?.observedAt??null,fromCache:context.profileDiscovery?.fromCache!==false,complete:context.profileDiscovery?.complete===true,truncated:context.profileDiscovery?.truncated===true}}:{}),
     lastCatalogCount:context.catalogItems.length,scanStats,items:rows});
 }
@@ -472,9 +533,9 @@ const result={
   cycleCoverage:cycleCoverage(allItems,accountResults,{startedAt,finishedAt:checkedAt,previousCoverage:previous?.cycleCoverage}),
   version:6,checkedAt,dataRevision:checkedAt,settings:{...settings,yahooRequestDeadline:undefined,rakumaRequestDeadline:undefined},accounts:accountResults,managedAccounts,portalUsers,appliedSyncIssues:previous?.appliedSyncIssues||{},
   manualCosts,matchCorrections,portalPreferences,dismissedDiscoveries,discoveryReviews,ownedTitleHistory,relistAliases,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode,xianyuAccess:sessionManager.access()},items:allItems,
-  scanMeta:{codeSha:process.env.GITHUB_SHA||null,trigger:process.env.SCAN_TRIGGER||'local',startedAt:new Date(startedAt).toISOString(),durationSeconds:Math.round((Date.now()-startedAt)/1000),publicReadStats,imageCacheStats,
+  scanMeta:{codeSha:process.env.GITHUB_SHA||null,trigger:process.env.SCAN_TRIGGER||'local',startedAt:new Date(startedAt).toISOString(),durationSeconds:Math.round((Date.now()-startedAt)/1000),publicReadStats,imageCacheStats,yahooAttemptStats,
     pricingEngine,graph:graphOutcome?{...graphOutcome.summary,reads:graphOutcome.stats,costIntegration:'existing_independent_cost_workers'}:null,
-    comparisonMode:settings.comparisonMode||'cross_platform',comparisonTasks:graphEnabled?Object.fromEntries(['yahoo','rakuma','mercari'].map(source=>[source,contexts.reduce((sum,context)=>sum+context.activeItems.filter(item=>requiredPricingPlatforms(item).includes(source)).length,0)])):{yahoo:yahooTasks.length,rakuma:rakumaTasks.length,mercari:mercariTasks.length},budgetMinutes:Number(settings.scanBudgetMinutes)||12,profileConcurrency,yahooConcurrency,rakumaConcurrency,mercariConcurrency,rakumaLimit:Number.isFinite(rakumaLimit)?rakumaLimit:null,mercariLimit:Number.isFinite(mercariLimit)?mercariLimit:null,xianyuLimit}
+    comparisonMode:settings.comparisonMode||'cross_platform',accountExecutionPolicy:graphEnabled?'experimental_graph':'yahoo_first_rakuma_last',accountPhases:accountPhaseObservations,comparisonTasks:Object.fromEntries(['yahoo','rakuma','mercari'].map(source=>[source,contexts.reduce((sum,context)=>sum+context.activeItems.filter(item=>requiredPricingPlatforms(item).includes(source)).length,0)])),budgetMinutes:Number(settings.scanBudgetMinutes)||12,profileConcurrency,yahooConcurrency,rakumaConcurrency,mercariConcurrency,rakumaLimit:Number.isFinite(rakumaLimit)?rakumaLimit:null,mercariLimit:Number.isFinite(mercariLimit)?mercariLimit:null,xianyuLimit}
 };
 const {summary}=await writeOutputs({root,result,previous,password});
 console.log('[访问冷却基准已保存]',JSON.stringify({yahoo:result.yahooRequestAccess,rakuma:result.rakumaRequestAccess,search:result.externalSearchAccess,xianyu:xianyuAccessObservation(sessionManager.access())}));

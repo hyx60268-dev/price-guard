@@ -65,7 +65,8 @@ export function yahooFullAttemptTime(prior={}){
 export function knownYahooRefreshTasks(contexts,settings={},now=Date.now()){
  const interval=Math.max(1,Number(settings.yahooFreshMinutes)||20)*60_000;
  const accountAttempt=context=>Math.max(0,...context.activeItems.map(item=>timestamp(context.previousById.get(item.id)?.yahoo?.knownLastAttemptAt)));
- const buckets=[...contexts].sort((a,b)=>accountAttempt(a)-accountAttempt(b)).map(context=>context.activeItems.map(item=>{
+ const order=new Map((settings.accountOrder||[]).map((id,index)=>[id,index]));
+ const buckets=[...contexts].sort((a,b)=>order.size?(order.get(a.account.id)??Infinity)-(order.get(b.account.id)??Infinity):accountAttempt(a)-accountAttempt(b)).map(context=>context.activeItems.map(item=>{
   const prior=context.previousById.get(item.id)||{};
   const observed={...item,yahoo:prior.yahoo};
   const candidates=knownYahooCandidates(observed,settings);

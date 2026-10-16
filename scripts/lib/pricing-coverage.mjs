@@ -1,5 +1,6 @@
 import { pricingDecision,requiredPricingPlatforms } from '../../public/pricing-policy.js';
 import { MATCHING_RULES_VERSION } from './rules.mjs';
+import { deferredYahooDetailQueue } from './yahoo-detail-queue.mjs';
 
 export function cachedComparison(value,reason='fresh_cache'){
   if(!value||value.rulesVersion!==MATCHING_RULES_VERSION||!value.checkedAt)return null;
@@ -9,8 +10,10 @@ export function cachedComparison(value,reason='fresh_cache'){
 }
 // Deferral is an attempted read, not fresh evidence. Keep accepted quote and
 // broad-search clocks unchanged; the existing request_error policy disables it.
-export function deferredYahooComparison(prior={},error={}){
-  return {...prior,status:prior.checkedAt?'cached':'deferred_budget',evidenceStatus:prior.evidenceStatus||prior.status,
+export function deferredYahooComparison(prior={},error={},item){
+  let detailQueue;
+  try{detailQueue=deferredYahooDetailQueue(error,item);}catch{} // Evidence fallback survives a checkpoint failure.
+  return {...prior,...(detailQueue?{detailQueue}:{}),status:prior.checkedAt?'cached':'deferred_budget',evidenceStatus:prior.evidenceStatus||prior.status,
     checkedAt:prior.checkedAt||null,cacheReason:'request_error',deferredReason:error.reason||'request_deadline',
     retryAt:error.retryAt??null};
 }

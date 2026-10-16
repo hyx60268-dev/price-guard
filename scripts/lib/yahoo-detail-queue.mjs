@@ -1,5 +1,6 @@
 import {createHash} from 'node:crypto';
 import {MATCHING_RULES_VERSION} from './rules.mjs';
+import {isRequestDeferred,RequestDeferredError} from './request-cooldown.mjs';
 
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const text=value=>String(value??'').normalize('NFKC').replace(/\s+/g,' ').trim();
@@ -8,6 +9,35 @@ const time=value=>{const n=Date.parse(value||'');return Number.isFinite(n)?n:0};
 const cardKey=card=>hash([card.id,text(card.title),card.image||'',card.sellerId||'',Number(card.price)||null]);
 const RETRY_MIN_MS=20*60_000,RETRY_MAX_MS=60*60_000;
 const schedulingReasons=new Set(['physical_product_type_unconfirmed','sale_description_unavailable']);
+// Checkpoints live only on a compare-private error, never a shared source hold.
+// They contain ordering memory, not a partial result or accepted-offer evidence.
+const deferredCheckpoints=new WeakMap();
+const itemKey=item=>item?.accountId&&item?.id&&text(item?.title)?hash([
+ MATCHING_RULES_VERSION,item.accountId,item.id,item.platform||'yahoo',text(item.title),
+ item.sellerId||'',image(item.image),Number(item.ownPrice)||null
+]):null;
+
+export function withYahooSchedulingCheckpoint(error,queue){
+ if(!isRequestDeferred(error))return error;
+ try{
+  const checkpoint=queue?.deferredSnapshot();
+  if(!checkpoint)return error;
+  const wrapped=new RequestDeferredError(error.reason,error.retryAt);
+  // Keep the original hold, including indefinite deadlines and HTTP metadata.
+  for(const field of ['message','httpStatus','retryAfter'])if(error[field]!==undefined)wrapped[field]=error[field];
+  wrapped.cause=error;
+  deferredCheckpoints.set(wrapped,structuredClone(checkpoint));
+  return wrapped;
+ }catch{return error;} // Checkpoint failure cannot replace or relax the deferral.
+}
+
+export function deferredYahooDetailQueue(error,item){
+ const checkpoint=deferredCheckpoints.get(error);
+ if(!checkpoint||!itemKey(item)||checkpoint.itemKey!==itemKey(item)||
+  (item.itemStatus&&item.itemStatus!=='OPEN')||(item.sourceDetail&&
+   (item.sourceDetail.status!=='OPEN'||yahooQueueOwnKey(item,item.sourceDetail)!==checkpoint.queue.ownKey)))return undefined;
+ return structuredClone(checkpoint.queue);
+}
 
 // This identity binds queue order only. It never supplies current price or
 // grants acceptance; every selected card still needs the normal full detail gate.
@@ -26,11 +56,16 @@ export function planYahooDetailQueue({item,detail,candidates=[],knownIds=new Set
   const key=cardKey(card),old=existing.get(card.id),at=old?.key===key&&time(old.at)<=now+60_000?time(old.at):0;
   const retry=scheduled.get(card.id),retryAt=time(retry?.retryAt),attemptedAt=time(retry?.attemptedAt);
   const scheduling=retry?.key===key&&schedulingReasons.has(retry.reason)&&attemptedAt>0&&attemptedAt<=now+60_000&&
-   retryAt>=attemptedAt&&retryAt<=attemptedAt+RETRY_MAX_MS?retry:null;
+   retryAt>=attemptedAt&&retryAt<=attemptedAt+RETRY_MAX_MS&&Number.isSafeInteger(retry.count)&&retry.count>=1&&retry.count<=3?
+   {id:card.id,key,reason:retry.reason,count:retry.count,attemptedAt:new Date(attemptedAt).toISOString(),retryAt:new Date(retryAt).toISOString()}:null;
   return {card,index,key,at,scheduling,orderAt:Math.max(at,time(scheduling?.attemptedAt))};
  });
  const remembered=new Map(rows.filter(row=>row.at).map(row=>[row.card.id,{id:row.card.id,key:row.key,at:new Date(row.at).toISOString()}]));
  const schedulingMemory=new Map(rows.filter(row=>row.scheduling).map(row=>[row.card.id,row.scheduling]));
+ // A deferred comparison may retain only completed unresolved attempts. In
+ // particular, record() below must not checkpoint newly accepted/inspected data.
+ const checkpointItemKey=itemKey(item),checkpointAttempts=[...remembered.values()];
+ const checkpointScheduling=new Map(schedulingMemory),schedulingUpdates=new Map();
  // These are completed transport attempts with unresolved identity, not inspected
  // or accepted offers. Keep them in the caller's recall/coverage set while giving
  // unseen cards room. Retry time is finite, and changed identity revokes it.
@@ -66,7 +101,14 @@ export function planYahooDetailQueue({item,detail,candidates=[],knownIds=new Set
    const count=previous?.reason===reason?Math.min(3,previousCount+1):1;
    const delay=reason==='physical_product_type_unconfirmed'?RETRY_MAX_MS:Math.min(RETRY_MAX_MS,RETRY_MIN_MS*2**(count-1));
    schedulingSelections.push(card.id);
-   schedulingMemory.set(card.id,{id:card.id,key:row.key,reason,count,attemptedAt:new Date(stamp).toISOString(),retryAt:new Date(stamp+delay).toISOString()});
+   const value={id:card.id,key:row.key,reason,count,attemptedAt:new Date(stamp).toISOString(),retryAt:new Date(stamp+delay).toISOString()};
+   schedulingMemory.set(card.id,value);schedulingUpdates.set(card.id,value);
+  },
+  deferredSnapshot(){
+   if(!ownKey||!checkpointItemKey||detail?.status!=='OPEN'||!schedulingUpdates.size)return undefined;
+   return {itemKey:checkpointItemKey,queue:{ownKey,attempts:checkpointAttempts,lastSelection:[],
+    schedulingAttempts:[...new Map([...checkpointScheduling,...schedulingUpdates]).values()],
+    lastSchedulingSelection:[...schedulingUpdates.keys()],remaining:rows.length}};
   },
   snapshot(){
    if(!ownKey)return undefined;

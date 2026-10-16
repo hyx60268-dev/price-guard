@@ -62,5 +62,10 @@
   "xianyuRequestIntervalMs": 8000,
   "mercariFreshMinutes": 20,
   "rakumaConcurrency": 3,
-  "mercariConcurrency": 3
+  "mercariConcurrency": 3,
+  "scanAccountPriorityIds": [
+    "melon",
+    "account-p6579087",
+    "local-1789214704376"
+  ]
 }
