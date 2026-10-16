@@ -1,5 +1,5 @@
 // Platform workers share public own-listing reads, not competitor decisions or costs.
-export function createOwnSourceLoader({fetchYahooBundle,fetchYahooResult,fetchRakumaItem,fetchRakumaHtml,now=Date.now}){
+export function createOwnSourceLoader({fetchYahooBundle,fetchYahooResult,fetchRakumaItem,fetchRakumaHtml,fetchRakumaPage,now=Date.now}){
  const bundles=new Map(),details=new Map(),results=new Map(),rakumaPages=new Map();
  const stats={yahooResultRequests:0,yahooResultReuses:0,rakumaPageRequests:0,rakumaPageReuses:0,rakumaReadWallMs:0};
  const yahooBundle=id=>{
@@ -27,7 +27,9 @@ export function createOwnSourceLoader({fetchYahooBundle,fetchYahooResult,fetchRa
   if(request)stats.rakumaPageReuses++;
   else{
    stats.rakumaPageRequests++;const start=performance.now();
-   request=Promise.resolve().then(()=>fetchRakumaHtml(url)).then(html=>({html,observedAt:new Date(now()).toISOString()})).finally(()=>{stats.rakumaReadWallMs+=performance.now()-start});
+   request=Promise.resolve().then(()=>fetchRakumaPage?fetchRakumaPage(url):
+    Promise.resolve(fetchRakumaHtml(url)).then(html=>({html,observedAt:new Date(now()).toISOString()})))
+    .finally(()=>{stats.rakumaReadWallMs+=performance.now()-start});
    rakumaPages.set(url,request);
    // Keep memory bounded; evictions can only cause a new permitted observation.
    while(rakumaPages.size>256)rakumaPages.delete(rakumaPages.keys().next().value);

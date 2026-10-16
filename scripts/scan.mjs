@@ -10,6 +10,7 @@ import { knownYahooRefreshTasks,runKnownYahooRefresh,yahooFullAttemptTime } from
 import { buildOwnedOffers } from '../public/owned-offers.js';
 import { createOwnSourceLoader } from './lib/own-source.mjs';
 import { inventoryReadPlan } from './lib/inventory-read-plan.mjs';
+import { withRakumaDiscovery } from './lib/rakuma-discovery-hints.mjs';
 import { configureImageFingerprintCache } from './lib/image.mjs';
 import { xianyuReviewPlan,mergeXianyuReview } from './lib/xianyu-review-plan.mjs';
 import { mercariCompare } from './lib/mercari.mjs';
@@ -21,7 +22,7 @@ import { deferredXianyuAccess } from './lib/xianyu-access.mjs';
 import { fileURLToPath } from 'node:url';
 import { openContext } from './lib/browser.mjs';
 import { discoverYahooProfile,fetchYahooItemBundle,fetchYahooResult,marketPriceDecision,yahooCompare,yahooRequestStats,initializeYahooRequestAccess,yahooRequestAccessSnapshot } from './lib/yahoo.mjs';
-import { discoverRakumaProfile,fetchRakumaItem,fetchRakumaHtml,rakumaCompare,rakumaAccessDiagnostic } from './lib/rakuma.mjs';
+import { discoverRakumaProfile,fetchRakumaItem,fetchRakumaPage,rakumaCompare,rakumaAccessDiagnostic } from './lib/rakuma.mjs';
 import { cachedComparison,deferredYahooComparison,comparisonIncomplete as isComparisonIncomplete,pricingCoverage } from './lib/pricing-coverage.mjs';
 import { cycleCoverage } from './lib/cycle-coverage.mjs';
 import { xianyuCost } from './lib/xianyu.mjs';
@@ -130,6 +131,7 @@ const contexts=await mapLimit(accounts,Math.min(profileConcurrency,accounts.leng
 });
 
 settings.ownedOffers=buildOwnedOffers(accounts,contexts.flatMap(c=>[...c.previousItems,...c.activeItems]));
+for(const context of contexts)context.activeItems=context.activeItems.map(item=>withRakumaDiscovery(item,priorFor(context,item),{...settings,matchCorrections}));
 try{console.log('[全量读取计划]',JSON.stringify(inventoryReadPlan(contexts)))}
 catch{console.warn('[全量读取计划] diagnostics_unavailable')}
 
@@ -161,7 +163,7 @@ const yahooTasks=graphEnabled?[]:prioritizePriceAuditItems(fairPriorityRoundRobi
 // One in-flight read per own listing, shared across independent platform workers.
 // A deferred Yahoo task must not deprive Rakuma/Mercari/Xianyu of the sale description.
 const graphSession=graphEnabled?createLiveInventoryGraph({accounts,contexts,settings:{...settings,matchCorrections},previous,startedAt,deadline}):null;
-const {hydrate:legacyHydratedItem,yahooBundle:ownBundle,yahooResult:sharedYahooResult,rakumaPage:sharedRakumaPage,stats:publicReadStats}=createOwnSourceLoader({fetchYahooBundle:id=>fetchYahooItemBundle(id,settings),fetchYahooResult:url=>fetchYahooResult(url,settings),fetchRakumaItem:item=>fetchRakumaItem(item,settings,{fetchPage:sharedRakumaPage}),fetchRakumaHtml:url=>fetchRakumaHtml(url,settings)});
+const {hydrate:legacyHydratedItem,yahooBundle:ownBundle,yahooResult:sharedYahooResult,rakumaPage:sharedRakumaPage,stats:publicReadStats}=createOwnSourceLoader({fetchYahooBundle:id=>fetchYahooItemBundle(id,settings),fetchYahooResult:url=>fetchYahooResult(url,settings),fetchRakumaItem:item=>fetchRakumaItem(item,settings,{fetchPage:sharedRakumaPage}),fetchRakumaPage:url=>fetchRakumaPage(url,settings)});
 const hydratedItem=graphSession?item=>graphSession.hydrate(item):legacyHydratedItem;
 let graphOutcome=null;
 const graphWork=graphSession?graphSession.run().then(value=>{graphOutcome=value;console.log('[全量图执行]',JSON.stringify({summary:value.summary,reads:value.stats,costIntegration:'existing_independent_cost_workers'}));return value;}):Promise.resolve();
@@ -233,11 +235,14 @@ for(const context of contexts)for(const item of context.activeItems){
   const cached=cachedRakuma(priorFor(context,item));if(cached&&isFresh(cached.checkedAt,rakumaFreshHours))context.rakumaById.set(item.id,cached);
 }
 const rakumaConcurrency=Math.max(1,Math.min(4,Number(settings.rakumaConcurrency)||3));
+const rakumaHintStats=new Map();
 const rakumaWork=mapLimit(rakumaTasks,rakumaConcurrency,async(task,index)=>{
   const {context,item,prior}=task;
   if(index>=rakumaLimit||Date.now()>=deadline){context.rakumaById.set(item.id,cachedRakuma(prior,'rotation_limit')||{status:'deferred_limit',candidates:[],lowestPrice:null,checkedAt:null});return}
   try{
-    const result=await rakumaCompare(await hydratedItem(item,prior),{...settings,matchCorrections},{fetchPage:sharedRakumaPage});
+    const result=await rakumaCompare(await hydratedItem(item,prior),{...settings,matchCorrections},{fetchPage:sharedRakumaPage,priorItem:prior,
+      onDiscovery:store=>{item.competitorDiscovery={...item.competitorDiscovery,rakuma:store}},
+      onHintStats:stats=>rakumaHintStats.set(JSON.stringify([item.accountId,item.id]),stats)});
     context.rakumaById.set(item.id,result);
     console.log(`[ラクマ ${index+1}/${Math.min(rakumaTasks.length,rakumaLimit)}] ${context.account.name} ${item.id} cards=${result.cardCount} matches=${result.competitorCount} lowest=${result.lowestPrice??'—'}`);
   }catch(error){
@@ -359,6 +364,9 @@ const procurementWork=runPublicProcurement(procurementBuckets,{
 let procurementResults;
 try{[,,,,procurementResults]=await Promise.all([yahooWork,rakumaWork,mercariWork,xianyuWork,procurementWork,graphWork]);}
 finally{graphSession?.close();}
+console.log('[ラクマ既知URL継続]',JSON.stringify([...rakumaHintStats.values()].reduce((sum,row)=>{
+  for(const [key,value] of Object.entries(row))sum[key]=(sum[key]||0)+value;return sum;
+},{})));
 
 console.log('[本轮公开读取统计]',JSON.stringify({publicReadStats,imageCacheStats,yahooGate:yahooRequestStats(),rakumaAccess:rakumaAccessDiagnostic(),notes:'Read wall time includes gate waiting; overlapping durations are not scan wall time.'}));
 const accountResults=[];

@@ -5,6 +5,7 @@ import { advice,calculateCost } from './rules.mjs';
 import { mergeMatchCorrections } from '../../public/match-memory.js';
 import { parseShopProfile } from '../../public/shop-profile.js';
 import { mergeAccounts,resolveCostRecord } from '../../public/durable-state.js';
+import { mergeRakumaDiscovery,withRakumaDiscovery } from './rakuma-discovery-hints.mjs';
 
 const generic=/中国限定|海外限定|日本未発売|日本非売品|正規品|新品|未使用|未開封|公式|送料無料|匿名配送/gi;
 
@@ -109,15 +110,24 @@ export function mergePortalUserRecords(base=[],incoming=[]){
 export function reconcileDurableState(cache={},published={}){
   const revision=value=>Date.parse(value?.dataRevision||value?.cloudSyncedAt||value?.checkedAt||'')||0;
   const base=revision(published)>=revision(cache)?published:cache;
+  const byKey=rows=>new Map((rows||[]).map(item=>[JSON.stringify([item.accountId,item.id]),item]));
+  const cacheItems=byKey(cache.items),publishedItems=byKey(published.items);
+  const matchCorrections=mergeMatchCorrections(cache.matchCorrections||{},published.matchCorrections||{});
+  const items=(base.items||[]).map(item=>{
+    const key=JSON.stringify([item.accountId,item.id]);
+    const hints=mergeRakumaDiscovery(item,cacheItems.get(key)?.competitorDiscovery?.rakuma,publishedItems.get(key)?.competitorDiscovery?.rakuma);
+    return withRakumaDiscovery({...item,...(hints?{competitorDiscovery:{...item.competitorDiscovery,rakuma:hints}}:{})},{},{matchCorrections});
+  });
   return {
     ...base,
+    ...(base.items?{items}:{}),
     externalSearchAccess:mergeExternalSearchAccess(cache.externalSearchAccess,published.externalSearchAccess),
     yahooRequestAccess:mergeYahooRequestAccess(cache.yahooRequestAccess,published.yahooRequestAccess),
     merchantMonitors:mergeMerchantConfigs(cache.merchantMonitors||[],published.merchantMonitors||[]),
     manualCosts:mergeManualCosts(cache.manualCosts||{},published.manualCosts||{}),
     dismissedDiscoveries:mergeDismissedDiscoveries(cache.dismissedDiscoveries||{},published.dismissedDiscoveries||{}),
     discoveryReviews:mergeDiscoveryReviews(cache.discoveryReviews||{},published.discoveryReviews||{}),
-    matchCorrections:mergeMatchCorrections(cache.matchCorrections||{},published.matchCorrections||{}),
+    matchCorrections,
     managedAccounts:mergeManagedAccounts(cache.managedAccounts||[],published.managedAccounts||[]),
     portalUsers:mergePortalUserRecords(cache.portalUsers||[],published.portalUsers||[]),
     appliedSyncIssues:{...(cache.appliedSyncIssues||{}),...(published.appliedSyncIssues||{})},
