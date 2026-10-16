@@ -9,7 +9,7 @@ import {runPublicProcurement} from './lib/procurement-runner.mjs';
 import {verifiedProcurementOwnPrimaryImage} from './lib/reviewed-procurement-catalog.mjs';
 import {compactDashboardResult} from './lib/publish.mjs';
 import {visiblePurchasableOffers} from '../public/procurement-view.js';
-import {imageFingerprints,primaryProductSimilarity} from './lib/image.mjs';
+import {imageFingerprints,primaryProductSimilarity,imageFingerprintDiagnostic} from './lib/image.mjs';
 import {titleScore} from './lib/rules.mjs';
 import {externalImageQueries} from './lib/external-images.mjs';
 import {verifiedPurchasableProcurementOffers} from './lib/procurement-reference.mjs';
@@ -30,22 +30,24 @@ try{
  if(!card?.image)throw Error('public_profile_target_unavailable');
  const sourceItem={...card,platform:'yahoo',accountId:'public-source-proof'},listingImage=card.image;
  const loader=createOwnSourceLoader({fetchYahooBundle:id=>fetchYahooItemBundle(id,{})});
- let hydrated;
+ let hydrated;const observedFingerprints=new Map();
  const results=await runPublicProcurement([[{item:sourceItem,prior:{}}]],{
   deadline:Date.now()+90000,limit:1,concurrency:1,
   hydrate:async(item,prior)=>{hydrated=await loader.hydrate(item,prior);return hydrated;},
   lookup:(item,options)=>alternativeProcurementCost(item,{...options,context:opened.context,
+   fingerprint:async url=>{const value=await imageFingerprints(url);observedFingerprints.set(url,value);return value;},
    search:async()=>[],detail:async url=>url===ALTER_NARBERAL_URL?observedQuote:{status:'unsupported',reason:'proof_source_outside_scope',reviewComplete:false}})
  });
  const reference=results.get('public-source-proof:'+sourceItem.id),own=hydrated?.sourceDetail;
  const image=verifiedProcurementOwnPrimaryImage(hydrated);
  if(!reference||!own?.description||!image)throw Error('public_target_detail_identity_unavailable');
- const [ownFp,candidateFp,listingFp]=await Promise.all([imageFingerprints(image),imageFingerprints(observedQuote?.detailImages?.[0]),imageFingerprints(listingImage)]);
+ // Report the exact pipeline observations, including failure, without another source request.
+ const ownFp=observedFingerprints.get(image),candidateFp=observedFingerprints.get(observedQuote?.detailImages?.[0]),listingFp=observedFingerprints.has(listingImage)?observedFingerprints.get(listingImage):await imageFingerprints(listingImage);
  const candidateTitle=[observedQuote?.brand,observedQuote?.series,observedQuote?.detailTitle,observedQuote?.selectedVariant].filter(Boolean).join(' ');
  const digest=value=>createHash('sha256').update(String(value??'').normalize('NFKC').replace(/\s+/g,' ').trim(),'utf8').digest('hex');
  const identityDiagnostics={titleScore:titleScore(externalImageQueries(own.title)[0],candidateTitle),primaryImageScore:primaryProductSimilarity(ownFp,candidateFp),
   listingImageScore:primaryProductSimilarity(listingFp,candidateFp),listingPrimary:{url:listingFp?.url,contentSha256:listingFp?.contentSha256},
-  ownPrimary:{url:ownFp?.url,contentSha256:ownFp?.contentSha256},sourcePrimary:{url:candidateFp?.url,contentSha256:candidateFp?.contentSha256},
+  ownPrimary:{url:ownFp?.url,contentSha256:ownFp?.contentSha256},sourcePrimary:{url:observedQuote?.detailImages?.[0],contentSha256:candidateFp?.contentSha256,diagnostic:imageFingerprintDiagnostic(observedQuote?.detailImages?.[0])},
   listingImagePreserved:sourceItem.image===listingImage&&hydrated.image===listingImage,
   ownTitle:own.title,ownSellerId:String(own.seller?.id||own.sellerId||''),ownImages:own.images,
   ownDescriptionSha256:digest(own.description),sourceDescriptionSha256:digest(observedQuote?.detailDescription),
