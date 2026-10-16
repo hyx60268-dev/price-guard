@@ -1,6 +1,6 @@
 # Bounded full-inventory price execution
 
-The normal price workflow now selects `full_inventory_graph`. It uses the existing encrypted-state writer and the existing scan deadline. `legacy` remains available as an explicit workflow input and rollback option.
+The normal price workflow selects `legacy`. The first monitored `full_inventory_graph` run completed in 722.061 seconds but yielded 0 complete price comparisons (9 current observations), versus 80 complete comparisons in the preceding legacy run. The default was rolled back; source-safety and state-preservation fixes remain. Graph mode is available only as an explicit validation option and must not be treated as production acceptance. Both engines use the existing encrypted-state writer and scan deadline.
 
 ## What changes
 
