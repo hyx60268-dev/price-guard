@@ -16,14 +16,22 @@ function bitsToHex(bits){
   return BigInt(`0b${bits}`).toString(16).padStart(16,'0');
 }
 
-async function download(url,attempts=2){
+const requestStopped=({signal,deadlineAt,now=Date.now}={})=>signal?.aborted||(Number.isFinite(deadlineAt)&&now()>=deadlineAt);
+
+async function download(url,context={}){
+  const attempts=2;
   for(let attempt=1;attempt<=attempts;attempt++){
+    if(requestStopped(context))return null;
     const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),12000),start=performance.now();
+    const abort=()=>controller.abort();
+    context.signal?.addEventListener('abort',abort,{once:true});
     let httpStatus=null;
     const record=(reason,extra={})=>recordDiagnostic(url,{stage:'download',reason,attempt,httpStatus,elapsedMs:Math.round(performance.now()-start),...extra});
     try{
+      if(requestStopped(context)){abort();return null}
       const response=await fetch(url,{headers:{'user-agent':'Mozilla/5.0','accept':'image/avif,image/webp,image/*,*/*;q=0.8'},signal:controller.signal});
       httpStatus=response.status;
+      if(requestStopped(context)){abort();return null}
       if(!response.ok){
         const retry=response.headers.get('retry-after');
         const date=Date.parse(retry||'');
@@ -36,15 +44,17 @@ async function download(url,attempts=2){
       const length=Number(response.headers.get('content-length'));
       if(Number.isFinite(length)&&length>12_000_000){record('body_too_large',{declaredBytes:length});return null}
       const buffer=Buffer.from(await response.arrayBuffer());
+      if(requestStopped(context)){abort();return null}
       const encoding=response.headers.get('content-encoding');
       if(!encoding&&Number.isFinite(length)&&length>0&&buffer.length!==length){record('body_length_mismatch',{declaredBytes:length,receivedBytes:buffer.length});return null}
       if(buffer.length>12_000_000){record('body_too_large',{receivedBytes:buffer.length});return null}
       record('body_received',{receivedBytes:buffer.length});
       return {buffer,cacheControl:response.headers.get('cache-control'),cacheAge:response.headers.get('age'),responseDate:response.headers.get('date')};
     }catch(error){
+      if(requestStopped(context)){record(Number.isFinite(context.deadlineAt)&&context.now()>=context.deadlineAt?'deadline':'aborted');return null}
       record(controller.signal.aborted||['AbortError','TimeoutError'].includes(error?.name)?'timeout':'network_error');
       if(attempt===attempts)return null;
-    }finally{clearTimeout(timeout)}
+    }finally{clearTimeout(timeout);context.signal?.removeEventListener('abort',abort)}
   }
   return null;
 }
@@ -90,12 +100,23 @@ export function configureImageFingerprintCache({directory,now=Date.now}={}){
  cache.clear();diagnostics.clear();cacheClock=now;persistentLoader=createFingerprintLoader({directory,fetchImage:download,fingerprint:calculateFingerprints,now});
  return persistentLoader.stats;
 }
-const makeFingerprints=url=>url?persistentLoader.get(url):null;
+const makeFingerprints=(url,options)=>url?persistentLoader.get(url,options):null;
 
-export async function imageFingerprints(url){
+export async function imageFingerprints(url,options){
   if(!url)return null;
+  const bounded=options?.signal||Number.isFinite(options?.deadlineAt);
+  const context=bounded?{...options,now:options.now||cacheClock}:undefined;
+  if(bounded&&requestStopped(context))return null;
   const prior=cache.get(url);
   if(prior&&!prior.pending&&!(prior.expiresAt>cacheClock()))cache.delete(url);
+  if(bounded){
+    // Resolved, explicitly HTTP-fresh results can be reused without refreshing
+    // their observation. Pending operations belong only to their own callers.
+    if(prior&&!prior.pending&&prior.expiresAt>cacheClock()){
+      const value=await prior.promise;return requestStopped(context)?null:value;
+    }
+    return makeFingerprints(url,context);
+  }
   if(!cache.has(url)){
     if(cache.size>500)cache.delete(cache.keys().next().value);
     const entry={pending:true,expiresAt:0,promise:null};

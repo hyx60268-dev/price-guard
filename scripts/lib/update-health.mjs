@@ -1,5 +1,7 @@
 const writers=new Set(['price-guard.yml','cloud-sync.yml','dashboard-repair.yml','merchant-monitor.yml','xianyu-proof.yml']);
 export const UPDATE_MAX_AGE_MS=90*60_000;
+export const SCHEDULE_EVIDENCE_WINDOW_MS=60*60_000;
+const workflowStates=new Set(['active','deleted','disabled_fork','disabled_inactivity','disabled_manually']);
 
 export function publishedUpdateHealth(status,{now=Date.now(),maxAgeMs=UPDATE_MAX_AGE_MS}={}){
   const checkedAt=typeof status?.checkedAt==='string'?status.checkedAt:null;
@@ -14,7 +16,7 @@ export function describeWriterRun(run,jobs,pendingDeployments,repository){
   const active=(Array.isArray(jobs)?jobs:[]).filter(job=>job.status!=='completed');
   const zeroStep=active.some(job=>Array.isArray(job.steps)&&job.steps.length===0);
   const reason=Array.isArray(pendingDeployments)&&pendingDeployments.length?'deployment_review_pending'
-    :run.status==='pending'?'shared_lock_pending'
+    :run.status==='pending'?(Array.isArray(jobs)&&jobs.length===0?'pending_before_jobs':'pending_cause_unconfirmed')
     :zeroStep&&(run.status==='queued'||run.status==='waiting')?'job_not_started'
     :active.some(job=>job.status==='in_progress')?'job_running':'run_state_unconfirmed';
   return {runId:run.id,status:run.status,reason,createdAt:run.created_at,
@@ -25,6 +27,31 @@ async function getJson(fetchImpl,url,headers={}){
   const response=await fetchImpl(url,{headers,redirect:'error',signal:AbortSignal.timeout(10_000)});
   if(!response.ok)throw Error('HTTP '+response.status);
   return response.json();
+}
+
+async function inspectSchedulerEvidence(fetchImpl,api,headers,now){
+  const workflowUrl=api+'/actions/workflows/price-guard.yml';
+  const created=new Date(now-SCHEDULE_EVIDENCE_WINDOW_MS).toISOString()+'..'+new Date(now).toISOString();
+  const query=new URLSearchParams({event:'schedule',created,per_page:'1',exclude_pull_requests:'true'});
+  // Two bounded GETs only. total_count provides count-only evidence without
+  // retaining run payloads or following pagination. Neither proves cadence.
+  const results=await Promise.allSettled([
+    getJson(fetchImpl,workflowUrl,headers),
+    getJson(fetchImpl,workflowUrl+'/runs?'+query,headers)
+  ]);
+  const workflow=results[0].status==='fulfilled'?results[0].value:null;
+  const runs=results[1].status==='fulfilled'?results[1].value:null;
+  const stateKnown=workflowStates.has(workflow?.state);
+  const countKnown=Number.isSafeInteger(runs?.total_count)&&runs.total_count>=0
+    &&Array.isArray(runs?.workflow_runs)&&runs.workflow_runs.length<=1
+    &&runs.total_count>=runs.workflow_runs.length;
+  return {
+    workflowState:stateKnown?workflow.state:'unknown',
+    recentWindowMinutes:SCHEDULE_EVIDENCE_WINDOW_MS/60_000,
+    recentScheduledRunCount:countKnown?runs.total_count:null,
+    runRecordEvidence:!countKnown?'unknown':runs.total_count===0?'no_recent_schedule_run_records':'recent_schedule_run_records',
+    incomplete:!stateKnown||!countKnown
+  };
 }
 
 export async function inspectUpdateHealth({fetchImpl=fetch,baseUrl,repository,token,runId,now=Date.now(),maxAgeMs=UPDATE_MAX_AGE_MS}){
@@ -38,10 +65,13 @@ export async function inspectUpdateHealth({fetchImpl=fetch,baseUrl,repository,to
   }catch{
     publication={healthy:false,reason:'published_status_unavailable',checkedAt:null};
   }
-  const report={...publication,queueDiagnostics:[],diagnosticsIncomplete:false};
-  if(report.healthy)return report;
   const api='https://api.github.com/repos/'+repository;
   const headers={accept:'application/vnd.github+json','x-github-api-version':'2022-11-28',...(token?{authorization:'Bearer '+token}:{})};
+  const schedulerDiagnostics=await inspectSchedulerEvidence(fetchImpl,api,headers,now);
+  // healthy remains publication freshness only. A recent push can publish
+  // fresh data while no scheduled run records are being created.
+  const report={...publication,schedulerDiagnostics,queueDiagnostics:[],diagnosticsIncomplete:false};
+  if(report.healthy)return report;
   const runs=new Map();
   const lists=await Promise.allSettled(['queued','pending','waiting','in_progress'].map(async status=>{
     const result=await getJson(fetchImpl,api+'/actions/runs?status='+status+'&per_page=100',headers);

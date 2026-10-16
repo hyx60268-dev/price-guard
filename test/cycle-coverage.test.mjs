@@ -67,3 +67,12 @@ test('published-cycle gate validates all rows, cadence, freshness and exact code
  assert.equal(cycleAcceptance(sampled,{now:end}).accepted,false);
  assert.equal(cycleAcceptance({},{now:end}).accepted,false);
 });
+
+test('explicit inventory receipts require complete uncached in-cycle observations',()=>{
+ const valid={observedAt:start+100,complete:true,fromCache:false};
+ assert.equal(cycleCoverage([row()],[{...account,inventoryObservation:valid}],options).accepted,true);
+ for(const bad of [null,{}, {...valid,truncated:true},{...valid,fromCache:true},{...valid,complete:false},{...valid,observedAt:start-1},{...valid,observedAt:end+1}]){
+  const result=cycleCoverage([row()],[{...account,inventoryObservation:bad}],options);
+  assert.equal(result.priceComplete,1);assert.equal(result.costVerified,1);assert.equal(result.inventoryComplete,false);assert.equal(result.accepted,false);
+ }
+});

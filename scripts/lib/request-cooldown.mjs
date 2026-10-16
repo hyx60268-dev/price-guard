@@ -22,34 +22,41 @@ export function createRequestCooldown({intervalMs=()=>0,now=()=>Date.now(),wait=
     if(nextRequestAt>=deadline)throw new RequestDeferredError('request_cooldown_deadline',nextRequestAt);
   };
   return {
-    turn({deadline=Infinity}={}){
+    turn({deadline=Infinity,signal}={}){
       // Reject an inadmissible hold before joining the queue. Recheck both at
       // admission and after every wake: concurrent 429s can extend the hold.
       // Infinity is a valid server hold, but not a finite caller deadline.
-      const check=()=>{if(Number.isFinite(deadline))guard(deadline)};
+      const aborted=()=>signal?.reason instanceof Error?signal.reason:new DOMException('Request aborted','AbortError');
+      const check=()=>{if(signal?.aborted)throw aborted();if(Number.isFinite(deadline))guard(deadline)};
       try{check()}catch(error){return Promise.reject(error)}
-      let expired=false,timer;
+      let expired=false,timer,wakeLocal,onAbort;
       const turn=tail.then(async()=>{
         if(expired)throw new RequestDeferredError('request_deadline',nextRequestAt);
         check();let delay;
         while((delay=nextRequestAt-now())>0){
-          const controller=new AbortController();wakeWait=()=>controller.abort();
+          const controller=new AbortController();wakeLocal=wakeWait=()=>controller.abort();
           waitingSince=now();
           try{await wait(Math.min(MAX_TIMER_MS,delay,deadline-now()),{signal:controller.signal})}
-          finally{waitMs+=Math.max(0,now()-waitingSince);waitingSince=null;wakeWait=null}
+          finally{waitMs+=Math.max(0,now()-waitingSince);waitingSince=null;wakeLocal=wakeWait=null}
           check();
         }
         check();nextRequestAt=Math.max(nextRequestAt,now()+intervalMs());turns++;return cooldownRevision;
       });
       tail=turn.catch(()=>{});
-      if(!Number.isFinite(deadline))return turn;
+      if(!Number.isFinite(deadline)&&!signal)return turn;
+      const contenders=[turn];
+      if(signal)contenders.push(new Promise((_,reject)=>{
+        onAbort=()=>{wakeLocal?.();reject(aborted())};
+        signal.addEventListener('abort',onAbort,{once:true});
+        if(signal.aborted)onAbort();
+      }));
       // A short-lived caller must also exit while queued behind a caller with
       // a longer budget. Its queued closure will never admit a later request.
-      const expiry=new Promise((_,reject)=>{
-        const expire=()=>{const remaining=deadline-now();if(remaining>0){timer=setTimeout(expire,Math.min(MAX_TIMER_MS,remaining));return}expired=true;reject(new RequestDeferredError('request_deadline',nextRequestAt))};
+      if(Number.isFinite(deadline))contenders.push(new Promise((_,reject)=>{
+        const expire=()=>{const remaining=deadline-now();if(remaining>0){timer=setTimeout(expire,Math.min(MAX_TIMER_MS,remaining));return}expired=true;wakeLocal?.();reject(new RequestDeferredError('request_deadline',nextRequestAt))};
         timer=setTimeout(expire,Math.min(MAX_TIMER_MS,Math.max(0,deadline-now())));
-      });
-      return Promise.race([turn,expiry]).finally(()=>clearTimeout(timer));
+      }));
+      return Promise.race(contenders).finally(()=>{clearTimeout(timer);signal?.removeEventListener('abort',onAbort)});
     },
     // Promise resolution is not the network start: a concurrent response can
     // extend the hold between admission and the caller's next microtask.
