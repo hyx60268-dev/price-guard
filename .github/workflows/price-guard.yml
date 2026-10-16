@@ -8,7 +8,7 @@ on:
         description: 价格执行器（全量图为有界验证模式，不能代表20分钟验收通过）
         type: choice
         options: [legacy, full_inventory_graph]
-        default: full_inventory_graph
+        default: legacy
       full_audit:
         description: 旧执行器维护核验（须选择 legacy，不代表20分钟周期）
         type: boolean
@@ -115,10 +115,10 @@ jobs:
       - name: 并行检查三平台价格与闲鱼成本
         run: npm run scan
         env:
-          # All-inventory obligations run inside the same bounded writer. The
-          # legacy option remains an explicit rollback path. Publication
+          # The legacy engine is restored after monitored graph coverage regressed.
+          # Graph mode remains an explicit validation option. Publication
           # timestamps do not establish full-inventory coverage or cadence.
-          PRICE_SCAN_ENGINE: ${{ inputs.pricing_engine || 'full_inventory_graph' }}
+          PRICE_SCAN_ENGINE: ${{ inputs.pricing_engine || 'legacy' }}
           FULL_PRICE_AUDIT: ${{ inputs.full_audit && '1' || '0' }}
           PRICE_AUDIT_ITEM_IDS: ${{ inputs.priority_item_ids || '' }}
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
