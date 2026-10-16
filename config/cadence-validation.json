@@ -1,6 +1,9 @@
 {
-  "enabled": false,
-  "requestId": "",
+  "enabled": true,
+  "requestId": "20261017-six-slot-01",
   "slots": 6,
-  "priorityItemIds": []
+  "priorityItemIds": [
+    "z705438862",
+    "z705310958"
+  ]
 }
