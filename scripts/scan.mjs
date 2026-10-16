@@ -7,6 +7,7 @@ import { mapLimit } from './lib/worker-pool.mjs';
 import { knownYahooRefreshTasks,runKnownYahooRefresh,yahooFullAttemptTime } from './lib/yahoo-known-refresh.mjs';
 import { buildOwnedOffers } from '../public/owned-offers.js';
 import { createOwnSourceLoader } from './lib/own-source.mjs';
+import { inventoryReadPlan } from './lib/inventory-read-plan.mjs';
 import { configureImageFingerprintCache } from './lib/image.mjs';
 import { xianyuReviewPlan,mergeXianyuReview } from './lib/xianyu-review-plan.mjs';
 import { mercariCompare } from './lib/mercari.mjs';
@@ -117,6 +118,8 @@ const contexts=await mapLimit(accounts,Math.min(profileConcurrency,accounts.leng
 });
 
 settings.ownedOffers=buildOwnedOffers(accounts,contexts.flatMap(c=>[...c.previousItems,...c.activeItems]));
+try{console.log('[全量读取计划]',JSON.stringify(inventoryReadPlan(contexts)))}
+catch{console.warn('[全量读取计划] diagnostics_unavailable')}
 
 const relistAliases={...(previous?.relistAliases||{})};
 for(const context of contexts)for(const item of context.activeItems)if(item.relistedFrom)relistAliases[`${context.account.id}:${item.id}`]=item.relistedFrom;
