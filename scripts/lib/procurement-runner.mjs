@@ -8,15 +8,18 @@ const logText=value=>String(value??'').replace(/<[^>]*>/g,' ').replace(/https?:\
 
 // Each account supplies an already ordered bucket. Sources run independently of
 // Xianyu access state, with their own bounded admission and shared scan deadline.
-export async function runPublicProcurement(buckets,{lookup,hydrate=async item=>item,deadline,limit=8,concurrency=2,priorityItemIds=[],matchCorrections={},now=Date.now,log=()=>{}}={}){
+export async function runPublicProcurement(buckets,{lookup,hydrate=async item=>item,deadline,limit=8,concurrency=2,priorityItemIds=[],accountFairness=false,matchCorrections={},now=Date.now,log=()=>{}}={}){
  const results=new Map(),tasks=[];
  const currentOffers=(reference,item)=>({...reference,purchasableOffers:verifiedPurchasableProcurementOffers({...item,procurementSource:reference},{now:now(),matchCorrections}),
   nativeSupplierQuotes:currentNativeSupplierQuotes({...item,nativeSupplierQuotes:[],procurementSource:reference},{now:now(),matchCorrections})});
- for(let n=0;n<Math.max(0,...buckets.map(b=>b.length));n++)for(const bucket of buckets)if(bucket[n])tasks.push(bucket[n]);
- // Priorities reorder only existing, account-bound tasks. The cache, retry and
- // admission checks below apply unchanged to every prioritized task.
+ // Keep one turn per account when the account-priority scanner requests it.
+ // Known suppliers and audit targets still lead inside each account, without
+ // allowing one account's many mappings to consume the whole shared allowance.
  const priorities=new Set(priorityItemIds);
- tasks.sort((a,b)=>Number(priorities.has(b.item.id))-Number(priorities.has(a.item.id))||Number(knownProcurementUrls(b.item).length>0)-Number(knownProcurementUrls(a.item).length>0));
+ const priority=(a,b)=>Number(priorities.has(b.item.id))-Number(priorities.has(a.item.id))||Number(knownProcurementUrls(b.item).length>0)-Number(knownProcurementUrls(a.item).length>0);
+ const orderedBuckets=accountFairness?buckets.map(bucket=>[...bucket].sort(priority)):buckets;
+ for(let n=0;n<Math.max(0,...orderedBuckets.map(b=>b.length));n++)for(const bucket of orderedBuckets)if(bucket[n])tasks.push(bucket[n]);
+ if(!accountFairness)tasks.sort(priority);
  let admitted=0;
  await mapLimit(tasks,Math.max(1,Math.min(2,concurrency)),async task=>{
   const {item,prior={}}=task,key=item.accountId+':'+item.id;

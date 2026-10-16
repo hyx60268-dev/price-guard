@@ -63,3 +63,15 @@ test('public priority preserves verified cache, retry windows, deadline and acco
  const expired=await runPublicProcurement([[due]],{priorityItemIds:['due'],now:()=>now,deadline:now,lookup:async()=>{throw Error('must not run')}});assert.equal(expired.get('a:due').attempted,false);
  const changed={...cached,accountId:'different-account'};let reads=0;await runPublicProcurement([[{item:changed,prior:task.prior}]],{priorityItemIds:[cached.id],now:()=>now,deadline:now+60000,lookup:async()=>{reads++;return {status:'incomplete',samples:[]}}});assert.equal(reads,1);
 });
+
+test('account-priority mode keeps supplier and audit preferences inside fair account turns',async()=>{
+ const buckets=[['m0','m1','m2'].map(id=>make('melon',id)),['b0','b1'].map(id=>make('boss',id)),['p0','p1'].map(id=>make('momoka',id))];
+ for(const task of buckets[0])task.item.title='Anker AeroClip 2 張凌赫 ホワイト ギフトボックス';
+ const original=buckets.map(bucket=>bucket.map(task=>task.item.id)),seen=[];
+ const values=await runPublicProcurement(buckets,{accountFairness:true,priorityItemIds:['m2'],now:()=>now,deadline:now+60000,limit:3,
+  lookup:async item=>{seen.push(item.accountId+':'+item.id);return {status:'incomplete',samples:[]}}});
+ assert.deepEqual(seen,['melon:m2','boss:b0','momoka:p0']);
+ assert.deepEqual(buckets.map(bucket=>bucket.map(task=>task.item.id)),original);
+ assert.equal(values.size,7);assert.equal(values.get('melon:m0').attempted,false);
+ assert.equal(values.get('melon:m0').cacheStatus,'deferred_budget');
+});

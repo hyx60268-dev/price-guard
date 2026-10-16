@@ -140,3 +140,13 @@ test('current seller, status, own identity, shipping and physical sale unit stil
   const {result}=await replay(options);assert.equal(result.candidates.length,0,JSON.stringify(options));
  }
 });
+
+
+test('explicit Yahoo account order keeps one turn per account despite different attempt ages',()=>{
+ const melon=context('melon',['m1','m2','m3']),boss=context('boss',['b1','b2']),momoka=context('momoka',['p1','p2']);
+ for(const row of melon.previousById.values())row.yahoo.knownLastAttemptAt=new Date(now-21*60_000).toISOString();
+ const settings={accountOrder:['melon','boss','momoka']};
+ const tasks=knownYahooRefreshTasks([momoka,boss,melon],settings,now);
+ assert.deepEqual(tasks.map(task=>task.item.id),['m1','b1','p1','m2','b2','p2','m3']);
+ assert.equal(melon.previousById.get('m1').yahoo.checkedAt,old);
+});
