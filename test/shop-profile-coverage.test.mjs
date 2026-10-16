@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {isolateRakumaAccess} from './fixtures/rakuma-access-fixture.mjs';
 import { parseShopProfile } from '../public/shop-profile.js';
 import { mergeAccountConfigs } from '../scripts/lib/state.mjs';
 import { cachedComparison,comparisonIncomplete,pricingCoverage } from '../scripts/lib/pricing-coverage.mjs';
 import { fairPriorityRoundRobin } from '../scripts/lib/planner.mjs';
 import { MATCHING_RULES_VERSION } from '../scripts/lib/rules.mjs';
-import { discoverRakumaProfile,extractRakumaDetail,extractRakumaSearchCards,fetchRakumaHtml } from '../scripts/lib/rakuma.mjs';
+import { discoverRakumaProfile,extractRakumaDetail,extractRakumaSearchCards } from '../scripts/lib/rakuma.mjs';
 import { yahooCompare,marketPriceDecision } from '../scripts/lib/yahoo.mjs';
 
 test('shop URL normalization is shared, platform-aware and restricted to genuine profile hosts',()=>{
@@ -42,7 +43,9 @@ test('Rakuma inventory follows every profile page, filters sold listings and ded
   assert.equal(urls[1],'https://fril.jp/shop/testshop/page/2');
   await assert.rejects(discoverRakumaProfile('https://fril.jp/shop/testshop',{}, {fetchHtml:async()=>'<html>challenge</html>'}),/不可读/);
 });
-test('Rakuma public HTTP403 fails closed without forwarding the URL to a reader',async()=>{
+test('Rakuma public HTTP403 fails closed without forwarding the URL to a reader',async t=>{
+ const module=await import('../scripts/lib/rakuma.mjs?denial-test='+crypto.randomUUID());await isolateRakumaAccess(t,module);
+ const {fetchRakumaHtml}=module;
  let directCalls=0,readerCalls=0;
  const dependencies={fetchImpl:async()=>{directCalls++;return new Response('forbidden',{status:403})},readerFetchImpl:async()=>{readerCalls++;assert.fail('no alternate source after denial')}};
  await assert.rejects(fetchRakumaHtml('https://fril.jp/shop/testshop',{rakumaRequestIntervalMs:1},dependencies),error=>error.code==='RAKUMA_SOURCE_ACCESS_DENIED'&&error.httpStatus===403);

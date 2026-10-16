@@ -1,3 +1,8 @@
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import fs from 'node:fs';
+import { decrypt } from './crypto.mjs';
+import { createPersistentSourceAccessHold,mergeSourceAccessHolds } from './source-access-hold.mjs';
 import { RequestDeferredError,isRequestDeferred } from './request-cooldown.mjs';
 import { isOwnedOffer } from '../../public/owned-offers.js';
 import { imageFingerprints,imageSetSimilarity,primaryProductSimilarity } from './image.mjs';
@@ -15,7 +20,49 @@ import { marketplaceShippingEvidence } from './marketplace-shipping-evidence.mjs
 
 const UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140 Safari/537.36';
 let requestGate=Promise.resolve(),nextRequestAt=0;
-let sourceAccessHold=null;
+// One hour without a usable server deadline is our conservative internal
+// safety policy, not a claimed Rakuma quota. Server Retry-After is never capped.
+const ACCESS_FALLBACK_MS=60*60*1000;
+// Pure snapshot merge for staged restore; this performs no I/O or admission.
+export const mergeRakumaRequestAccess=mergeSourceAccessHolds;
+const accessRoot=fileURLToPath(new URL('../../',import.meta.url));
+function accessStore({root=accessRoot,password=process.env.DASHBOARD_PASSWORD,initial,requireRestoredState=false}={}){
+  const restore=()=>{
+    let restored=fs.existsSync(path.join(root,'state','rakuma-request-access.json'));
+    const holds=['latest.json.enc','discovery.json.enc'].map(name=>{
+      let bytes;try{bytes=fs.readFileSync(path.join(root,'state',name))}catch(error){if(error.code==='ENOENT')return;throw error}
+      if(typeof password!=='string'||password.length<8)throw Error('Rakuma published access state cannot be verified');
+      const saved=JSON.parse(decrypt(bytes,password));
+      if(!saved||typeof saved!=='object'||Array.isArray(saved))throw Error('Invalid published access state');
+      restored||=Object.hasOwn(saved,'rakumaRequestAccess');return saved.rakumaRequestAccess;
+    });
+    if(requireRestoredState&&!restored)throw Error('Shared Rakuma access state has not been restored');
+    return mergeSourceAccessHolds(...holds);
+  };
+  return createPersistentSourceAccessHold({filename:path.join(root,'state','rakuma-request-access.json'),source:'rakuma',fallbackMs:ACCESS_FALLBACK_MS,initial,restore});
+}
+let sourceAccess=accessStore(),sourceAccessStarted=false;
+// Production defaults to this module's checkout, independent of cwd, for every
+// collector/proof. Missing legacy fields are empty; corrupt state is a hold.
+export function initializeRakumaRequestAccess(options={}){
+  if(sourceAccessStarted)throw Error('Rakuma access state already in use');
+  sourceAccess=accessStore(options);return rakumaRequestAccessSnapshot();
+}
+export function rakumaRequestAccessSnapshot(){
+  try{return sourceAccess.snapshot()}
+  catch{return {...sourceAccess.observed(),stateUnavailable:true}}
+}
+function accessError(hold,cause){
+  const unavailable=Boolean(cause||hold?.stateUnavailable);
+  return Object.assign(new Error(unavailable?'ラクマ access state unavailable; no alternate source route':`ラクマ access denied: HTTP ${hold.httpStatus}; no alternate source route`,cause?{cause}:undefined),
+    {code:'RAKUMA_SOURCE_ACCESS_DENIED',...hold,...(unavailable?{reason:'rakuma_access_state_unavailable',stateUnavailable:true}:{})});
+}
+function sourceAccessHold(){
+  sourceAccessStarted=true;
+  try{const hold=sourceAccess.active();return hold?accessError(hold):null}
+  catch(error){return accessError(sourceAccess.observed(),error)}
+}
+function assertSourceAccessAllowed(){const hold=sourceAccessHold();if(hold)throw hold}
 // Every wait and transport stage has the caller's original budget. A fetch
 // implementation that ignores abort still cannot produce late evidence/retries.
 function requestBounds({signal,deadline=Infinity,timeoutMs=Infinity}={}){
@@ -74,12 +121,12 @@ function attribute(source,name){
 function requestTurn(interval=1200,{signal,deadline=Infinity}={}){
   const bounds=requestBounds({signal,deadline});
   const turn=requestGate.then(async()=>{
-    bounds.check();if(sourceAccessHold)throw sourceAccessHold;
+    bounds.check();assertSourceAccessAllowed();
     let delay;
     while((delay=nextRequestAt-Date.now())>0){
       if(nextRequestAt>=deadline)throw new RequestDeferredError('request_cooldown_deadline',nextRequestAt);
       await retryWait(delay,{signal:bounds.signal,deadline});
-      bounds.check();if(sourceAccessHold)throw sourceAccessHold;
+      bounds.check();assertSourceAccessAllowed();
     }
     bounds.check();nextRequestAt=Date.now()+Math.max(800,Number(interval)||1200);
   });
@@ -88,34 +135,32 @@ function requestTurn(interval=1200,{signal,deadline=Infinity}={}){
 }
 
 function denySource(response){
-  const raw=response.headers.get('retry-after'),date=Date.parse(raw||'');
-  const retryAfter=raw&&/^\d{1,10}$/.test(raw)?raw:Number.isFinite(date)?new Date(date).toUTCString():null;
-  const error=new Error(`ラクマ access denied: HTTP ${response.status}; no alternate source route`);
-  Object.assign(error,{code:'RAKUMA_SOURCE_ACCESS_DENIED',httpStatus:response.status,retryAfter,observedAt:new Date().toISOString()});
-  sourceAccessHold=error;return error;
+  try{return accessError(sourceAccess.block({httpStatus:response.status,retryAfter:response.headers.get('retry-after'),observedAt:Date.now()}))}
+  catch(error){return accessError(sourceAccess.observed(),error)}
 }
 export function rakumaAccessDiagnostic(){
-  if(!sourceAccessHold)return null;
-  const {code,httpStatus,retryAfter,observedAt}=sourceAccessHold;return {code,httpStatus,retryAfter,observedAt};
+  const hold=sourceAccessHold();if(!hold)return null;
+  const {code,httpStatus,retryAfter,observedAt,retryAt,holdReason,reason,stateUnavailable}=hold;
+  return {code,httpStatus,retryAfter,observedAt,retryAt,holdReason,...(reason?{reason,stateUnavailable}:{})};
 }
 
 export async function fetchRakumaPage(url,options={},dependencies={},attempts=2){
   if(!/^https:\/\/(?:fril\.jp|item\.fril\.jp)\//i.test(url||''))throw new Error('ラクマ公开链接无效');
-  // Do not route around access denials. The hold lasts for this worker process,
-  // including already-queued calls; callers retain prior inventory as stale.
-  if(sourceAccessHold)throw sourceAccessHold;
+  // Do not route around access denials. Restored and newly observed holds
+  // cover every entrypoint and queued call; prior inventory remains stale.
+  assertSourceAccessAllowed();
   const settings={...options.settings,...options},deadline=requestDeadline(options,settings,'rakuma'),signal=options.signal||settings.signal;
   const directFetch=dependencies.fetchImpl||fetch;
   if(options.attempts!==undefined)attempts=Math.max(1,Math.min(2,Number(options.attempts)||2));
   let last;
   for(let attempt=1;attempt<=attempts;attempt++){
     await requestTurn(settings.rakumaRequestIntervalMs,{signal,deadline});
-    if(sourceAccessHold)throw sourceAccessHold;
+    assertSourceAccessAllowed();
     const bounds=requestBounds({signal,deadline,timeoutMs:20000});
     try{
       bounds.check();
       const response=await bounds.run(()=>Promise.resolve(directFetch(url,{headers:{'user-agent':UA,'accept':'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8','accept-language':'ja-JP,ja;q=0.9','cache-control':'no-cache','referer':'https://fril.jp/'},signal:bounds.signal,redirect:'follow'})).then(response=>{
-        // Keep observed process holds even if the caller expires as headers arrive.
+        // Checkpoint observed holds even if the caller expires as headers arrive.
         if([401,403,429].includes(response.status))throw denySource(response);
         return response;
       }));
@@ -124,7 +169,7 @@ export async function fetchRakumaPage(url,options={},dependencies={},attempts=2)
       if(html.length<8000)throw new Error(`页面内容异常短 (${html.length} bytes)`);
       return {html,status:response.status,observedAt,fromCache:false,...(response.url?{url:response.url,finalUrl:response.url}:{}),redirected:response.redirected===true};
     }catch(error){
-      if(sourceAccessHold)throw sourceAccessHold;
+      assertSourceAccessAllowed();
       if(signal?.aborted||isRequestDeferred(error))throw error;
       if(Date.now()>=deadline)throw new RequestDeferredError('request_deadline',nextRequestAt);
       last=error;

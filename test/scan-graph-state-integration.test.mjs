@@ -46,7 +46,8 @@ test('expired full-inventory graph scan retains encrypted state and publishes ho
     },
     dismissedDiscoveries:{fixture:{productKey:'fixture',title:'Previously listed synthetic product',updatedAt}},
     discoveryReviews:{fixture:{productKey:'fixture',purchaseCNY:29,updatedAt}},
-    yahooRequestAccess:{reason:'http_429',retryAt}
+    yahooRequestAccess:{reason:'http_429',retryAt},
+    rakumaRequestAccess:{httpStatus:429,retryAfter:'3600',observedAt:new Date(before).toISOString(),retryAt,holdReason:'retry_after'}
   };
   const readEncrypted=async(relative,key=password)=>JSON.parse(decrypt(await fs.readFile(path.join(root,relative)),key));
   try{
@@ -89,6 +90,7 @@ test('expired full-inventory graph scan retains encrypted state and publishes ho
       assert.equal(snapshot.cycleCoverage.priceComplete,0);assert.equal(snapshot.cycleCoverage.costVerified,0);
       assert.equal(snapshot.cycleCoverage.completeItems,0);assert.equal(snapshot.cycleCoverage.inventoryComplete,false);
       assert.equal(snapshot.cycleCoverage.coverageComplete,false);assert.equal(snapshot.cycleCoverage.accepted,false);
+      assert.deepEqual(snapshot.rakumaRequestAccess,previous.rakumaRequestAccess);
       assert.deepEqual(snapshot.yahooRequestAccess,{reason:'http_429',retryAt});assert.equal(typeof snapshot.yahooRequestAccess.retryAt,'number');
       for(const item of snapshot.items){
         const source=item.platform==='rakuma'?'rakuma':'yahoo',comparison=item[source];

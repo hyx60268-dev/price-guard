@@ -20,7 +20,7 @@ test('cancelled publication keeps input replayable; confirmed publication reques
 
 test('all publishers serialize, retain full state, and acknowledge only after deployment',async()=>{
   for(const file of ['price-guard','cloud-sync','dashboard-repair']){
-    const workflow=await fs.readFile(new URL(`../.github/workflows/${file}.yml`,import.meta.url),'utf8');
+    const workflow=await fs.readFile(new URL(`../.github/workflows/${file==='price-guard'?'price-scan-transaction':file}.yml`,import.meta.url),'utf8');
     assert.match(workflow,/group: pages/);
     assert.match(workflow,/cancel-in-progress: false/);
     assert.doesNotMatch(workflow,/cp public\/data\/latest.json.enc state\/latest.json.enc/);
@@ -33,7 +33,7 @@ test('all publishers serialize, retain full state, and acknowledge only after de
 test('all five state/session writers keep the whole job serialized while health runs outside the lock',async()=>{
   const files=['price-guard','cloud-sync','dashboard-repair','merchant-monitor','xianyu-proof'];
   for(const file of files){
-    const workflow=await fs.readFile(new URL('../.github/workflows/'+file+'.yml',import.meta.url),'utf8');
+    const workflow=await fs.readFile(new URL('../.github/workflows/'+(file==='price-guard'?'price-scan-transaction':file)+'.yml',import.meta.url),'utf8');
     assert.doesNotMatch(workflow,/^concurrency:/m);
     assert.equal((workflow.match(/^    concurrency:/gm)||[]).length,1);
     assert.match(workflow,/^    concurrency:\r?\n      group: pages\r?\n      cancel-in-progress: false/m);
@@ -44,8 +44,10 @@ test('all five state/session writers keep the whole job serialized while health 
   const health=pricing.split('  update-health:')[1].split('  scan-and-publish:')[0];
   assert.match(health,/scripts\/check-update-health\.mjs/);
   assert.doesNotMatch(health,/concurrency:|environment:|needs:|DASHBOARD_PASSWORD|XIANYU_/);
-  const writer=pricing.split('  scan-and-publish:')[1];
-  assert.doesNotMatch(writer,/^\s+needs:/m);
+  const transaction=await fs.readFile(new URL('../.github/workflows/price-scan-transaction.yml',import.meta.url),'utf8');
+  const writer=transaction.split('  scan-and-publish:')[1];
+  assert.match(writer,/needs: cadence-wait/);
+  assert.doesNotMatch(writer,/needs: update-health/);
   assert.equal((pricing.match(/cron:/g)||[]).length,1);
 });
 

@@ -24,3 +24,5 @@ if(process.env.GITHUB_STEP_SUMMARY){
  await fs.appendFile(process.env.GITHUB_STEP_SUMMARY,lines.join('\n')+'\n');
 }
 if(!report.accepted){console.error('::error title=20分钟全量周期未通过::'+report.reasons.join(', '));process.exitCode=1;}
+
+if(process.env.ACCEPTANCE_RESULT_PATH)await fs.writeFile(process.env.ACCEPTANCE_RESULT_PATH,JSON.stringify({kind:report.reasons.includes('current_publication_not_observed')?'operational':'product',accepted:report.accepted}));

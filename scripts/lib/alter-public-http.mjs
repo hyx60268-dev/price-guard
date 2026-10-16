@@ -11,6 +11,10 @@ const hidden=node=>{for(let n=node;n;n=n.parentNode){const a=attrs(n);if(Object.
 const text=node=>clean(node.nodeName==='#text'?node.value:['script','style','template','#comment'].includes(node.nodeName)||hidden(node)?'':children(node).map(text).join(' '));
 const one=(nodes)=>nodes.length===1?nodes[0]:null;
 const failure=(reason,status='incomplete')=>({status,reason,reviewComplete:status==='incomplete'});
+// Only stable transport codes may enter persisted/public diagnostics. Never
+// serialize Error objects, messages, addresses, headers or arbitrary cause data.
+const HTTP_ERROR_CODES=new Set(['UND_ERR_CONNECT_TIMEOUT','UND_ERR_HEADERS_TIMEOUT','UND_ERR_BODY_TIMEOUT','UND_ERR_SOCKET','UND_ERR_ABORTED','ETIMEDOUT','ECONNRESET','ECONNREFUSED','ENOTFOUND','EAI_AGAIN','EPIPE','ABORT_ERR','CERT_HAS_EXPIRED','CERT_NOT_YET_VALID','DEPTH_ZERO_SELF_SIGNED_CERT','SELF_SIGNED_CERT_IN_CHAIN','UNABLE_TO_VERIFY_LEAF_SIGNATURE','ERR_TLS_CERT_ALTNAME_INVALID']);
+export const safeAlterHTTPErrorCode=value=>typeof value==='string'&&HTTP_ERROR_CODES.has(value)?value:undefined;
 
 // Parse only this reviewed public product template. Scripts are never executed,
 // and no account/session endpoint, cart or checkout is requested. The bounded
@@ -60,17 +64,32 @@ export async function readAlterPublicHTTP(url,{item={},request=fetch,deadline=Da
  if(!isAlterProcurementUrl(url))return failure('unsupported_source','unsupported');
  if(alterTargetIssue(item))return failure(alterTargetIssue(item));
  if(Date.now()>=deadline)return failure('budget_exhausted','unavailable');
+ const started=performance.now(),timeoutMs=Math.max(1,Math.min(15000,deadline-Date.now()));
+ let stage='fetch_headers',httpStatus,responseBytes;
+ const diagnostic=extra=>{const elapsed=performance.now()-started;return {stage,...(Number.isFinite(elapsed)?{elapsedMs:Math.min(1_000_000,Math.max(0,Math.round(elapsed)))}:{}),timeoutMs,
+  ...(Number.isInteger(httpStatus)&&httpStatus>=100&&httpStatus<=599?{httpStatus,finalHost:'www.alter-shanghai.cn'}:{}),
+  ...(responseBytes!==undefined?{responseBytes:Math.min(responseBytes,3_000_000)}:{}),...extra}};
+ const fail=(reason,status='unavailable')=>({...failure(reason,status),diagnostic:diagnostic()});
  try{
-  const response=await request(url,{redirect:'manual',signal:AbortSignal.timeout(Math.max(1,Math.min(15000,deadline-Date.now()))),headers:{accept:'text/html'}});
+  const response=await request(url,{redirect:'manual',signal:AbortSignal.timeout(timeoutMs),headers:{accept:'text/html'}});
+  httpStatus=response.status;
+  // Cancellation is cleanup only; its failure must not hide an observed denial.
+  const cancel=async()=>{try{await response.body?.cancel?.()}catch{}};
   // Never follow a login/challenge or any other redirect, nor retry blocked HTTP.
-  if(response.status!==200){await response.body?.cancel?.();return failure(response.status>=300&&response.status<400?'target_redirect_mismatch':'source_http_'+response.status,'unavailable')}
-  if(response.url&&response.url!==url){await response.body?.cancel?.();return failure('target_redirect_mismatch','unavailable')}
-  if(!/^text\/html\b/i.test(response.headers.get('content-type')||'')||Number(response.headers.get('content-length'))>150000){await response.body?.cancel?.();return failure('public_response_unconfirmed','unavailable')}
+  if(response.status!==200){await cancel();return fail(response.status>=300&&response.status<400?'target_redirect_mismatch':'source_http_'+response.status)}
+  if(response.url&&response.url!==url){await cancel();return fail('target_redirect_mismatch')}
+  if(!/^text\/html\b/i.test(response.headers.get('content-type')||'')||Number(response.headers.get('content-length'))>150000){await cancel();return fail('public_response_unconfirmed')}
+  stage='body_read';responseBytes=0;
   const chunks=[];let size=0;
-  for await(const chunk of response.body){size+=chunk.length;if(size>150000)return failure('public_response_too_large','unavailable');chunks.push(chunk)}
+  for await(const chunk of response.body){size+=chunk.length;responseBytes=size;if(size>150000)return fail('public_response_too_large');chunks.push(chunk)}
+  stage='parse';
   const bytes=Buffer.concat(chunks),contentSha256=createHash('sha256').update(bytes).digest('hex');
   let html;
-  try{html=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes)}catch{return failure('public_response_invalid_encoding','unavailable')}
-  return {...parseAlterPublicHTML(html,item,{finalUrl:url,httpStatus:200,fetchedAt:now(),contentSha256}),diagnostic:{stage:'public_detail_http',httpStatus:200,responseBytes:size,finalHost:'www.alter-shanghai.cn'}};
- }catch(error){return {...failure('detail_read_error','unavailable'),diagnostic:{stage:'public_detail_http',failureKind:/timeout|abort/i.test(error.name+' '+error.message)?'timeout':'network'}}}
+  try{html=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes)}catch{return fail('public_response_invalid_encoding')}
+  return {...parseAlterPublicHTML(html,item,{finalUrl:url,httpStatus:200,fetchedAt:now(),contentSha256}),diagnostic:diagnostic()};
+ }catch(error){
+  const errorCode=safeAlterHTTPErrorCode(error?.code),causeCode=safeAlterHTTPErrorCode(error?.cause?.code);
+  const timedOut=[errorCode,causeCode].some(code=>/TIMEOUT|ETIMEDOUT|ABORT/.test(code||''))||['TimeoutError','AbortError'].includes(error?.name);
+  return {...failure('detail_read_error','unavailable'),diagnostic:diagnostic({failureKind:stage==='parse'?'reader_error':timedOut?'timeout':'network',...(errorCode?{errorCode}:{}),...(causeCode?{causeCode}:{})})};
+ }
 }

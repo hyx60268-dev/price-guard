@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 
 const workflowsDir=new URL('../.github/workflows/',import.meta.url);
-const readWorkflow=name=>fs.readFile(new URL(name,workflowsDir),'utf8');
+const readWorkflow=async name=>(await fs.readFile(new URL(name,workflowsDir),'utf8'))+(name==='price-guard.yml'?'\n'+await fs.readFile(new URL('price-scan-transaction.yml',workflowsDir),'utf8'):'');
 const eventBlock=text=>text.match(/^on:\r?\n([\s\S]*?)(?=^\S)/m)?.[1]||'';
 
 // GitHub keeps only one pending job per concurrency group. Several push
@@ -23,14 +23,14 @@ test('the primary push writer covers quick dashboard publication, core scan and 
   const events=eventBlock(workflow);
   assert.match(events,/^  push:\r?\n    branches: \[main\]/m);
   assert.doesNotMatch(events,/^    paths(?:-ignore)?:/m);
-  const steps=workflow.split(/^  scan-and-publish:\s*$/m)[1];
+  const steps=workflow.split(/^  scan-and-publish:\s*$/m).at(-1);
   assert.ok(steps,'primary writer job exists');
   const repack=steps.indexOf('run: node scripts/repack-dashboard.mjs');
   const deploy=steps.indexOf('uses: actions/deploy-pages@');
   const scan=steps.indexOf('run: npm run scan');
   const merchant=steps.indexOf('run: node scripts/merchant-monitor.mjs');
   assert.ok(repack>=0&&repack<deploy&&deploy<scan&&scan<merchant,'one transaction publishes the interface before scanning, then refreshes merchants');
-  assert.match(steps.slice(0,repack),/if: github.event_name == 'push'/);
+  assert.match(steps.slice(0,repack),/github.event_name == 'push'/);
   assert.match(steps.slice(merchant),/MERCHANT_MONITOR_DAILY_CATCHUP: '1'/);
   assert.doesNotMatch(steps.slice(merchant),/MERCHANT_MONITOR_IF_DUE:/);
   assert.ok(steps.indexOf('uses: actions/deploy-pages@',merchant)>merchant,'merchant output is published');

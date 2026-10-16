@@ -1,7 +1,7 @@
 import { reviewedProcurementCatalogIdentity,verifiedProcurementOwnPrimaryImage } from './reviewed-procurement-catalog.mjs';
 import { PUBLIC_PURCHASABLE_VERIFICATION } from './procurement-evidence.mjs';
 import { ALTER_NARBERAL_URL,isAlterNarberalTarget,procurementSourcePlanVersion } from './alter-procurement.mjs';
-import { readAlterPublicHTTP } from './alter-public-http.mjs';
+import { readAlterPublicHTTP,safeAlterHTTPErrorCode } from './alter-public-http.mjs';
 import { normalizeNativeSupplierDetail } from './native-supplier-quotes.mjs';
 import { publicHtml,searchExternalImages,externalImageQueries,externalSearchQueries,externalPublicUrl,publicAccessRoute } from './external-images.mjs';
 import { imageFingerprints,primaryProductSimilarity } from './image.mjs';
@@ -70,11 +70,12 @@ export function youzanQuoteFromPublicState(state,item,url,selected){
 export function safeProcurementDiagnostic(value={}){
  const result={};
  if(['timeout','network','size_limit','redirect_limit','invalid_url','reader_error'].includes(value.failureKind))result.failureKind=value.failureKind;
+ for(const key of ['errorCode','causeCode'])if(safeAlterHTTPErrorCode(value[key]))result[key]=value[key];
  for(const key of ['stage','selectionAction'])if(typeof value[key]==='string')result[key]=diagnosticText(value[key],80);
  const host=entry=>typeof entry==='string'&&/^[a-z0-9.-]+$/i.test(entry)?entry.slice(0,100):null;
  if(host(value.finalHost))result.finalHost=host(value.finalHost);
  if(Array.isArray(value.redirectHosts))result.redirectHosts=value.redirectHosts.map(host).filter(Boolean).slice(0,4);
- for(const key of ['httpStatus','redirectCount','responseBytes','schemaScriptCount','schemaParseErrorCount','productCount','matchedProductCount','offerCount','skuCount','visiblePrice','visibleStock','quantity','selectionAttempts']){
+ for(const key of ['httpStatus','elapsedMs','timeoutMs','redirectCount','responseBytes','schemaScriptCount','schemaParseErrorCount','productCount','matchedProductCount','offerCount','skuCount','visiblePrice','visibleStock','quantity','selectionAttempts']){
   if(typeof value[key]==='number'&&Number.isFinite(value[key])&&value[key]>=0)result[key]=Math.min(value[key],key==='responseBytes'?3_000_000:1_000_000);
  }
  for(const key of ['targetUrlMatched','hasPublicState','loginFormPresent','challengeMarkerPresent','stoppedBeforeAccess'])if(typeof value[key]==='boolean')result[key]=value[key];
@@ -281,7 +282,7 @@ export async function alternativeProcurementCost(item,{deadline=Date.now()+90000
  const consume=async rows=>{for(const row of rows){if(Date.now()>=deadline||seen.size>=maxDetails)return;
   const url=canonicalProcurementUrl(row.url);if(!url||seen.has(url))continue;seen.add(url);
   try{const quote=prefetched.has(url)?prefetched.get(url):await detail(url,{item,context,getContext,deadline});if(!prefetched.has(url))report.detailCheckedCount++;
-   if(quote.status!=='quoted'){if(quote.status==='unavailable'||quote.status==='error'||quote.reviewComplete===false)sourceFailure=true;diagnose({source:procurementSource(url),reason:quote.reason,url,...(quote.diagnostic?{detail:safeProcurementDiagnostic(quote.diagnostic)}:{})});continue}
+   if(quote.status!=='quoted'){if(quote.status==='unavailable'||quote.status==='error'||quote.reviewComplete===false)sourceFailure=true;if(!prefetched.has(url))diagnose({source:procurementSource(url),reason:quote.reason,url,...(quote.diagnostic?{detail:safeProcurementDiagnostic(quote.diagnostic)}:{})});continue}
    if(rejected(matchCorrections,item,quote)){diagnose({source:quote.source,reason:'rejected_by_memory',url});continue}
    const query=externalImageQueries(item.title)[0],candidate=colorText([quote.brand,quote.series,quote.detailTitle,quote.selectedVariant].filter(Boolean).join(' '));
    const titleMatch=titleScore(query,candidate),fp=await fingerprint(quote.detailImages?.[0]),primaryImageScore=primaryProductSimilarity(own,fp);

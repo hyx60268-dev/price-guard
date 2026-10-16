@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath,pathToFileURL } from 'node:url';
+import { xianyuAccessKey } from '../scripts/lib/xianyu-session.mjs';
 import { encrypt,decrypt } from '../scripts/lib/crypto.mjs';
 
 for(const engine of ['legacy','full_inventory_graph'])test(`${engine} scan publishes an empty inventory while retaining costs, aliases and acknowledged inputs`,async()=>{
@@ -12,6 +13,11 @@ for(const engine of ['legacy','full_inventory_graph'])test(`${engine} scan publi
   const envKeys=['PRICE_SCAN_ENGINE','FULL_PRICE_AUDIT','DASHBOARD_PASSWORD','PORTAL_USERS_JSON','XIANYU_AUTH_PART_1','XIANYU_AUTH_PART_2','XIANYU_AUTH_PART_3','XIANYU_STORAGE_STATE_GZIP_B64','XIANYU_STORAGE_STATE_B64'];
   const saved=Object.fromEntries(envKeys.map(key=>[key,process.env[key]]));
   const password='isolated-test-password';
+  const now=Date.now(),retryAt=now+3600000;
+  const yahooRequestAccess={reason:'http_429',retryAt};
+  const rakumaRequestAccess={httpStatus:403,retryAfter:null,observedAt:new Date(now).toISOString(),retryAt,holdReason:'internal_fallback'};
+  const xianyuAccess={reason:'login_required',failures:1,failedAt:new Date(now).toISOString(),retryAt:new Date(retryAt).toISOString()};
+  const originalLog=console.log,logs=[];console.log=(...args)=>{logs.push(args);originalLog(...args)};
   try{
     await fs.cp(path.join(source,'scripts'),path.join(root,'scripts'),{recursive:true});
     await fs.mkdir(path.join(root,'public'),{recursive:true});
@@ -21,13 +27,22 @@ for(const engine of ['legacy','full_inventory_graph'])test(`${engine} scan publi
     await fs.symlink(await fs.realpath(path.join(source,'node_modules')),path.join(root,'node_modules'),process.platform==='win32'?'junction':'dir');
     await fs.writeFile(path.join(root,'config/accounts.json'),JSON.stringify({accounts:[]}));
     await fs.writeFile(path.join(root,'config/settings.json'),JSON.stringify({exchangeRate:20,costMultiplier:1.05,profitWarningJPY:1500}));
-    const previous={items:[{id:'sold',accountId:'a',title:'商品 A'}],accounts:[],manualCosts:{c:{accountId:'a',itemId:'sold',purchaseCNY:80}},relistAliases:{'a:sold':'original'},appliedSyncIssues:{42:{digest:'fixture'}}};
+    const previous={yahooRequestAccess,rakumaRequestAccess,items:[{id:'sold',accountId:'a',title:'商品 A'}],accounts:[],manualCosts:{c:{accountId:'a',itemId:'sold',purchaseCNY:80}},relistAliases:{'a:sold':'original'},appliedSyncIssues:{42:{digest:'fixture'}}};
     await fs.writeFile(path.join(root,'state/latest.json.enc'),encrypt(Buffer.from(JSON.stringify(previous)),password));
     for(const key of envKeys)process.env[key]='';process.env.DASHBOARD_PASSWORD=password;process.env.PRICE_SCAN_ENGINE=engine;process.env.FULL_PRICE_AUDIT='0';
+    await fs.writeFile(path.join(root,'state/xianyu-access.json.enc'),encrypt(Buffer.from(JSON.stringify(xianyuAccess)),xianyuAccessKey(process.env)));
     await import(pathToFileURL(path.join(root,'scripts/scan.mjs')));
     const result=JSON.parse(decrypt(await fs.readFile(path.join(root,'state/latest.json.enc')),password));
     const phone=JSON.parse(decrypt(await fs.readFile(path.join(root,'public/data/latest.json.enc')),password));
     assert.deepEqual(result.items,[]);
+    assert.deepEqual(result.yahooRequestAccess,yahooRequestAccess);
+    assert.deepEqual(result.rakumaRequestAccess,rakumaRequestAccess);
+    const restored=JSON.parse(logs.find(row=>row[0]==='[市场访问冷却恢复]')[1]);
+    const savedHolds=JSON.parse(logs.find(row=>row[0]==='[访问冷却基准已保存]')[1]);
+    assert.deepEqual(restored,{yahoo:yahooRequestAccess,rakuma:rakumaRequestAccess});
+    assert.deepEqual(savedHolds.yahoo,yahooRequestAccess);assert.deepEqual(savedHolds.rakuma,rakumaRequestAccess);
+    assert.equal(JSON.parse(logs.find(row=>row[0]==='[闲鱼访问冷却恢复]')[1]).retryAt,xianyuAccess.retryAt);
+    assert.equal(savedHolds.xianyu.retryAt,xianyuAccess.retryAt);assert.equal(savedHolds.xianyu.allowed,false);
     assert.equal(result.scanMeta.pricingEngine,engine);
     assert.equal(phone.scanMeta.pricingEngine,engine);
     assert.equal(result.cycleCoverage.accepted,false);
@@ -38,6 +53,7 @@ for(const engine of ['legacy','full_inventory_graph'])test(`${engine} scan publi
     assert.equal(phone.appliedSyncIssues,undefined);
     assert.equal(phone.listingHistory,undefined);
   }finally{
+    console.log=originalLog;
     for(const [key,value] of Object.entries(saved))if(value===undefined)delete process.env[key];else process.env[key]=value;
     await fs.rm(root,{recursive:true,force:true});
   }

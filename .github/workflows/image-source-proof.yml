@@ -1,17 +1,13 @@
-name: 站外找图搜索实测
+name: 站外找图离线回归
 on:
   workflow_dispatch:
-    inputs:
-      query_set:
-        description: 公共搜索实测商品组（仅核对召回，不代表照片或成本验收）
-        type: choice
-        options: [baseline, procurement]
-        default: baseline
   pull_request:
     paths:
       - scripts/lib/external-images.mjs
       - scripts/lib/search-localization.mjs
       - scripts/prove-image-search.mjs
+      - scripts/lib/procurement-proof-access.mjs
+      - test/proof-entry-guards.test.mjs
       - .github/workflows/image-source-proof.yml
 permissions:
   contents: read
@@ -26,7 +22,6 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: 核对真实搜索是否返回相关商品
-        run: node scripts/prove-image-search.mjs
-        env:
-          IMAGE_SOURCE_PROOF_SET: ${{ inputs.query_set || 'baseline' }}
+      # This runner has no restored shared search hold and makes no live search.
+      - name: 离线搜索解析与冷却回归（不代表真实找图验收）
+        run: node --test test/search-access.test.mjs test/search-localization.test.mjs test/proof-entry-guards.test.mjs
