@@ -12,7 +12,7 @@ import {buildOwnedOffers} from '../../public/owned-offers.js';
 import {PRICING_RULES_VERSION} from '../../public/pricing-policy.js';
 export const T=Date.parse('2026-10-18T06:00:00Z'),url=id=>`https://paypayfleamarket.yahoo.co.jp/item/${id}`;
 export const title='APEX ヴァイオレット・エヴァーガーデン 自動手記人形Ver. 1/7 フィギュア 特典付き';
-export async function pipeline(t,{accountId='melon',candidateChange=()=>{},ownChange=()=>{},skipCandidate=false,skipImages=false,secondTarget=false}={}){
+export async function pipeline(t,{accountId='melon',candidateChange=()=>{},ownChange=()=>{},skipCandidate=false,skipImages=false,secondTarget=false,deferSecondTargetRead=false}={}){
  let time=T+1000,htmlReads=0,imageReads=0;
  t.mock.method(Date,'now',()=>time);
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'shared-detail-actual-'));t.after(()=>fs.rm(directory,{recursive:true,force:true}));
@@ -39,12 +39,12 @@ export async function pipeline(t,{accountId='melon',candidateChange=()=>{},ownCh
   const response=new Response(html);Object.defineProperty(response,'url',{value:requested});return response;
  });
  const {fetchYahooItemBundle}=await import('../../scripts/lib/yahoo.mjs?original-fixture='+crypto.randomUUID());
- const loader=createOwnSourceLoader({now:()=>time,retainYahooOriginals:{startedAt:T,deadlineAt:T+12*60_000},fetchYahooBundle:id=>fetchYahooItemBundle(id,{attempts:1,yahooRetainSharedOriginals:true,yahooRequestPurpose:id===item.id?'own':'candidate',onYahooItemPageObserved:observer.observe})});
+ const loader=createOwnSourceLoader({now:()=>time,retainYahooOriginals:{startedAt:T,deadlineAt:T+12*60_000},fetchYahooBundle:(id,options={})=>fetchYahooItemBundle(id,{attempts:1,yahooRetainSharedOriginals:true,yahooRequestPurpose:options.purpose||(id===item.id?'own':'candidate'),beforeYahooTransport:options.beforeYahooTransport,onYahooItemPageObserved:observer.observe})});
  await loader.yahooBundle(item.id);time+=6000;
  if(!skipCandidate)await loader.yahooBundle(candidate.id);time+=6000;
- if(second){await loader.yahooBundle(second.id);time+=6000;}
+ if(second&&!deferSecondTargetRead){await loader.yahooBundle(second.id);time+=6000;}
  configureImageFingerprintCache({directory,now:()=>time});
- if(!skipImages)for(const imageUrl of [own.images[0]||own.thumbnailImageUrl,candidate.images[0],...(second?[second.image]:[])])await imageFingerprints(imageUrl);
+ if(!skipImages)for(const imageUrl of [own.images[0]||own.thumbnailImageUrl,candidate.images[0],...(second&&!deferSecondTargetRead?[second.image]:[])])await imageFingerprints(imageUrl);
  const settings={ownedOffers:buildOwnedOffers(accounts,[item,...(second?[second]:[])]),ownedOffersComplete:true,matchCorrections:{}};
  const mapping=mapYahooPoolToTargets({snapshot:observer.snapshot(),targets:[{...item,profileCard}],settings,now:time});
  const recall=mapping.rows[0]?.candidates[0]||(candidate.seller.id==='seller-boss'?{id:card.id,card,sources:[{observedAt:T+1000}]}:null);assert.ok(recall,'real recommendation producer must supply a recalled pair');

@@ -21,6 +21,14 @@ function validOriginal(bundle,id,{startedAt,deadlineAt,now}){
   receipt.parsedSha256===hash(JSON.stringify({detail:bundle.detail,shipping:bundle.shipping}));
 }
 const failure=reason=>({status:'pending',reason,htmlRequests:0,imageRequests:0,canRecommend:false});
+// Shared by the source-free verifier and the missing-own read action. This is
+// only an early rejection of changed own terms, never an acceptance shortcut.
+export function sharedOwnTermsProblem(own,item){
+ const detail=own?.detail,seller=String(detail?.seller?.id||detail?.sellerId||'');
+ return !item||detail?.status!=='OPEN'||seller!==item.sellerId||text(detail?.title)!==text(item.title)||Number(detail?.price)!==item.ownPrice||
+  !detail?.description?.trim()||!Array.isArray(detail?.images)||!detail.images.length||!own.shipping?.shippingKnown||own.shipping.currency!=='JPY'||own.shipping.shippingJPY!==0
+  ?'own_terms_changed_or_missing':null;
+}
 // Cache reads may stall locally. Bounding the wait never starts a replacement
 // request; late cache completion cannot commit an offer.
 export async function boundedSharedPeek(read,{remainingMs,stopped}={}){
@@ -54,8 +62,7 @@ export async function verifySharedYahooDetailPair({item,profileCard,recall,setti
  if(!validOriginal(candidate,card.id,{startedAt,deadlineAt,now:at}))return failure('candidate_original_unavailable');
  const ownDetail=own.detail,detail=candidate.detail;
  const ownSeller=String(ownDetail.seller?.id||ownDetail.sellerId||''),seller=String(detail.seller?.id||detail.sellerId||'');
- if(ownDetail.status!=='OPEN'||ownSeller!==item.sellerId||text(ownDetail.title)!==text(item.title)||Number(ownDetail.price)!==item.ownPrice||
-  !ownDetail.description?.trim()||!Array.isArray(ownDetail.images)||!ownDetail.images.length||!own.shipping?.shippingKnown||own.shipping.currency!=='JPY'||own.shipping.shippingJPY!==0)return failure('own_terms_changed_or_missing');
+ if(sharedOwnTermsProblem(own,item))return failure('own_terms_changed_or_missing');
  if(!seller||card.sellerId&&card.sellerId!==seller||isOwnedOffer(settings.ownedOffers,'yahoo',{id:detail.id,sellerId:seller}))return failure('candidate_seller_changed_or_owned');
  const maxImages=Math.max(3,Math.min(10,Number(settings.maxYahooImages)||8));
  const ownUrls=imageUrls(ownDetail).slice(0,maxImages),candidateUrls=[...new Set((detail.images||[]).map(image=>typeof image==='string'?image:image?.url).filter(Boolean))].slice(0,maxImages);
