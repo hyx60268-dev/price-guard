@@ -2,6 +2,7 @@ import { procurementTarget,verifiedPurchasableProcurementOffers,verifiedXianyuRe
 import { currentNativeSupplierQuotes,ownedNativeSupplierSellerKeys } from './native-supplier-quotes.mjs';
 import { buildOwnedOffers,excludeOwnedOffers,isOwnedOffer } from '../../public/owned-offers.js';
 import {rejectedByMemory} from '../../public/match-memory.js';
+import {currentSharedYahooOffers} from '../../public/shared-yahoo-offers.js';
 import { pricingDecision } from '../../public/pricing-policy.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -58,6 +59,7 @@ function currentPurchasableOffers(item,matchCorrections={},now=Date.now()){
     procurementSource:{...item.procurementSource,purchasableOffers}};
 }
 export function compactDashboardResult(result={}, {now=Date.now()}={}){
+  const sharedOwnership=buildOwnedOffers([...(result.accounts||[]),...(result.managedAccounts||[])],[...(result.items||[]),...Object.values(result.listingHistory||{})]);
   const accounts=(result.accounts||[]).map(({items,yahooProfileObservation,...account})=>({...account,...(yahooProfileObservation?{yahooProfileObservation:{complete:yahooProfileObservation.complete,observedAt:yahooProfileObservation.observedAt,maxObservedAt:yahooProfileObservation.maxObservedAt,membershipCount:yahooProfileObservation.membershipIds?.length||0,quoteEligibleCount:yahooProfileObservation.quoteEligibleCount||0,quoteIneligibleReasons:yahooProfileObservation.quoteIneligibleReasons||{}}}:{})}));
   const ownedSellerKeys=ownedNativeSupplierSellerKeys([...(result.accounts||[]),...(result.managedAccounts||[])],result.items||[]);
   // Full descriptions, condition and catalogue identity must be checked before
@@ -69,6 +71,7 @@ export function compactDashboardResult(result={}, {now=Date.now()}={}){
     const nativeSupplierQuotes=currentNativeSupplierQuotes(item,{now,matchCorrections:result.matchCorrections,ownedSellerKeys});
     const nativeBinding=nativeSupplierQuotes[0]?.target;
     return {...item,sourceDetail:undefined,cachedYahoo:undefined,
+      ...(Object.hasOwn(item,'sharedYahooOffers')?{sharedYahooOffers:currentSharedYahooOffers(item,{ownershipIndex:sharedOwnership,corrections:result.matchCorrections,now})}:{}),
       ...(Object.hasOwn(item,'nativeSupplierQuotes')||item.procurementSource?.nativeSupplierQuotes?{nativeSupplierQuotes}:{}),
       ...(item.procurementSource?.nativeSupplierQuotes?{procurementSource:{...item.procurementSource,nativeSupplierQuotes:[]}}:{}),
       ...(binding||xianyuBinding||nativeBinding?{description:(binding||xianyuBinding||nativeBinding).description,condition:(binding||xianyuBinding||nativeBinding).condition}:{}),
@@ -174,6 +177,7 @@ export async function writeOutputs({root,result,previous,password}){
     const native=Object.hasOwn(raw,'nativeSupplierQuotes')||raw.procurementSource?.nativeSupplierQuotes?{...raw,nativeSupplierQuotes:currentNativeSupplierQuotes(raw,{matchCorrections:result.matchCorrections,ownedSellerKeys:nativeOwnedSellers})}:raw;
     const item=withRakumaDiscovery(currentPurchasableOffers(native,result.matchCorrections),
       previousByKey.get(JSON.stringify([raw.accountId,raw.id]))||{},{matchCorrections:result.matchCorrections,ownedOffers:ownership});
+    if(Object.hasOwn(item,'sharedYahooOffers'))item.sharedYahooOffers=currentSharedYahooOffers(item,{ownershipIndex:auditOwnership,corrections:result.matchCorrections});
     if(item.comparisonAudit){
       const audit=item.comparisonAudit,target=audit.target,own=target?.ownObservation;
       if(audit.version!==1||audit.kind!=='standalone_frozen_yahoo_comparison_audit'||target?.targetId!==item.id||target?.accountId!==item.accountId||own?.id!==item.id||own?.title!==item.title||own?.sourceUrl!==`https://paypayfleamarket.yahoo.co.jp/item/${item.id}`)item.comparisonAudit=undefined;
@@ -190,6 +194,11 @@ export async function writeOutputs({root,result,previous,password}){
       afterProfitJPY:Number.isFinite(clean.costJPY)?decision.recommendedPrice-clean.costJPY:null,
       afterUnder1500:Number.isFinite(clean.costJPY)&&decision.recommendedPrice-clean.costJPY<(result.settings?.profitWarningJPY??1500)};
   });
+  if(result.scanMeta?.sharedDetailSummary){
+    const offers=result.items.flatMap(item=>item.sharedYahooOffers||[]);
+    result.scanMeta.sharedDetailSummary={...result.scanMeta.sharedDetailSummary,
+      outputOffers:offers.length,outputOfferTargets:result.items.filter(item=>item.sharedYahooOffers?.length).length};
+  }
   for(const account of result.accounts||[])account.items=result.items.filter(i=>i.accountId===account.id);
   // Runtime Sets belong to workers, never to persisted settings.
   if(result.settings){result.settings={...result.settings};delete result.settings.ownedOffers}

@@ -1,4 +1,5 @@
 import { isOwnedOffer } from '../../public/owned-offers.js';
+import {createHash} from 'node:crypto';
 import { createRequestCooldown,retryAfterDeadline,isRequestDeferred,RequestDeferredError } from './request-cooldown.mjs';
 import { createYahooRequestAccess,loadYahooRequestAccess,yahooRetryAt } from './yahoo-request-access.mjs';
 import { parseShopProfile } from '../../public/shop-profile.js';
@@ -257,6 +258,13 @@ export async function fetchYahooItemBundle(id,settings={}){
   const bundle={detail,shipping:yahooTargetShipping(html,detail),recommendations:extractRecommendationCards(nextData),components:extractYahooBundleComponents(html),
     observedAt:page.observedAt,fromCache:page.fromCache,sourceUrl:page.url||null,...(page.auditReservationId?{auditReservationId:page.auditReservationId}:{}),
     ...(recommendationReceipt?{recommendationReceipt}:{})};
+  // Opt-in source receipt for cache-only strict reuse. It describes the actual
+  // already-read response and parsed payload, never a new observation clock.
+  if(settings.yahooRetainSharedOriginals===true&&page.status===200&&page.url===requestedUrl&&page.redirected===false&&detail?.id===id){
+    bundle.originalObservation={version:1,kind:'original_yahoo_detail_body',url:page.url,status:page.status,redirected:false,
+      observedAt:page.observedAt,bodySha256:createHash('sha256').update(html,'utf8').digest('hex'),bodySha256Scope:'decoded_response_html_utf8',
+      parsedSha256:createHash('sha256').update(JSON.stringify({detail,shipping:bundle.shipping})).digest('hex')};
+  }
   // Optional observation of this already-read body only. The ordinary result
   // stays identical; independent copies cannot mutate strict verifier inputs.
   if(typeof settings.onYahooItemPageObserved==='function'){

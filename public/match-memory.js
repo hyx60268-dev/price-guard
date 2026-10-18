@@ -25,6 +25,7 @@ export function rejectedByMemory(records,item,platform,candidate){
 }
 export function invalidateCorrectedMatches(item,records={}){
   let next={...item};
+  if(Array.isArray(item.sharedYahooOffers))next.sharedYahooOffers=item.sharedYahooOffers.filter(row=>!rejectedByMemory(records,item,'yahoo',row));
   if((item.yahoo?.candidates||[]).some(row=>rejectedByMemory(records,item,'yahoo',row))){
     next={...next,lowestPrice:item.ownPrice,lowestUrl:item.ownUrl||item.url,recommendedPrice:item.ownPrice,priceSignal:'hold',difference:0,marketMedianPrice:null,marketSampleCount:0,
       yahoo:{...item.yahoo,rulesVersion:0,status:'incomplete',underpriced:false,lowestPrice:item.ownPrice,lowestUrl:item.ownUrl||item.url,recommendedPrice:item.ownPrice,

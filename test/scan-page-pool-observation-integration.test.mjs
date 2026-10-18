@@ -45,11 +45,12 @@ function initialState(){
 // producer callback, pool mapping, encryption and publication execute unchanged.
 // Only disposable-copy unrelated workers and image bytes are substituted. The
 // forwarding spies below invoke the real Yahoo producer and real pool mapper.
-async function runFixture(t,{enabled=true,mode='success',observerThrows=false,mapperThrows=false,finishThrows=false,phaseThrows=false}={}){
+async function runFixture(t,{enabled=true,mode='success',observerThrows=false,mapperThrows=false,finishThrows=false,phaseThrows=false,sharedDetails=false,sharedPeekMissing=false}={}){
  t.mock.timers.enable({apis:['Date'],now:NOW});
  const source=fileURLToPath(new URL('../',import.meta.url)),root=await fs.mkdtemp(path.join(os.tmpdir(),'scan-page-pool-observation-'));
  const savedEnv=Object.fromEntries(envKeys.map(key=>[key,process.env[key]])),savedFetch=globalThis.fetch;
  const savedConsole={log:console.log,warn:console.warn,error:console.error},logs=[],events=[],requests=[],callbacks=[],bundleCalls=[],mappings=[];
+ const fingerprints=new Map();
  const previous=initialState(),byId=new Map(previous.items.map(item=>[item.id,item]));
  if(mode==='active_hold')previous.yahooRequestAccess={reason:'http_429',retryAt:NOW+3600000};
  const detailFor=(id,item)=>({id,title:TITLE,description:DESCRIPTION,price:item?.ownPrice??9000,status:'OPEN',
@@ -80,8 +81,10 @@ async function runFixture(t,{enabled=true,mode='success',observerThrows=false,ma
   async rakumaProfile(){events.push({kind:'rakuma-profile',at:Date.now()});return {items:previous.items.filter(row=>row.platform==='rakuma'),complete:true,pages:1};},
   async rakumaItem(item){return detailFor(item.id,item);},
   async rakumaCompare(item){if(mode==='normal_tail')t.mock.timers.setTime(NOW+12*60_000+2000);events.push({kind:'rakuma-compare',at:Date.now()});return {...previous.items.find(row=>row.id===item.id).rakuma,status:'cached'};},
-  async fingerprint(url){return {url,dHash:'00ff00ff00ff00ff',aHash:'00ff00ff00ff00ff',centerHash:'00ff00ff00ff00ff',color:[100,100,100],
-   colorGrid:Array(768).fill(100),contentSha256:'b'.repeat(64),imageObservedAt:new Date(Date.now()).toISOString()};},
+  async fingerprint(url){const value={url,dHash:'00ff00ff00ff00ff',aHash:'00ff00ff00ff00ff',centerHash:'00ff00ff00ff00ff',color:[100,100,100],
+   colorGrid:Array(768).fill(100),contentSha256:'b'.repeat(64),imageObservedAt:new Date(Date.now()).toISOString(),imageCacheExpiresAt:NOW+3600_000};fingerprints.set(url,value);return value;},
+  knownFingerprint(url){const value=fingerprints.get(url);return value&&!sharedPeekMissing?{status:'available',...value}:{status:'unavailable'};},
+  async peekFingerprint(url){return sharedPeekMissing?null:structuredClone(fingerprints.get(url)||null);},
   async session(){return {file:null,access:()=>({allowed:false,reason:'fixture_hold',retryAt:new Date(NOW+3600000).toISOString()}),persist:async()=>{}};},
   async publicProcurement(){return new Map();},
   async denyBrowser(){throw Error('No browser is allowed in the offline page-pool fixture');}
@@ -100,7 +103,7 @@ async function runFixture(t,{enabled=true,mode='success',observerThrows=false,ma
     Object.entries(exports).map(([name,method])=>`export const ${name}=(...args)=>globalThis.${hook}.${method}(...args);`).join('\n'));
   }
   await wrap('rakuma.mjs',{discoverRakumaProfile:'rakumaProfile',fetchRakumaItem:'rakumaItem',rakumaCompare:'rakumaCompare'});
-  await wrap('image.mjs',{imageFingerprints:'fingerprint'});
+  await wrap('image.mjs',{imageFingerprints:'fingerprint',peekImageFingerprints:'peekFingerprint',peekKnownImageObservation:'knownFingerprint'});
   await wrap('xianyu-session.mjs',{loadXianyuSession:'session'});
   await wrap('procurement-runner.mjs',{runPublicProcurement:'publicProcurement'});
   await wrap('browser.mjs',{openContext:'denyBrowser'});
@@ -112,7 +115,7 @@ async function runFixture(t,{enabled=true,mode='success',observerThrows=false,ma
   await fs.writeFile(path.join(root,'config/accounts.json'),JSON.stringify({accounts}));
   await fs.writeFile(path.join(root,'config/settings.json'),JSON.stringify({comparisonMode:'same_platform',scanAccountPriorityIds:['melon','boss','momoka'],
    scanBudgetMinutes:12,profileConcurrency:1,yahooConcurrency:1,rakumaConcurrency:1,exchangeRate:20,attempts:1,
-   yahooGeometryPriority:false,yahooObserveNormalPageRails:enabled}));
+   yahooGeometryPriority:false,yahooObserveNormalPageRails:enabled,yahooSharedDetailOffers:sharedDetails}));
   await fs.writeFile(path.join(root,'state/latest.json.enc'),encrypt(Buffer.from(JSON.stringify(previous)),password));
   for(const key of envKeys)process.env[key]='';
   Object.assign(process.env,{DASHBOARD_PASSWORD:password,PRICE_SCAN_ENGINE:'legacy'});
@@ -293,4 +296,30 @@ test('real scan phase error remains the original error when observation finaliza
  assert.equal(summary.reason,'observer_finalization_failed');assert.equal(summary.scanPhaseFailed,true);
  assert.equal(summary.totalManagedTargets,4);assert.equal(summary.completeComparisons,0);
  assert.equal(aggregate[0].includes('PRIVATE_FINISH_FAILURE_SENTINEL'),false);
+});
+
+
+test('real scan shared strict consumer publishes an independently verified quote with identical normal source trajectory and automatic decisions',async t=>{
+ const enabled=await runFixture(t,{sharedDetails:true}),disabled=await runFixture(t);
+ assert.deepEqual(enabled.requests,disabled.requests);assertPreserved(enabled);
+ for(let i=0;i<enabled.snapshots.length;i++){
+  assert.deepEqual(evidence(enabled.snapshots[i]),evidence(disabled.snapshots[i]));
+  assert.deepEqual(enabled.snapshots[i].pricingCoverage,disabled.snapshots[i].pricingCoverage);
+  assert.deepEqual(enabled.snapshots[i].cycleCoverage,disabled.snapshots[i].cycleCoverage);
+ }
+ const offers=enabled.snapshots[0].items.flatMap(item=>item.sharedYahooOffers||[]);assert.ok(offers.length>0);
+ assert.ok(offers.every(offer=>offer.id==='external-shared'&&offer.price===9000&&offer.canRecommend===false));
+ const line=enabled.logs.find(line=>line.startsWith('[Yahoo共享详情报价]'));assert.ok(line);
+ const counts=JSON.parse(line.slice('[Yahoo共享详情报价]'.length));assert.equal(counts.htmlRequests,0);assert.equal(counts.imageRequests,0);assert.ok(counts.verifiedPairs>0);
+ assert.equal(enabled.requests.some(url=>/candidate-page-rail-id|rail-only-private-id/.test(url)),false);
+ for(const value of [TITLE,DESCRIPTION,'external-shared',password])assert.equal(line.includes(value),false);
+});
+for(const mode of ['active_hold','deadline','incomplete_profile','success'])test(`real scan shared strict ${mode} with missing images never fabricates a quote or retries missing source work`,async t=>{
+ const enabled=await runFixture(t,{sharedDetails:true,sharedPeekMissing:true,mode}),disabled=await runFixture(t,{mode});
+ assert.deepEqual(enabled.requests,disabled.requests);assertPreserved(enabled);
+ for(let i=0;i<enabled.snapshots.length;i++){
+  assert.deepEqual(evidence(enabled.snapshots[i]),evidence(disabled.snapshots[i]));
+  assert.deepEqual(enabled.snapshots[i].cycleCoverage,disabled.snapshots[i].cycleCoverage);
+  assert.ok(enabled.snapshots[i].items.every(item=>!item.sharedYahooOffers?.length));
+ }
 });
