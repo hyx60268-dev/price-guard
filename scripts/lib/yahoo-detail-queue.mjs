@@ -41,17 +41,43 @@ export function deferredYahooDetailQueue(error,item){
 
 // This identity binds queue order only. It never supplies current price or
 // grants acceptance; every selected card still needs the normal full detail gate.
-export function yahooQueueOwnKey(item={},detail){
+function ownKeyForRules(item={},detail,rulesVersion){
  if(!item.accountId||!item.id||!text(item.title)||detail?.id!==item.id||!detail?.description?.trim()||!text(detail.title)||!(detail.seller?.id||detail.sellerId)||!(detail.images||[]).some(image))return null;
- return hash([MATCHING_RULES_VERSION,item.accountId,item.id,item.platform||'yahoo',text(item.title),
+ return hash([rulesVersion,item.accountId,item.id,item.platform||'yahoo',text(item.title),
   text(detail.title),text(detail.description),detail.condition||null,detail.seller?.id||detail.sellerId||'',
   (detail.images||[]).map(image),detail.category||null]);
 }
+export function yahooQueueOwnKey(item={},detail){
+ return ownKeyForRules(item,detail,MATCHING_RULES_VERSION);
+}
 
-export function planYahooDetailQueue({item,detail,candidates=[],knownIds=new Set(),knownLimit=2,limit=8,prior,now=Date.now()}={}){
+// Known-only quotes can advance independently from broad queue work. Legacy
+// checkpoints may already use the current key while their fallback quote is
+// still historical, so prove provenance from the current detail before tagging.
+export function carryYahooDetailQueueVersion({item,detail,prior,priorRulesVersion}={}){
+ if(!prior||Object.hasOwn(prior,'rulesVersion'))return prior;
  const ownKey=yahooQueueOwnKey(item,detail);
- const existing=ownKey&&prior?.ownKey===ownKey?new Map((prior.attempts||[]).map(row=>[row.id,row])):new Map();
- const scheduled=ownKey&&prior?.ownKey===ownKey?new Map((prior.schedulingAttempts||[]).map(row=>[row.id,row])):new Map();
+ if(!ownKey||detail?.status!=='OPEN')return prior;
+ if(prior.ownKey===ownKey)return {...prior,rulesVersion:MATCHING_RULES_VERSION};
+ if(Number.isSafeInteger(priorRulesVersion)&&priorRulesVersion>0&&priorRulesVersion<MATCHING_RULES_VERSION&&
+  prior.ownKey===ownKeyForRules(item,detail,priorRulesVersion))return {...prior,rulesVersion:priorRulesVersion};
+ return prior;
+}
+
+export function planYahooDetailQueue({item,detail,candidates=[],knownIds=new Set(),knownLimit=2,limit=8,prior,priorRulesVersion,now=Date.now()}={}){
+ const ownKey=yahooQueueOwnKey(item,detail);
+ // A rules upgrade invalidates accepted/inspected outcomes. Only completed
+ // unresolved scheduling work may cross the version boundary.
+ // Reconstruct the old key from the current complete OPEN own detail instead
+ // of trusting a version label. Card keys and bounded retry rows still pass
+ // the same validation below. No candidate or quote evidence is migrated.
+ const explicitVersion=Object.hasOwn(prior||{},'rulesVersion'),priorVersion=explicitVersion?prior.rulesVersion:priorRulesVersion;
+ const historical=ownKey&&detail?.status==='OPEN'&&Number.isSafeInteger(priorVersion)&&priorVersion>0&&priorVersion<MATCHING_RULES_VERSION&&
+  prior?.ownKey===ownKeyForRules(item,detail,priorVersion);
+ const currentIdentity=ownKey&&prior?.ownKey===ownKey&&(!explicitVersion||priorVersion===MATCHING_RULES_VERSION);
+ const identityValid=currentIdentity||historical;
+ const existing=currentIdentity?new Map((prior.attempts||[]).map(row=>[row.id,row])):new Map();
+ const scheduled=identityValid?new Map((prior.schedulingAttempts||[]).map(row=>[row.id,row])):new Map();
  const rows=candidates.map((card,index)=>{
   const key=cardKey(card),old=existing.get(card.id),at=old?.key===key&&time(old.at)<=now+60_000?time(old.at):0;
   const retry=scheduled.get(card.id),retryAt=time(retry?.retryAt),attemptedAt=time(retry?.attemptedAt);
@@ -106,14 +132,14 @@ export function planYahooDetailQueue({item,detail,candidates=[],knownIds=new Set
   },
   deferredSnapshot(){
    if(!ownKey||!checkpointItemKey||detail?.status!=='OPEN'||!schedulingUpdates.size)return undefined;
-   return {itemKey:checkpointItemKey,queue:{ownKey,attempts:checkpointAttempts,lastSelection:[],
+   return {itemKey:checkpointItemKey,queue:{ownKey,rulesVersion:MATCHING_RULES_VERSION,attempts:checkpointAttempts,lastSelection:[],
     schedulingAttempts:[...new Map([...checkpointScheduling,...schedulingUpdates]).values()],
     lastSchedulingSelection:[...schedulingUpdates.keys()],remaining:rows.length}};
   },
   snapshot(){
    if(!ownKey)return undefined;
    // Retain only current recalled candidates. No stale global blacklist grows.
-   return {ownKey,attempts:[...remembered.values()],lastSelection:attempts,
+   return {ownKey,rulesVersion:MATCHING_RULES_VERSION,attempts:[...remembered.values()],lastSelection:attempts,
     schedulingAttempts:[...schedulingMemory.values()],lastSchedulingSelection:schedulingSelections,
     remaining:Math.max(0,rows.length-new Set([...attempts,...schedulingSelections]).size)};
   }

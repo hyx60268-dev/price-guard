@@ -1,6 +1,7 @@
 import { procurementTarget,verifiedPurchasableProcurementOffers,verifiedXianyuReference } from './procurement-reference.mjs';
 import { currentNativeSupplierQuotes,ownedNativeSupplierSellerKeys } from './native-supplier-quotes.mjs';
-import { buildOwnedOffers,excludeOwnedOffers } from '../../public/owned-offers.js';
+import { buildOwnedOffers,excludeOwnedOffers,isOwnedOffer } from '../../public/owned-offers.js';
+import {rejectedByMemory} from '../../public/match-memory.js';
 import { pricingDecision } from '../../public/pricing-policy.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -57,7 +58,7 @@ function currentPurchasableOffers(item,matchCorrections={},now=Date.now()){
     procurementSource:{...item.procurementSource,purchasableOffers}};
 }
 export function compactDashboardResult(result={}, {now=Date.now()}={}){
-  const accounts=(result.accounts||[]).map(({items,...account})=>account);
+  const accounts=(result.accounts||[]).map(({items,yahooProfileObservation,...account})=>({...account,...(yahooProfileObservation?{yahooProfileObservation:{complete:yahooProfileObservation.complete,observedAt:yahooProfileObservation.observedAt,maxObservedAt:yahooProfileObservation.maxObservedAt,membershipCount:yahooProfileObservation.membershipIds?.length||0,quoteEligibleCount:yahooProfileObservation.quoteEligibleCount||0,quoteIneligibleReasons:yahooProfileObservation.quoteIneligibleReasons||{}}}:{})}));
   const ownedSellerKeys=ownedNativeSupplierSellerKeys([...(result.accounts||[]),...(result.managedAccounts||[])],result.items||[]);
   // Full descriptions, condition and catalogue identity must be checked before
   // compaction removes those observations. Never validate against an old target.
@@ -75,7 +76,7 @@ export function compactDashboardResult(result={}, {now=Date.now()}={}){
       yahoo:compactComparison(item.yahoo),rakuma:compactComparison(item.rakuma),mercari:compactComparison(item.mercari),
       xianyu:compactXianyu(xianyu||{...item.xianyu,averageCNY:null,selectedQuote:null})};
   });
-  return {...result,listingHistory:undefined,appliedSyncIssues:undefined,accounts,items};
+  return {...result,comparisonAudit:undefined,comparisonAuditReceipt:undefined,listingHistory:undefined,appliedSyncIssues:undefined,accounts,items};
 }
 
 function normalizePortalUserRecords(values=[]){
@@ -122,7 +123,7 @@ export function scopeResultForPortalUser(result,user){
   const managedAccounts=(result.managedAccounts||[]).filter(account=>allowed.has(account.id));
   const notificationEmail=safeEmail(result.portalPreferences?.[user.username]?.notificationEmail||user.notificationEmail);
   const matchCorrections=Object.fromEntries(Object.entries(result.matchCorrections||{}).filter(([,record])=>allowed.has(record.accountId)));
-  return {...result,pricingCoverage:pricingCoverage(items,accounts),cycleCoverage:scopeCycleCoverage(result.cycleCoverage,user.accountIds),matchCorrections,portalUsers:undefined,portalPreferences:undefined,portalUser:{username:user.username,displayName:user.displayName,role:'member',notificationEmail},accounts,items,manualCosts,managedAccounts,
+  return {...result,comparisonAudit:undefined,comparisonAuditReceipt:undefined,pricingCoverage:pricingCoverage(items,accounts),cycleCoverage:scopeCycleCoverage(result.cycleCoverage,user.accountIds),matchCorrections,portalUsers:undefined,portalPreferences:undefined,portalUser:{username:user.username,displayName:user.displayName,role:'member',notificationEmail},accounts,items,manualCosts,managedAccounts,
     merchantMonitors:undefined,listingHistory:undefined,appliedSyncIssues:undefined,dismissedDiscoveries:{},discoveryReviews:{},
     relistAliases:Object.fromEntries(Object.entries(result.relistAliases||{}).filter(([key])=>allowed.has(key.slice(0,key.lastIndexOf(':'))))),
     ownedTitleHistory:items.map(item=>item.title).filter(Boolean)};
@@ -167,11 +168,23 @@ export async function writeOutputs({root,result,previous,password}){
   await Promise.all(['data','public/data','state'].map(directory=>fs.mkdir(path.join(root,directory),{recursive:true})));
   const ownership=buildOwnedOffers([...(result.accounts||[]),...(result.managedAccounts||[])],result.items||[]);
   const previousByKey=new Map((previous?.items||[]).map(item=>[JSON.stringify([item.accountId,item.id]),item]));
+  const auditOwnership=buildOwnedOffers([...(result.accounts||[]),...(result.managedAccounts||[])],[...(result.items||[]),...Object.values(result.listingHistory||{})]);
   const nativeOwnedSellers=ownedNativeSupplierSellerKeys([...(result.accounts||[]),...(result.managedAccounts||[])],result.items||[]);
   result.items=(result.items||[]).map(raw=>{
     const native=Object.hasOwn(raw,'nativeSupplierQuotes')||raw.procurementSource?.nativeSupplierQuotes?{...raw,nativeSupplierQuotes:currentNativeSupplierQuotes(raw,{matchCorrections:result.matchCorrections,ownedSellerKeys:nativeOwnedSellers})}:raw;
     const item=withRakumaDiscovery(currentPurchasableOffers(native,result.matchCorrections),
       previousByKey.get(JSON.stringify([raw.accountId,raw.id]))||{},{matchCorrections:result.matchCorrections,ownedOffers:ownership});
+    if(item.comparisonAudit){
+      const audit=item.comparisonAudit,target=audit.target,own=target?.ownObservation;
+      if(audit.version!==1||audit.kind!=='standalone_frozen_yahoo_comparison_audit'||target?.targetId!==item.id||target?.accountId!==item.accountId||own?.id!==item.id||own?.title!==item.title||own?.sourceUrl!==`https://paypayfleamarket.yahoo.co.jp/item/${item.id}`)item.comparisonAudit=undefined;
+      else {
+        const rows=(target.rows||[]).filter(row=>row.id!==item.id&&!(row.cardObservations||[]).some(card=>isOwnedOffer(auditOwnership,'yahoo',card)||rejectedByMemory(result.matchCorrections,item,'yahoo',card))&&!isOwnedOffer(auditOwnership,'yahoo',{id:row.id,sellerId:row.detailObservation?.sellerId}));
+        const visibleIds=new Set(rows.map(row=>row.id));
+        item.comparisonAudit={...audit,ownershipCheckedAtPublication:true,target:{...target,rows,
+          recommendationReceipt:target.recommendationReceipt?{...target.recommendationReceipt,cards:(target.recommendationReceipt.cards||[]).filter(card=>visibleIds.has(card.id))}:null,
+          knownNotInFrozenSet:(target.knownNotInFrozenSet||[]).filter(id=>!isOwnedOffer(auditOwnership,'yahoo',{id}))}};
+      }
+    }
     const clean=excludeOwnedOffers(item,ownership);if(clean.yahoo===item.yahoo&&clean.rakuma===item.rakuma&&clean.mercari===item.mercari)return item;
     const decision=pricingDecision(clean);return {...clean,...decision,lowestPrice:decision.lowest?.price??clean.ownPrice,lowestUrl:decision.lowest?.url||clean.url,
       afterProfitJPY:Number.isFinite(clean.costJPY)?decision.recommendedPrice-clean.costJPY:null,

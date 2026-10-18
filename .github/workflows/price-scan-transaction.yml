@@ -180,12 +180,15 @@ jobs:
       - run: npx playwright install --with-deps chromium
         if: ${{ steps.admission.outputs.admitted == 'true' }}
       - name: 并行检查三平台价格与闲鱼成本
+        id: scan
         if: ${{ steps.admission.outputs.admitted == 'true' }}
         run: npm run scan
         env:
           # The legacy engine is restored after monitored graph coverage regressed.
           # Graph mode remains an explicit validation option. Publication
           # timestamps do not establish full-inventory coverage or cadence.
+          GITHUB_TOKEN: ${{ github.token }}
+          SCAN_WRITER_LOCK: pages
           PRICE_SCAN_ENGINE: ${{ inputs.pricing_engine || 'legacy' }}
           FULL_PRICE_AUDIT: ${{ inputs.full_audit && '1' || '0' }}
           PRICE_AUDIT_ITEM_IDS: ${{ inputs.priority_item_ids || '' }}
@@ -232,7 +235,7 @@ jobs:
       # Catch up a missed daily observation without appending twenty-minute
       # partial-detail/image retries to every pricing writer's publication lock.
       - name: 补执行到期的每日商家监控
-        if: ${{ steps.admission.outputs.admitted == 'true' }}
+        if: ${{ steps.admission.outputs.admitted == 'true' && steps.scan.outputs.comparison_audit != 'true' }}
         run: node scripts/merchant-monitor.mjs
         env:
           MERCHANT_MONITOR_DAILY_CATCHUP: '1'
@@ -243,7 +246,7 @@ jobs:
           XIANYU_STORAGE_STATE_GZIP_B64: ${{ secrets.XIANYU_STORAGE_STATE_GZIP_B64 }}
           XIANYU_STORAGE_STATE_B64: ${{ secrets.XIANYU_STORAGE_STATE_B64 }}
       - name: 准备手机以图搜索图片
-        if: ${{ steps.admission.outputs.admitted == 'true' }}
+        if: ${{ steps.admission.outputs.admitted == 'true' && steps.scan.outputs.comparison_audit != 'true' }}
         run: npm run prepare:share-images
         env:
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}

@@ -46,16 +46,33 @@ export function yahooTargetShipping(html='',detail={}){
  return {shippingKnown:true,shippingJPY:0,currency:'JPY',shippingSource:'target_price_area'};
 }
 
-export function knownYahooCandidates(item,settings={}){
+function boundKnownYahooCandidates(item,settings={},allowHistoricalRules=false){
  const prior=item?.yahoo||{},audit=prior.audit||{};
+ const rulesEligible=prior.rulesVersion===MATCHING_RULES_VERSION||allowHistoricalRules&&
+  Number.isSafeInteger(prior.rulesVersion)&&prior.rulesVersion>0&&prior.rulesVersion<MATCHING_RULES_VERSION;
  if(item.platform&& !['yahoo','yahoo_fleamarket'].includes(item.platform))return [];
- if(!item.accountId||audit.accountId!==item.accountId||audit.ownItemId!==item.id||prior.rulesVersion!==MATCHING_RULES_VERSION||!timestamp(prior.checkedAt)||!['ok','incomplete'].includes(prior.evidenceStatus||prior.status))return [];
+ if(!item.accountId||audit.accountId!==item.accountId||audit.ownItemId!==item.id||!rulesEligible||!timestamp(prior.checkedAt)||!['ok','incomplete'].includes(prior.evidenceStatus||prior.status))return [];
  const seen=new Set();
  return (prior.candidates||[]).filter(card=>{
   if(!card||seen.has(card.id)||!/^\w[\w-]*$/.test(card.id||'')||card.id===item.id||card.isOwn||!card.sellerId||!card.title||!card.image||!(Number(card.price)>0)||!methods.has(card.matchMethod))return false;
   if(isOwnedOffer(settings.ownedOffers,'yahoo',card)||rejectedByMemory(settings.matchCorrections,item,'yahoo',card)||item.sellerId&&card.sellerId===item.sellerId)return false;
   seen.add(card.id);return true;
  }).sort((a,b)=>Number(a.price)-Number(b.price));
+}
+
+export function knownYahooCandidates(item,settings={}){
+ return boundKnownYahooCandidates(item,settings);
+}
+
+// A rule upgrade revokes a price decision, not the identity of a URL worth
+// reading again. Historical rows are only discovery hints: strip every saved
+// acceptance field and re-read both current details through the full verifier.
+// Keep knownYahooCandidates strict so old hints cannot suppress broad discovery.
+export function knownYahooRevalidationCandidates(item,settings={}){
+ const candidates=boundKnownYahooCandidates(item,settings,true);
+ if(item?.yahoo?.rulesVersion===MATCHING_RULES_VERSION)return candidates;
+ return candidates.map(({id,title,image,sellerId,price})=>({id,title,image,sellerId,price,
+  url:`https://paypayfleamarket.yahoo.co.jp/item/${id}`}));
 }
 
 export function yahooFullAttemptTime(prior={}){
@@ -69,7 +86,7 @@ export function knownYahooRefreshTasks(contexts,settings={},now=Date.now()){
  const buckets=[...contexts].sort((a,b)=>order.size?(order.get(a.account.id)??Infinity)-(order.get(b.account.id)??Infinity):accountAttempt(a)-accountAttempt(b)).map(context=>context.activeItems.map(item=>{
   const prior=context.previousById.get(item.id)||{};
   const observed={...item,yahoo:prior.yahoo};
-  const candidates=knownYahooCandidates(observed,settings);
+  const candidates=knownYahooRevalidationCandidates(observed,settings);
   const attempted=timestamp(prior.yahoo?.knownLastAttemptAt)||timestamp(prior.yahoo?.checkedAt);
   return {context,item,prior,candidates,attempted};
  }).filter(task=>task.candidates.length&&now-task.attempted>=interval).sort((a,b)=>a.attempted-b.attempted||String(a.item.id).localeCompare(String(b.item.id))));

@@ -7,7 +7,7 @@ test('identical public query requests coalesce across workers without sharing mu
  const [a,b]=await Promise.all([loader.yahooResult('same-query'),loader.yahooResult('same-query')]);
  assert.equal(calls,1);a.items[0].price=1;assert.equal(b.items[0].price,100);
  clock=9000;const reused=await loader.yahooResult('same-query');assert.equal(reused.observedAt,new Date(1000).toISOString());
- await loader.yahooResult('different-query');assert.equal(calls,2);assert.deepEqual(loader.stats,{yahooResultRequests:2,yahooResultReuses:2,rakumaPageRequests:0,rakumaPageReuses:0,rakumaReadWallMs:0});
+ await loader.yahooResult('different-query');assert.equal(calls,2);assert.deepEqual(loader.stats,{yahooBundleRequests:0,yahooBundleReuses:0,yahooResultRequests:2,yahooResultReuses:2,rakumaPageRequests:0,rakumaPageReuses:0,rakumaReadWallMs:0});
 });
 test('failed public queries can retry but never become a successful cached observation',async()=>{
  let calls=0;const loader=createOwnSourceLoader({fetchYahooResult:async()=>{if(++calls===1)throw Error('HTTP 429');return {items:[]}}});
@@ -79,4 +79,30 @@ test('Rakuma own-detail hydration retains the original shared HTML observation t
  const loader=createOwnSourceLoader({now:()=>Date.parse('2026-10-16T00:00:00Z'),fetchRakumaItem:async()=>({description:'新品 1個',status:'OPEN',sourceObservedAt})});
  const result=await loader.hydrate({id:'aa',platform:'rakuma',title:'fixture'});
  assert.equal(result.sourceDetail.checkedAt,sourceObservedAt);
+});
+
+test('shared Yahoo own hydration retains the original transport timestamp and first request purpose',async()=>{
+ let now=Date.parse('2026-10-16T22:00:00Z'),calls=0;const purposes=[];
+ const loader=createOwnSourceLoader({now:()=>now,fetchYahooBundle:async(id,options)=>{calls++;purposes.push(options.purpose);return {detail:{id,title:'target',description:'original description',status:'OPEN'},observedAt:now}}});
+ const original=now;await loader.yahooBundle('z1',{purpose:'known'});now+=300000;
+ const result=await loader.hydrate({platform:'yahoo',id:'z1',title:'target'},{});
+ assert.equal(calls,1);assert.deepEqual(purposes,['known']);assert.equal(result.sourceDetail.checkedAt,new Date(original).toISOString());
+ assert.equal(loader.stats.yahooBundleRequests,1);assert.equal(loader.stats.yahooBundleReuses,1);
+});
+
+test('invalid or future original Yahoo observation cannot be renewed to hydration time',async()=>{
+ const now=Date.parse('2026-10-16T22:00:00Z');
+ for(const observedAt of ['not-a-date',now+1,NaN]){
+  const loader=createOwnSourceLoader({now:()=>now,fetchYahooBundle:async()=>({detail:{id:'z1',description:'source text',status:'OPEN'},observedAt})});
+  await assert.rejects(loader.hydrate({platform:'yahoo',id:'z1',title:'target'},{}),/观测时间/);
+ }
+});
+
+
+test('shared query keeps the response original time instead of rebinding to consumer time',async()=>{
+ let now=2000;const loader=createOwnSourceLoader({now:()=>now,fetchYahooResult:async()=>({items:[],observedAt:1000})});
+ assert.equal((await loader.yahooResult('query')).observedAt,new Date(1000).toISOString());now=3000;
+ assert.equal((await loader.yahooResult('query')).observedAt,new Date(1000).toISOString());
+ const invalid=createOwnSourceLoader({now:()=>now,fetchYahooResult:async()=>({items:[],observedAt:now+1})});
+ await assert.rejects(invalid.yahooResult('query'),/original observation/);
 });
