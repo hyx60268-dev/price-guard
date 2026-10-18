@@ -200,6 +200,8 @@ test('explicit unknown own shipping cannot classify higher sticker prices as con
   assert.equal(report.counts.unknownPrice, 1); assert.equal(report.counts.skippedNotLower, 0);
   assert.equal(row.cardFirst.mode, 'detail_required'); assert.equal(row.baseline.status, 'unknown');
   assert.equal(row.baseline.lowerThanOwn, null); assert.equal(context.log.length, 1);
+  assert.equal(report.counts.pairedVerdictUnknown, 1); assert.equal(report.counts.strictLowerWithoutCardHint, 0);
+  assert.equal(report.counts.detailNotObserved, 0); assert.equal(report.counts.paired, 1);
 });
 
 test('foreign or ambiguous item URLs are blocked before applying the Yahoo shipping rule or doing I/O', async () => {
@@ -252,6 +254,13 @@ test('only ambiguous cards read details in mainflow; optional validation is a se
   assert.equal(rowsFor(report)[3].cardFirst.observation.detailVerified, false);
   assert.equal(rowsFor(report)[3].comparison.interpretation, 'different_observation_times_not_ground_truth');
   assert.equal(report.mainflowComplete, true); assert.equal(report.counts.baselineValidationPaired, 2);
+  assert.equal(report.counts.cardLowerHints, 2); assert.equal(report.counts.cardLowerHintsPaired, 2);
+  assert.equal(report.counts.cardLowerHintsStrictLower, 1); assert.equal(report.counts.cardLowerHintsStrictRejected, 1);
+  assert.equal(report.counts.cardLowerHintsUnresolved, 0); assert.equal(report.counts.cardLowerHintsStrictNotLower, 0);
+  assert.equal(report.counts.strictLowerWithoutCardHint, 2); assert.equal(report.counts.strictLowerWithoutCardHintDetailRequired, 2);
+  assert.equal(report.counts.comparablePriceChanged, 0); assert.equal(report.counts.detailNotObserved, 0);
+  assert.deepEqual(report.targets[0].counts, report.counts);
+
   for (const request of report.controller.requests.filter(row => row.candidateId)) assert.ok(['newflow', 'baseline_validation'].includes(request.phase));
 });
 
@@ -512,4 +521,33 @@ test('phase wall timings measure separate awaited intervals and retain interrupt
   assert.equal(partial.phaseTimings.ambiguity_detail_pass.interrupted, true);
   assert.ok(partial.phaseTimings.ambiguity_detail_pass.elapsedMs >= 720_000);
   assert.equal(partial.phaseTimings.baseline_validation_pass.elapsedMs, 0);
+});
+
+
+test('audit intersections separate changed later price, unresolved hints and mainflow detail recovery', async () => {
+  const changed = await setup({ sizes: [2, 0] }), changedCards = cardsFor(changed);
+  changed.bundles.get(changedCards[0].id).detail.price = 11000;
+  delete changedCards[1].price;
+  const observed = await run(changed);
+  assert.equal(observed.counts.paired, 2); assert.equal(observed.counts.cardLowerHints, 1);
+  assert.equal(observed.counts.cardLowerHintsStrictNotLower, 1); assert.equal(observed.counts.cardLowerHintsStrictRejected, 0);
+  assert.equal(observed.counts.cardLowerHintsPriceChanged, 1); assert.equal(observed.counts.comparablePriceChanged, 1);
+  assert.equal(observed.counts.strictLowerWithoutCardHint, 1);
+  assert.equal(observed.counts.strictLowerWithoutCardHintDetailRequired, 1);
+  assert.equal(observed.counts.strictLowerWithoutCardHintUnknownCardPrice, 1);
+  assert.equal(observed.counts.cardLowerHintsUnresolved, 0);
+  const unread = await setup({ sizes: [1, 1] }), skipped = await run(unread, { baselineValidation: false });
+  assert.equal(skipped.counts.cardLowerHints, 2); assert.equal(skipped.counts.cardLowerHintsUnresolved, 2);
+  assert.equal(skipped.counts.cardLowerHintsUnpaired, 2); assert.equal(skipped.counts.cardLowerHintsPaired, 0);
+  assert.equal(skipped.counts.cardLowerHintsStrictLower, 0); assert.equal(skipped.counts.cardLowerHintsStrictRejected, 0);
+  assert.equal(skipped.counts.detailNotObserved, 2); assert.equal(skipped.counts.detailAttemptedWithoutObservation, 0);
+  assert.deepEqual(skipped.targets.map(target => target.counts.cardLowerHintsUnresolved), [1, 1]);
+  const denied = await setup({ sizes: [1, 0] }), deniedResult = await run(denied, { readDetail: async (id, options) => {
+    const reservation = options.beforeYahooTransport({ url: sourceUrl(id), purpose: options.yahooRequestPurpose, targetId: options.yahooRequestTargetId });
+    options.afterYahooTransport({ reservation, completed: false, httpStatus: 403 });
+    throw Object.assign(Error('Synthetic denial'), { httpStatus: 403 });
+  } });
+  assert.equal(deniedResult.counts.cardLowerHintsUnresolved, 1); assert.equal(deniedResult.counts.cardLowerHintsUnpaired, 1);
+  assert.equal(deniedResult.counts.detailAttemptedWithoutObservation, 1); assert.equal(deniedResult.counts.blocked, 1);
+  assert.equal(deniedResult.counts.cardLowerHintsStrictRejected, 0);
 });

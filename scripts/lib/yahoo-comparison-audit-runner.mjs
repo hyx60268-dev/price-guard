@@ -55,6 +55,14 @@ function compareCardPrices(target, row) {
 
 function countRows(target) {
   const rows = target.rows;
+  const cardHint = row => row.cardFirst?.mode === 'card_observation' && row.cardFirst.observation?.lowerPriceAlert === true;
+  const strictLower = row => row.paired === true && row.baseline?.status === 'comparable' && row.baseline.lowerThanOwn === true;
+  const verdictKnown = row => row.paired === true && ['comparable', 'rejected'].includes(row.baseline?.status);
+  // A different later price is not a card matching error. Only compare two
+  // confirmed ordinary delivered-price observations; source times stay distinct.
+  const priceChanged = row => row.paired === true && row.detailPriceComparison?.candidate?.status === 'confirmed' &&
+    row.priceComparison?.observations?.length > 0 && row.priceComparison.observations.every(value => value.status === 'confirmed') &&
+    row.priceComparison.observations.some(value => value.deliveredPriceJPY !== row.detailPriceComparison.candidate.deliveredPriceJPY);
   return {
     raw: target.receipt?.totalCards ?? null,
     retainedRaw: target.receipt?.cards?.length ?? 0,
@@ -82,6 +90,23 @@ function countRows(target) {
     rejected: rows.filter(row => row.baseline?.status === 'rejected').length,
     unknown: rows.filter(row => row.baseline?.status === 'unknown').length,
     blocked: rows.filter(row => row.baseline?.status === 'blocked').length,
+    // These are cross-observation counts, not live precision/recall rates.
+    // Rejected includes insufficient identity evidence and later not-open terms.
+    cardLowerHints: rows.filter(cardHint).length,
+    cardLowerHintsPaired: rows.filter(row => cardHint(row) && row.paired).length,
+    cardLowerHintsStrictLower: rows.filter(row => cardHint(row) && strictLower(row)).length,
+    cardLowerHintsStrictRejected: rows.filter(row => cardHint(row) && row.paired && row.baseline?.status === 'rejected').length,
+    cardLowerHintsStrictNotLower: rows.filter(row => cardHint(row) && row.paired && row.baseline?.status === 'comparable' && row.baseline.lowerThanOwn === false).length,
+    cardLowerHintsUnresolved: rows.filter(row => cardHint(row) && !verdictKnown(row)).length,
+    cardLowerHintsUnpaired: rows.filter(row => cardHint(row) && !row.paired).length,
+    strictLowerWithoutCardHint: rows.filter(row => strictLower(row) && !cardHint(row)).length,
+    strictLowerWithoutCardHintDetailRequired: rows.filter(row => strictLower(row) && !cardHint(row) && row.mainflow?.mode === 'detail_required').length,
+    strictLowerWithoutCardHintUnknownCardPrice: rows.filter(row => strictLower(row) && !cardHint(row) && row.priceComparison?.status === 'unknown').length,
+    comparablePriceChanged: rows.filter(priceChanged).length,
+    cardLowerHintsPriceChanged: rows.filter(row => cardHint(row) && priceChanged(row)).length,
+    pairedVerdictUnknown: rows.filter(row => row.paired && !verdictKnown(row)).length,
+    detailNotObserved: rows.filter(row => !row.detailObservation).length,
+    detailAttemptedWithoutObservation: rows.filter(row => row.detailAttempted && !row.detailObservation).length,
   };
 }
 
