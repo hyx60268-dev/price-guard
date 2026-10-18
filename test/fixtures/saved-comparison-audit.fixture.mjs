@@ -85,5 +85,5 @@ export async function createSavedComparisonAuditFixture({ overflow = false, conf
   });
   return structuredClone({ version: 6, checkedAt: P.snapshotAt, dataRevision: P.snapshotAt,
     cycleCoverage: { finishedAt: P.snapshotAt }, scanMeta: { codeSha: P.codeSha, startedAt: iso(START) },
-    items: targets.map(target => target.item), comparisonAuditReceipt: claim.receipt, comparisonAudit: report });
+    items: targets.map(target => ({ ...target.item, platform: 'yahoo_fleamarket' })), comparisonAuditReceipt: claim.receipt, comparisonAudit: report });
 }

@@ -10,6 +10,7 @@ export const MAX_SAVED_AUDIT_BYTES=128*1024*1024;
 const TIMEOUT_MS=10_000;
 const REPOSITORY='hyx60268-dev/price-guard';
 const BRANCH='fix/read-saved-audit-matrix';
+const SAFE_SUMMARY_REASONS=new Set(['invalid_options','state_metadata_invalid','receipt_invalid','audit_metadata_invalid','audit_targets_invalid','audit_time_invalid','audit_rows_invalid','audit_counts_inconsistent','audit_controller_inconsistent','audit_source_inconsistent']);
 const SAFE_REASONS=new Set(['invalid_options','untrusted_execution_context','missing_dashboard_key','published_http_denied','published_http_error','published_redirect','published_body_unavailable','published_body_too_large','published_network','published_timeout','state_decryption_failed','state_json_invalid','summary_invalid']);
 const fail=reason=>{throw Object.assign(new Error(reason),{diagnosticReason:reason});};
 export function savedAuditDiagnosticContext(env={}){
@@ -45,7 +46,7 @@ export async function readSavedComparisonAudit({password,env,fetchImpl=globalThi
   try{plain=decrypt(bytes,password);}catch{fail('state_decryption_failed');}
   try{state=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(plain));}catch{fail('state_json_invalid');}
   const report=summarizeSavedComparisonAudit(state,{now:now()});
-  if(report?.valid!==true)return {...base,valid:false,reason:'summary_invalid',networkRequests};
+  if(report?.valid!==true)return {...base,valid:false,reason:'summary_invalid',summaryReason:SAFE_SUMMARY_REASONS.has(report?.reason)?report.reason:'unknown_validation_failure',networkRequests};
   return {...base,valid:true,networkRequests,summary:report};
  }catch(error){return {...base,valid:false,reason:SAFE_REASONS.has(error?.diagnosticReason)?error.diagnosticReason:'summary_invalid',networkRequests};}
  finally{clearTimeout(timer);controller?.abort();try{void (reader?reader.cancel():response?.body?.cancel())?.catch(()=>{});}catch{}}

@@ -303,7 +303,7 @@ export function summarizeSavedComparisonAudit(state, options = {}) {
     requireThat(isoTime(report.frozenAt) >= isoTime(report.startedAt) &&
       isoTime(report.cardPassCompletedAt) >= isoTime(report.frozenAt) && isoTime(report.cardPassCompletedAt) <= isoTime(P.snapshotAt), 'audit_time_invalid');
     for (const target of report.targets) {
-      requireThat(state.items.filter(item => item?.id === target.targetId && item.accountId === 'melon' && item.platform === 'yahoo').length === 1, 'audit_targets_invalid');
+      requireThat(state.items.filter(item => item?.id === target.targetId && item.accountId === 'melon' && ['yahoo', 'yahoo_fleamarket'].includes(item.platform)).length === 1, 'audit_targets_invalid');
       validateTarget(target, report);
     }
     const computed = report.targets.map(target => countRows(target));

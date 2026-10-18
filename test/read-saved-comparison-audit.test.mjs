@@ -65,7 +65,7 @@ test('one bounded read times out without retry or reporting unfinished body as a
 
 test('pinned snapshot disagreement yields no raw state or summary payload',async()=>{
  const state=await createSavedComparisonAuditFixture();state.scanMeta.codeSha='b'.repeat(40);state.privateDescription='PRIVATE_STORED_DESCRIPTION';
- const result=await run(fetchFor(bytes(state)));assert.equal(result.reason,'summary_invalid');assert.equal(result.summary,undefined);assert.ok(!JSON.stringify(result).includes(state.privateDescription));
+ const result=await run(fetchFor(bytes(state)));assert.equal(result.reason,'summary_invalid');assert.equal(result.summaryReason,'state_metadata_invalid');assert.equal(result.summary,undefined);assert.ok(!JSON.stringify(result).includes(state.privateDescription));
 });
 
 test('only the same-repository readback PR job gets the existing key after tests, never scan or ledger operations',async()=>{
@@ -81,4 +81,10 @@ test('only the same-repository readback PR job gets the existing key after tests
  assert.doesNotMatch(job,/pull_request_target\s*:|secrets:\s*inherit|scan\.mjs|npm run scan|id-token:\s*write|contents:\s*write|workflow_dispatch\s*:/);
  const cli=await fs.readFile(new URL('../scripts/read-saved-comparison-audit.mjs',import.meta.url),'utf8');
  assert.doesNotMatch(cli,/from ['"].*(?:scan|comparison-audit-state|fs)/);assert.doesNotMatch(cli,/writeFile|consumeReceipt|claimComparisonAudit/);
+});
+
+
+test('saved-validation failures expose only their fixed stage code without failed values',async()=>{
+ const cases=[['receipt_invalid',state=>{state.comparisonAuditReceipt.revision=9;}],['audit_metadata_invalid',state=>{state.comparisonAudit.flowMode='SECRET_VALUE';}],['audit_targets_invalid',state=>{state.comparisonAudit.targets=[];}],['audit_time_invalid',state=>{state.comparisonAudit.frozenAt='SECRET_VALUE';}],['audit_counts_inconsistent',state=>{state.comparisonAudit.counts.paired++;}],['audit_controller_inconsistent',state=>{state.comparisonAudit.controller.counts.cacheReuses++;}],['audit_source_inconsistent',state=>{state.comparisonAudit.targets[0].recommendationReceipt.sourceUrl='https://example.invalid/SECRET_VALUE';}]];
+ for(const [expected,mutate] of cases){const state=await createSavedComparisonAuditFixture();mutate(state);const result=await run(fetchFor(bytes(state)));assert.equal(result.reason,'summary_invalid');assert.equal(result.summaryReason,expected);assert.equal(result.summary,undefined);assert.ok(!JSON.stringify(result).includes('SECRET_VALUE'));assert.equal(result.networkRequests,1);}
 });

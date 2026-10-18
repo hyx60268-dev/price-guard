@@ -190,3 +190,11 @@ test('summary module has only a pure standard-library hash dependency', async ()
   assert.deepEqual(imports, ['node:crypto']);
   assert.doesNotMatch(source, /\b(?:fetch|readFile|writeFile|decrypt|encrypt|process\.env|runYahooComparisonAudit)\s*\(/);
 });
+
+
+test('persisted Yahoo Fleamarket inventory and normalized runner aliases bind to the same exact targets',()=>{
+ const state=copy();assert.ok(state.items.every(item=>item.platform==='yahoo_fleamarket'));assert.equal(summarize(state).valid,true);
+ for(const item of state.items)item.platform='yahoo';assert.equal(summarize(state).valid,true);
+ for(const platform of ['rakuma','mercari','auction','yahoo_other','',null,undefined]){const invalid=copy();invalid.items[0].platform=platform;assert.deepEqual(summarize(invalid),{valid:false,reason:'audit_targets_invalid'});}
+ const foreign=copy();foreign.items[0].accountId='another_account';assert.deepEqual(summarize(foreign),{valid:false,reason:'audit_targets_invalid'});
+});
