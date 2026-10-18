@@ -22,8 +22,12 @@ test('production geometry dependency failure preserves the normal scan and canno
 });
 
 test('CI proves the real pinned runtime before full regression and does not silently skip failure',()=>{
- const source=read('.github/workflows/tests.yml');
- assert.match(source,/permissions:\n  contents: read/);assert.doesNotMatch(source,/continue-on-error|secrets\.|pull_request_target/);
+ const workflow=read('.github/workflows/tests.yml');
+ // The separately isolated read-only publication job uses the existing key;
+ // neither geometry installation nor the full test job receives any secret.
+ const source=workflow.split('\n  saved-shared-quote-readback:')[0];
+ assert.match(source,/permissions:\n  contents: read/);assert.doesNotMatch(source,/continue-on-error|secrets\./);
+ assert.doesNotMatch(workflow,/pull_request_target/);
  assert.match(source,/--only-binary=:all: --no-deps --require-hashes -r requirements-geometry.txt/);
  assert.ok(source.indexOf('node scripts/check-geometry-runtime.mjs')<source.indexOf('- run: npm test'));
 });
