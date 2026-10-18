@@ -11,6 +11,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -36,3 +39,35 @@ jobs:
           run_timed wheels .geometry-venv/bin/python -m pip --isolated --disable-pip-version-check install --index-url https://pypi.org/simple --only-binary=:all: --no-deps --require-hashes -r requirements-geometry.txt
           run_timed generated_self_check env PATH="$PWD/.geometry-venv/bin:$PATH" node scripts/check-geometry-runtime.mjs
       - run: npm test
+  saved-audit-readback:
+    # Read only the one reviewed same-repository branch, after its exact tests.
+    # Never use pull_request_target, fork code, arbitrary URLs or a scan entry.
+    needs: test
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.repository == 'hyx60268-dev/price-guard' &&
+      github.head_ref == 'fix/read-saved-audit-matrix' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 只读既有冻结对照的聚合判定（不采集市场、不写状态）
+        run: |
+          export CHECKED_OUT_SHA="$(git rev-parse HEAD)"
+          node scripts/read-saved-comparison-audit.mjs
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          AUDIT_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          AUDIT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          AUDIT_BASE_REF: ${{ github.event.pull_request.base.ref }}
