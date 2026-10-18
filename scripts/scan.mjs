@@ -13,6 +13,9 @@ import { knownYahooRefreshTasks,runKnownYahooRefresh,yahooFullAttemptTime } from
 import { buildOwnedOffers,normalizeOfferPlatform } from '../public/owned-offers.js';
 import { createOwnSourceLoader } from './lib/own-source.mjs';
 import { createSharedYahooDetailRuntime } from './lib/yahoo-shared-detail-runtime.mjs';
+import { createSharedOwnReadPlan } from './lib/yahoo-shared-own-read-plan.mjs';
+import { createSharedOwnReadExecutor } from './lib/yahoo-shared-own-read.mjs';
+import { runSharedYahooDispatch } from './lib/yahoo-shared-dispatch.mjs';
 import { createYahooScanPageObservation } from './lib/yahoo-scan-page-observation.mjs';
 import { inventoryReadPlan } from './lib/inventory-read-plan.mjs';
 import { withRakumaDiscovery } from './lib/rakuma-discovery-hints.mjs';
@@ -203,9 +206,16 @@ const pageObservation=settings.yahooObserveNormalPageRails===true&&!graphEnabled
   ?createYahooScanPageObservation({startedAt,deadlineAt:deadline,accounts,contexts}):null;
 let yahooPageObservation=null;
 const sharedDetailEnabled=Boolean(pageObservation)&&settings.yahooSharedDetailOffers===true;
-const {hydrate:legacyHydratedItem,yahooBundle:ownBundle,yahooResult:sharedYahooResult,rakumaPage:sharedRakumaPage,stats:publicReadStats,peekYahooBundle,yahooOriginalReceipt,yahooOriginalStats}=createOwnSourceLoader({retainYahooOriginals:sharedDetailEnabled?{startedAt,deadlineAt:deadline}:null,fetchYahooBundle:(id,options={})=>fetchYahooItemBundle(id,{...settings,yahooRequestPurpose:options.purpose||'candidate',yahooRequestTargetId:options.targetId||null,...(sharedDetailEnabled?{yahooRetainSharedOriginals:true}:{}),...(pageObservation?{onYahooItemPageObserved:pageObservation.observe}:{})}),fetchYahooResult:url=>fetchYahooResult(url,settings),fetchRakumaItem:item=>fetchRakumaItem(item,settings,{fetchPage:sharedRakumaPage}),fetchRakumaPage:url=>fetchRakumaPage(url,settings)});
+const sharedOwnEnabled=sharedDetailEnabled&&settings.yahooSharedOwnRootReads===true;
+let sharedOwnPlan=null,sharedOwnDispatchStats=null;
+const {hydrate:legacyHydratedItem,yahooBundle:ownBundle,yahooResult:sharedYahooResult,rakumaPage:sharedRakumaPage,stats:publicReadStats,peekYahooBundle,yahooOriginalReceipt,yahooOriginalStats}=createOwnSourceLoader({retainYahooOriginals:sharedDetailEnabled?{startedAt,deadlineAt:deadline}:null,fetchYahooBundle:(id,options={})=>fetchYahooItemBundle(id,{...settings,yahooRequestPurpose:options.purpose||'candidate',yahooRequestTargetId:options.targetId||null,...(options.attempts===1?{attempts:1}:{}),...(typeof options.beforeYahooTransport==='function'?{beforeYahooTransport:options.beforeYahooTransport}:{}),...(sharedDetailEnabled?{yahooRetainSharedOriginals:true}:{}),...(pageObservation?{onYahooItemPageObserved:pageObservation.observe}:{})}),fetchYahooResult:url=>fetchYahooResult(url,settings),fetchRakumaItem:item=>fetchRakumaItem(item,settings,{fetchPage:sharedRakumaPage}),fetchRakumaPage:url=>fetchRakumaPage(url,settings)});
 const sharedDetailRuntime=sharedDetailEnabled?createSharedYahooDetailRuntime({startedAt,deadlineAt:deadline,accounts,contexts,
- snapshot:pageObservation.snapshot,observationVersion:pageObservation.revision,peekBundle:peekYahooBundle,peekOriginalReceipt:yahooOriginalReceipt,peekFingerprint:peekImageFingerprints,peekFingerprintState:peekKnownImageObservation}):null;
+ snapshot:pageObservation.snapshot,observationVersion:pageObservation.revision,onMapping:sharedOwnEnabled?(mapping,input)=>sharedOwnPlan?.observeMapping(mapping,input):null,peekBundle:peekYahooBundle,peekOriginalReceipt:yahooOriginalReceipt,peekFingerprint:peekImageFingerprints,peekFingerprintState:peekKnownImageObservation}):null;
+if(sharedOwnEnabled)sharedOwnPlan=createSharedOwnReadPlan({accounts,peekBundle:peekYahooBundle,peekFingerprintState:peekKnownImageObservation,
+ startedAt,deadlineAt:deadline,isRecallCurrent:input=>sharedDetailRuntime.isRecallCurrent(input)});
+const sharedOwnExecutor=sharedOwnEnabled?createSharedOwnReadExecutor({readOwn:ownBundle,peekBundle:peekYahooBundle,fingerprint:imageFingerprints,
+ candidateReadProblem:root=>sharedOwnPlan.candidateReadProblem(root),runtime:sharedDetailRuntime,deadlineAt:deadline,maxOwnImages:Math.max(3,Math.min(10,Number(settings.maxYahooImages)||8)),
+ canRequest:()=>yahooRequestStats().nextRequestAt<deadline}):null;
 let graphOutcome=null;
 function deferAccountPhase({contexts:phaseContexts},reason){
  for(const context of phaseContexts){
@@ -272,7 +282,7 @@ const yahooWork=(async()=>{
     if(value.knownRefresh?.mode==='details_only'&&Number.isFinite(value.ownObservedPrice))task.item.ownPrice=value.ownObservedPrice;
   }
   await sharedDetailRuntime?.consume({...settings,matchCorrections});
-  return mapLimit(yahooTasks,yahooConcurrency,async(task,taskIndex)=>{
+  const ordinaryYahooTask=async(task,taskIndex)=>{
   const {context,item,prior}=task;
   const fresh=cachedYahoo(prior,item),known=context.yahooById.get(item.id);
   const lastBroad=Date.parse(prior.yahoo?.searchCheckedAt||''),broadDue=!Number.isFinite(lastBroad)||Date.now()-lastBroad>=Math.max(1,Number(settings.yahooBroadSearchHours)||6)*3_600_000;
@@ -319,7 +329,14 @@ const yahooWork=(async()=>{
     if(sourceInputObserved)await sharedDetailRuntime?.consume({...settings,matchCorrections});
     if(!context.yahooById.get(item.id)?.deferredReason)await wait(550+Math.floor(Math.random()*350));
   }
-  });
+  return {sourceInputObserved};
+  };
+  if(sharedOwnExecutor&&yahooTasks.length){
+   const dispatched=await runSharedYahooDispatch(yahooTasks,{accountOrder:contexts.map(context=>context.account.id),concurrency:yahooConcurrency,
+    plan:sharedOwnPlan,ordinary:ordinaryYahooTask,shared:root=>sharedOwnExecutor.run(root),canStartShared:()=>sharedOwnExecutor.available()});
+   sharedOwnDispatchStats=dispatched.statistics;return dispatched.outputs;
+  }
+  return mapLimit(yahooTasks,yahooConcurrency,ordinaryYahooTask);
 })();
 
 // Bounded product workers share the run deadline and the platform request gate.
@@ -613,10 +630,11 @@ const result={
   version:6,checkedAt,dataRevision:checkedAt,settings:{...settings,yahooRequestDeadline:undefined,rakumaRequestDeadline:undefined,beforeYahooTransport:undefined,afterYahooTransport:undefined,signal:undefined,yahooComparisonAudit:undefined,attempts:undefined},accounts:accountResults,managedAccounts,portalUsers,appliedSyncIssues:previous?.appliedSyncIssues||{},
   manualCosts,matchCorrections,portalPreferences,dismissedDiscoveries,discoveryReviews,ownedTitleHistory,relistAliases,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode,xianyuAccess:sessionManager.access()},items:allItems,
   scanMeta:{codeSha:process.env.GITHUB_SHA||null,trigger:process.env.SCAN_TRIGGER||'local',startedAt:new Date(startedAt).toISOString(),durationSeconds:Math.round((Date.now()-startedAt)/1000),yahooTransport:yahooTransportStats(),publicReadStats,imageCacheStats,imageTransfers:imageTransferStats(),imageByteCache:imageByteCacheStats(),geometry:defaultGeometryRanker.stats,yahooAttemptStats,
-    ...(yahooPageObservation?{yahooPageObservation}:{}),...(sharedDetailSummary?{sharedDetailSummary}:{}),comparisonAuditActive:comparisonAuditSession?.active===true,pricingEngine,graph:graphOutcome?{...graphOutcome.summary,reads:graphOutcome.stats,costIntegration:'existing_independent_cost_workers'}:null,
+    ...(yahooPageObservation?{yahooPageObservation}:{}),...(sharedDetailSummary?{sharedDetailSummary}:{}),...(sharedOwnExecutor?{sharedOwnReadSummary:{executor:sharedOwnExecutor.statistics(),plan:sharedOwnPlan.statistics(),dispatch:sharedOwnDispatchStats}}:{}),comparisonAuditActive:comparisonAuditSession?.active===true,pricingEngine,graph:graphOutcome?{...graphOutcome.summary,reads:graphOutcome.stats,costIntegration:'existing_independent_cost_workers'}:null,
     comparisonMode:settings.comparisonMode||'cross_platform',accountExecutionPolicy:graphEnabled?'experimental_graph':'yahoo_first_rakuma_last',accountPhases:accountPhaseObservations,comparisonTasks:Object.fromEntries(['yahoo','rakuma','mercari'].map(source=>[source,contexts.reduce((sum,context)=>sum+context.activeItems.filter(item=>requiredPricingPlatforms(item).includes(source)).length,0)])),budgetMinutes:Number(settings.scanBudgetMinutes)||12,profileConcurrency,yahooConcurrency,rakumaConcurrency,mercariConcurrency,rakumaLimit:Number.isFinite(rakumaLimit)?rakumaLimit:null,mercariLimit:Number.isFinite(mercariLimit)?mercariLimit:null,xianyuLimit}
 };
 const {summary}=await writeOutputs({root,result,previous,password});
+if(result.scanMeta.sharedOwnReadSummary)console.log('[Yahoo共享补根读取]',JSON.stringify(result.scanMeta.sharedOwnReadSummary));
 if(result.scanMeta.sharedDetailSummary)console.log('[Yahoo共享详情报价]',JSON.stringify(result.scanMeta.sharedDetailSummary));
 console.log('[访问冷却基准已保存]',JSON.stringify({yahoo:result.yahooRequestAccess,rakuma:result.rakumaRequestAccess,search:result.externalSearchAccess,xianyu:xianyuAccessObservation(sessionManager.access())}));
 console.log(summary);
