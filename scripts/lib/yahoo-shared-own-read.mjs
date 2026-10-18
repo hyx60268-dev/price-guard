@@ -1,5 +1,6 @@
 import {performance} from 'node:perf_hooks';
 import {sharedOwnTermsProblem} from './yahoo-shared-detail-consumer.mjs';
+import {sharedStrictReason} from './shared-yahoo-reason-codes.mjs';
 
 // One targeted own-body read, then bounded normal own-image processing. No
 // search or competitor transport is available to this executor.
@@ -9,7 +10,7 @@ export function createSharedOwnReadExecutor({readOwn,peekBundle,fingerprint,cand
   !Number.isFinite(deadlineAt)||!Number.isSafeInteger(maxOwnImages)||maxOwnImages<1||maxOwnImages>10)throw Error('invalid_shared_own_read');
  let stoppedByImageAccess=false;
  const stats={version:1,actions:0,rootReadCalls:0,rootReadWallMs:0,htmlRequests:0,originalsObtained:0,imageProcessingCalls:0,imageFetches:0,imageBytes:0,
-  imageTransferDurationMs:0,imageUnknownBodyTransfers:0,actionWallMs:0,imageProcessingWallMs:0,verified:0,pending:0,rejected:0,failures:0,reasons:{}};
+  imageTransferDurationMs:0,imageUnknownBodyTransfers:0,actionWallMs:0,imageProcessingWallMs:0,verified:0,pending:0,rejected:0,failures:0,reasons:{},strictRejectionReasons:{}};
  const reason=value=>{stats.reasons[value]=(stats.reasons[value]||0)+1;};
  const available=()=>!stoppedByImageAccess&&now()<deadlineAt&&canRequest()&&runtime.directedAvailable();
  async function run(root){
@@ -52,7 +53,7 @@ export function createSharedOwnReadExecutor({readOwn,peekBundle,fingerprint,cand
    if(candidateReadProblem(root)){stats.pending++;reason('candidate_evidence_changed');return {status:'pending',reason:'candidate_evidence_changed'};}
    const result=await runtime.verifyPlannedPair(root);
    if(result.status==='verified_single_offer')stats.verified++;
-   else if(result.status==='rejected'){stats.rejected++;reason('strict_rejected');}
+   else if(result.status==='rejected'){stats.rejected++;reason('strict_rejected');const code=sharedStrictReason(result.reason);stats.strictRejectionReasons[code]=(stats.strictRejectionReasons[code]||0)+1;}
    else{stats.pending++;reason(['image_evidence_unavailable','own_terms_changed_or_missing','current_target_binding_required','source_deadline','directed_budget','changed_source_evidence'].includes(result.reason)?result.reason:'evidence_unavailable');}
    return result;
   }catch{stats.failures++;reason('shared_own_read_failed');return {status:'pending',reason:'shared_own_read_failed'};}

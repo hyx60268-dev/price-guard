@@ -3,9 +3,12 @@ import {mapYahooPoolToTargets} from './yahoo-page-observation-pool.mjs';
 import {verifySharedYahooDetailPair,boundedSharedPeek} from './yahoo-shared-detail-consumer.mjs';
 import {sharedYahooTargetBinding,currentSharedYahooOffers} from '../../public/shared-yahoo-offers.js';
 import {buildOwnedOffers,normalizeOfferPlatform,isOwnedOffer} from '../../public/owned-offers.js';
+import {sharedStrictReason} from './shared-yahoo-reason-codes.mjs';
 
 const yahoo=value=>normalizeOfferPlatform(value.platform,value.profileUrl)==='yahoo';
 const key=value=>`${value.accountId}:${value.id}`;
+const consistentImageClock=(latest,original,current)=>Number.isFinite(Date.parse(latest))&&
+ Date.parse(latest)>=Date.parse(original)&&Date.parse(latest)<=current;
 // A bounded local consumer of completed reads. It cannot request a body/image,
 // extend source deadlines, change normal scheduling, or insert pricing candidates.
 export function createSharedYahooDetailRuntime({startedAt,deadlineAt,accounts,contexts,snapshot,peekBundle,peekFingerprint,
@@ -13,12 +16,21 @@ export function createSharedYahooDetailRuntime({startedAt,deadlineAt,accounts,co
  maxDirectedPairs=6,maxDirectedDurationMs=1000}={}){
  for(const [value,max] of [[maxPasses,3],[maxPairs,32],[maxDurationMs,1000],[minPassGapMs,120000],[maxDirectedPairs,6],[maxDirectedDurationMs,1000]])
   if(!Number.isSafeInteger(value)||value<0||value>max)throw Error('invalid_shared_detail_bound');
- const offers=new Map(),completed=new Set(),recallBindings=new Map();let recallVersion,recallIndex=null;let busy=false,lastPass=-Infinity,spent=0,lastSettings=null,directedBusy=false,directedSpent=0;
+ const offers=new Map(),completed=new Set(),recallBindings=new Map(),withdrawnRevisions=new Set();let recallVersion,recallIndex=null;let busy=false,lastPass=-Infinity,spent=0,lastSettings=null,directedBusy=false,directedSpent=0;
  const stats={version:1,scope:'current_shared_detail_pairs_only',passes:0,mappedPairs:0,bodyReadyPairs:0,attemptedPairs:0,verifiedPairs:0,verifiedTargets:0,
   missingOriginalPairs:0,pendingPairs:0,rejectedPairs:0,failures:0,deadlineStops:0,mappingStops:0,localDurationMs:0,negativeSnapshotBuilds:0,negativeValidationDurationMs:0,htmlRequests:0,imageRequests:0,
   directedAttempts:0,directedVerified:0,directedDurationMs:0,directedWaitMs:0,mappingObserverFailures:0,
-  completeComparisons:0,canRecommend:false,reasons:{}};
+  completeComparisons:0,canRecommend:false,reasons:{},strictRejectionReasons:{},directedStrictRejectionReasons:{},withdrawalReasons:{},retentionReasons:{},
+  withdrawalCountScope:'first_reason_per_accepted_evidence_revision',retentionCountScope:'guarded_retention_decisions'};
  const reason=value=>{stats.reasons[value]=(stats.reasons[value]||0)+1;};
+ const count=(group,value)=>{stats[group][value]=(stats[group][value]||0)+1;};
+ const evidenceRevision=row=>JSON.stringify([row.target,row.id,row.ownSource?.bodySha256,row.ownSource?.parsedSha256,
+  row.candidateSource?.bodySha256,row.candidateSource?.parsedSha256,row.identityVerifiedAt,row.verification?.digest,
+  row.imageEvidence?.map(image=>[image.url,image.contentSha256,image.imageObservedAt])]);
+ const withdraw=(rows,value)=>{for(const row of rows||[]){
+  const revision=evidenceRevision(row);
+  if(!withdrawnRevisions.has(revision)){withdrawnRevisions.add(revision);count('withdrawalReasons',value);}
+ }};
  const complete=(context,current)=>context&&yahoo(context.account)&&context.profileStatus==='live'&&
     context.profileDiscovery?.profileObservation?.complete===true&&context.profileDiscovery.profileObservation.enumerationComplete===true&&
     context.profileDiscovery.profileObservation.ownershipConflictCount===0&&context.profileDiscovery.profileObservation.fromCache===false&&
@@ -36,25 +48,40 @@ export function createSharedYahooDetailRuntime({startedAt,deadlineAt,accounts,co
   recallVersion=revision;return recallIndex=index;
  }
  const cardTuple=card=>JSON.stringify([card.title,card.price,card.image,card.sellerId]);
- function contradicted(row,index,targetKey){
+ function recallProblem(row,index,targetKey){
   const rows=(index.get(row.id)||[]).filter(value=>value.observedAt<=now()&&value.expiresAt>now());
-  if(!rows.length)return false; // Absence/expiry of recall is not contrary detail evidence.
-  if(rows.some(value=>isOwnedOffer(lastSettings.ownedOffers,'yahoo',value.card)))return true;
-  if(new Set(rows.map(({card})=>cardTuple(card))).size>1)return true;
-  const original=recallBindings.get(`${targetKey}:${row.id}`);if(!original)return true;
-  return rows.some(({card,observedAt})=>observedAt>Date.parse(row.checkedAt)&&cardTuple(card)!==original);
+  if(!rows.length)return null; // Absence/expiry of recall is not contrary detail evidence.
+  if(rows.some(value=>isOwnedOffer(lastSettings.ownedOffers,'yahoo',value.card)))return 'recall_owned';
+  if(new Set(rows.map(({card})=>cardTuple(card))).size>1)return 'recall_conflicting_tuple';
+  const original=recallBindings.get(`${targetKey}:${row.id}`);if(!original)return 'recall_binding_missing';
+  return rows.some(({card,observedAt})=>observedAt>Date.parse(row.checkedAt)&&cardTuple(card)!==original)?'recall_newer_tuple_changed':null;
  }
  function currentOffers(item){
   const begin=performance.now();try{return checkedCurrentOffers(item)}finally{stats.negativeValidationDurationMs+=Math.max(0,performance.now()-begin);}
  }
  function checkedCurrentOffers(item){
   if(!item||!lastSettings)return [];
-  if(accounts.some(account=>yahoo(account)&&!contexts.some(context=>context.account.id===account.id&&complete(context,now())))){offers.clear();stats.verifiedTargets=0;return [];}
+  if(accounts.some(account=>yahoo(account)&&!contexts.some(context=>context.account.id===account.id&&complete(context,now())))){withdraw([...offers.values()].flat(),'complete_owned_index_unavailable');offers.clear();stats.verifiedTargets=0;return [];}
   const targetKey=key(item),own=peekOriginalReceipt(item.id),rows=offers.get(targetKey)||[];
   if(!rows.length)return [];const negative=negativeRecallIndex();
-  const keep=currentSharedYahooOffers({...item,sharedYahooOffers:rows},{ownershipIndex:lastSettings.ownedOffers,corrections:lastSettings.matchCorrections||{},now:now()})
-   .filter(row=>{const candidate=peekOriginalReceipt(row.id);return !contradicted(row,negative,targetKey)&&own&&candidate&&own.parsedSha256===row.ownSource.parsedSha256&&candidate.parsedSha256===row.candidateSource.parsedSha256&&
-    (typeof peekFingerprintState==='function'&&row.imageEvidence.every(image=>{const latest=peekFingerprintState(image.url);return latest?.status==='available'&&latest.contentSha256===image.contentSha256&&Date.parse(latest.imageObservedAt)>=Date.parse(image.imageObservedAt)&&latest.imageCacheExpiresAt>now();}));})
+  const schema=currentSharedYahooOffers({...item,sharedYahooOffers:rows},{ownershipIndex:lastSettings.ownedOffers,corrections:lastSettings.matchCorrections||{},now:now()});
+  withdraw(rows.filter(row=>!schema.some(value=>value.id===row.id)),'stored_quote_invalid_or_expired');
+  const keep=schema.filter(row=>{
+    const candidate=peekOriginalReceipt(row.id);let problem=recallProblem(row,negative,targetKey);
+    if(!problem&&!own)problem='own_original_unavailable';
+    if(!problem&&!candidate)problem='candidate_original_unavailable';
+    if(!problem&&(own.bodySha256!==row.ownSource.bodySha256||own.parsedSha256!==row.ownSource.parsedSha256))problem='own_original_changed';
+    if(!problem&&(candidate.bodySha256!==row.candidateSource.bodySha256||candidate.parsedSha256!==row.candidateSource.parsedSha256))problem='candidate_original_changed';
+    if(!problem&&typeof peekFingerprintState!=='function')problem='image_metadata_unavailable';
+    if(!problem)for(const image of row.imageEvidence){const latest=peekFingerprintState(image.url);
+     if(latest?.status!=='available')problem='image_metadata_unavailable';
+     else if(latest.contentSha256!==image.contentSha256)problem='image_bytes_changed';
+     else if(!consistentImageClock(latest.imageObservedAt,image.imageObservedAt,now()))problem='image_observation_inconsistent';
+     else if(!Number.isFinite(latest.imageCacheExpiresAt)||!(latest.imageCacheExpiresAt>now()))problem='image_metadata_expired';
+     if(problem)break;
+    }
+    if(problem){withdraw([row],problem);return false;}return true;
+   })
    .map(row=>({...row,imageEvidence:row.imageEvidence.map(image=>({...image,imageCacheExpiresAt:Math.min(image.imageCacheExpiresAt,peekFingerprintState(image.url).imageCacheExpiresAt)}))}));
   if(keep.length)offers.set(targetKey,keep);else offers.delete(targetKey);
   for(const row of rows)if(!keep.some(value=>value.id===row.id))for(const pair of completed)if(pair.startsWith(`${targetKey}:${row.id}:`))completed.delete(pair);
@@ -64,15 +91,31 @@ export function createSharedYahooDetailRuntime({startedAt,deadlineAt,accounts,co
  function revokeKnownChanges(){
   for(const targetKey of [...offers.keys()]){
    const item=contexts.flatMap(context=>context.activeItems).find(item=>key(item)===targetKey);
-   if(item)currentOffers(item);else offers.delete(targetKey);
+   if(item)currentOffers(item);else {withdraw(offers.get(targetKey),'current_target_unavailable');offers.delete(targetKey);}
   }
   stats.verifiedTargets=offers.size;
+ }
+
+ // An interrupted optional duplicate peek is not new source evidence. Keep
+ // only a currently accepted row with the same complete original body bindings;
+ // currentOffers still applies ownership, correction, recall, TTL and image
+ // metadata guards and can only shorten the retained original image expiry.
+ function retainAfterInterruption(item,row){
+  // The 12-minute source admission window is not the accepted evidence TTL.
+  // This path reads only already-held metadata and never starts a new task.
+  if(!item)return null;
+  const own=peekOriginalReceipt(item.id),candidate=peekOriginalReceipt(row.id);
+  if(!own||!candidate||own.bodySha256!==row.ownSource.bodySha256||candidate.bodySha256!==row.candidateSource.bodySha256||
+   own.parsedSha256!==row.ownSource.parsedSha256||candidate.parsedSha256!==row.candidateSource.parsedSha256)return null;
+  const retained=currentOffers(item).find(value=>value.id===row.id)||null;
+  if(retained)count('retentionReasons',now()>=deadlineAt?'source_window_closed_original_retained':'local_budget_original_retained');
+  return retained;
  }
 
  const pairKey=(item,id,own,candidate)=>`${key(item)}:${id}:${own?.parsedSha256}:${candidate?.parsedSha256}:${JSON.stringify(sharedYahooTargetBinding(item))}`;
  function forgetPair(item,id){
   const targetKey=key(item),prior=offers.get(targetKey);
-  if(prior){const keep=prior.filter(row=>row.id!==id);if(keep.length)offers.set(targetKey,keep);else offers.delete(targetKey);}
+  if(prior){withdraw(prior.filter(row=>row.id===id),'directed_revalidation_started');const keep=prior.filter(row=>row.id!==id);if(keep.length)offers.set(targetKey,keep);else offers.delete(targetKey);}
   for(const pair of completed)if(pair.startsWith(`${targetKey}:${id}:`))completed.delete(pair);
   stats.verifiedTargets=offers.size;
  }
@@ -125,6 +168,7 @@ export function createSharedYahooDetailRuntime({startedAt,deadlineAt,accounts,co
     if(!currentOffers(current).some(row=>row.id===result.offer.id))return {status:'pending',reason:'changed_source_evidence'};
     stats.directedVerified++;
    }
+   if(result.status==='rejected')count('directedStrictRejectionReasons',sharedStrictReason(result.reason));
    return result;
   }catch{reason('directed_verification_unavailable');return {status:'pending',reason:'directed_verification_unavailable'};}
   finally{directedSpent+=Math.max(0,performance.now()-begin);stats.directedDurationMs=directedSpent;directedBusy=false;}
@@ -135,7 +179,7 @@ export function createSharedYahooDetailRuntime({startedAt,deadlineAt,accounts,co
   if(lastSettings)lastSettings={...lastSettings,matchCorrections:settings.matchCorrections||{},ownedOffers:settings.ownedOffers||lastSettings.ownedOffers};
   // Revocation is a cache metadata check, not new verification. It must run even
   // when pass/pair/time quotas prohibit more local comparison work.
-  try{revokeKnownChanges();}catch{offers.clear();stats.verifiedTargets=0;stats.failures++;}
+  try{revokeKnownChanges();}catch{withdraw([...offers.values()].flat(),'negative_guard_unavailable');offers.clear();stats.verifiedTargets=0;stats.failures++;}
   if(busy||directedBusy||stats.passes>=maxPasses||spent>=maxDurationMs||stats.attemptedPairs>=maxPairs||now()-lastPass<minPassGapMs)return;
   if(now()>=deadlineAt){stats.deadlineStops++;return;}
   busy=true;const begin=clock(),stop=()=>now()>=deadlineAt||clock()-begin+spent>=maxDurationMs;
@@ -170,15 +214,40 @@ export function createSharedYahooDetailRuntime({startedAt,deadlineAt,accounts,co
      let valid=item&&own&&candidate&&currentSharedYahooOffers({...item,sharedYahooOffers:[row]},
       {ownershipIndex:owned,corrections:settings.matchCorrections||{},now:current}).length===1&&
       row.ownSource.parsedSha256===own.originalObservation?.parsedSha256&&row.candidateSource.parsedSha256===candidate.originalObservation?.parsedSha256;
+     let retained=null,withdrawalReason='duplicate_validation_unavailable';
      if(valid)for(const image of row.imageEvidence){
-      if(stop()){valid=false;break;}
-      const original=await boundedSharedPeek(()=>peekFingerprint(image.url,{deadlineAt,now}),{remainingMs:()=>maxDurationMs-spent-(clock()-begin),stopped:stop});
-      if(!original||original.contentSha256!==image.contentSha256||original.imageObservedAt!==image.imageObservedAt||original.imageCacheExpiresAt<=now()){valid=false;break;}
+      if(stop()){retained=retainAfterInterruption(item,row);valid=Boolean(retained);withdrawalReason='interruption_guard_unavailable';break;}
+      // A settled null/error is missing evidence and still revokes. Only the
+      // outer null means this optional wait was interrupted or timed out.
+      const settled=await boundedSharedPeek(async()=>{try{return {value:await peekFingerprint(image.url,{deadlineAt,now})}}catch{return {value:null}}},
+       {remainingMs:()=>maxDurationMs-spent-(clock()-begin),stopped:stop});
+      if(!settled){retained=retainAfterInterruption(item,row);valid=Boolean(retained);withdrawalReason='interruption_guard_unavailable';break;}
+      const original=settled.value;
+      if(!original){withdrawalReason='duplicate_image_missing';valid=false;break;}
+      if(original.url!==image.url){withdrawalReason='duplicate_image_binding_changed';valid=false;break;}
+      if(original.contentSha256!==image.contentSha256){withdrawalReason='duplicate_image_bytes_changed';valid=false;break;}
+      // A newer observation of identical bytes supports the original image; it
+      // does not renew the accepted product, image, or identity clocks.
+      if(!consistentImageClock(original.imageObservedAt,image.imageObservedAt,now())){withdrawalReason='duplicate_image_observation_changed';valid=false;break;}
+      if(!Number.isFinite(original.imageCacheExpiresAt)||original.imageCacheExpiresAt<=now()){withdrawalReason='duplicate_image_expired';valid=false;break;}
      }
-     if(valid)keep.push(row);
-     else for(const pair of completed)if(pair.startsWith(`${targetKey}:${row.id}:`))completed.delete(pair);
+     if(valid)keep.push(retained||row);
+     else {
+      withdraw([row],withdrawalReason);
+      // A settled missing/changed peek is already known evidence. Remove it
+      // before awaiting another row so concurrent output cannot expose it.
+      const remaining=(offers.get(targetKey)||[]).filter(value=>evidenceRevision(value)!==evidenceRevision(row));
+      if(remaining.length)offers.set(targetKey,remaining);else offers.delete(targetKey);
+      for(const pair of completed)if(pair.startsWith(`${targetKey}:${row.id}:`))completed.delete(pair);
+     }
     }
-    if(keep.length)offers.set(targetKey,keep);else offers.delete(targetKey);
+    // Every await above lets another output guard revoke a row. Commit only
+    // revisions that are still accepted after all row peeks have settled; never
+    // resurrect a loop-local row even if its old metadata later becomes visible.
+    const currentRows=new Map(currentOffers(item).map(row=>[evidenceRevision(row),row]));
+    const committing=keep.flatMap(row=>{const currentRow=currentRows.get(evidenceRevision(row));
+     if(currentRow)return [currentRow];withdraw([row],'accepted_revision_no_longer_current');return [];});
+    if(committing.length)offers.set(targetKey,committing);else offers.delete(targetKey);
    }
    stats.verifiedTargets=offers.size;
    // Lower listed price is only a read-value preference; unknowns are retained.
@@ -191,18 +260,18 @@ export function createSharedYahooDetailRuntime({startedAt,deadlineAt,accounts,co
     stats.bodyReadyPairs++;
     const pair=pairKey(item,recall.id,own.originalObservation,candidate.originalObservation);
     if(completed.has(pair))continue;
-    const prior=offers.get(key(item));if(prior){const keep=prior.filter(row=>row.id!==recall.id);if(keep.length)offers.set(key(item),keep);else offers.delete(key(item));}
+    const prior=offers.get(key(item));if(prior){withdraw(prior.filter(row=>row.id===recall.id),'strict_revalidation_started');const keep=prior.filter(row=>row.id!==recall.id);if(keep.length)offers.set(key(item),keep);else offers.delete(key(item));}
     stats.attemptedPairs++;
     const result=await verifySharedYahooDetailPair({item,profileCard:item.profileCard,recall,settings:strictSettings,
      peekBundle,peekFingerprint,startedAt,deadlineAt,now,remainingMs:()=>maxDurationMs-spent-(clock()-begin),stopLocal:stop});
     if(stop()){stats.deadlineStops++;break;}
     if(result.status==='verified_single_offer'){
      completed.add(pair);commitVerified(item,recall,result);
-    }else if(result.status==='rejected'){completed.add(pair);stats.rejectedPairs++;reason('strict_rejected');}
+    }else if(result.status==='rejected'){completed.add(pair);stats.rejectedPairs++;reason('strict_rejected');count('strictRejectionReasons',sharedStrictReason(result.reason));}
     else{stats.pendingPairs++;reason(['image_evidence_unavailable','source_deadline','current_target_binding_required','own_terms_changed_or_missing','excluded_offer'].includes(result.reason)?result.reason:'source_evidence_unavailable');}
    }
   }catch{stats.failures++;reason('shared_detail_consumer_unavailable');}
   finally{stats.verifiedTargets=offers.size;spent+=Math.max(0,clock()-begin);stats.localDurationMs=spent;busy=false;}
  }
- return Object.freeze({consume,directedAvailable,isRecallCurrent,verifyPlannedPair,offersFor:item=>{try{return currentOffers(item)}catch{offers.delete(key(item));stats.failures++;return []}},statistics:()=>{try{revokeKnownChanges()}catch{offers.clear();stats.verifiedTargets=0;stats.failures++}return structuredClone({...stats,activeVerifiedOffers:[...offers.values()].reduce((sum,rows)=>sum+rows.length,0)})}});
+ return Object.freeze({consume,directedAvailable,isRecallCurrent,verifyPlannedPair,offersFor:item=>{try{return currentOffers(item)}catch{withdraw(offers.get(key(item)),'negative_guard_unavailable');offers.delete(key(item));stats.failures++;return []}},statistics:()=>{try{revokeKnownChanges()}catch{withdraw([...offers.values()].flat(),'negative_guard_unavailable');offers.clear();stats.verifiedTargets=0;stats.failures++}return structuredClone({...stats,activeVerifiedOffers:[...offers.values()].reduce((sum,rows)=>sum+rows.length,0)})}});
 }
