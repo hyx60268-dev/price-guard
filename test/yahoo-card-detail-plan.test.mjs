@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {planYahooCardDetailOrder} from '../scripts/lib/yahoo-card-detail-plan.mjs';
+import {planYahooCardDetailOrder,summarizeYahooCardTitleGates} from '../scripts/lib/yahoo-card-detail-plan.mjs';
 const ownTitle='APEX ヴァイオレット・エヴァーガーデン 自動手記人形Ver. 1/7 フィギュア 新品 1点';
 const item=(id,title,priceJPY)=>({id,title,priceJPY});
 test('related ordinary-price candidates get detail slots while cheap uncertain candidates retain bounded exploration',()=>{
@@ -26,4 +26,36 @@ test('all-unknown queues preserve lowest-price exploration and do not drop missi
 test('malformed and duplicate queue identities fail instead of merging or inventing candidates',()=>{
  for(const rows of [null,[{}],[item('same','a',1),item('same','b',2)],Array.from({length:201},(_,i)=>item('a'+i,'a',1))])
   assert.throws(()=>planYahooCardDetailOrder({ownTitle,ownPriceJPY:28499,rows}),/invalid_card_plan/);
+});
+test('one long exact Japanese identity can pass coverage yet fail the unchanged two-token ordering gates',()=>{
+ const title='ヴァイオレットエヴァーガーデン フィギュア',rows=[item('PRIVATE_ID',title,28000)];
+ const result=summarizeYahooCardTitleGates({ownTitle:title,ownPriceJPY:28499,rows});
+ assert.equal(result.all.longSingleAnchorBlocked,1);assert.equal(result.all.unknown,1);
+ assert.equal(result.all.scoreBuckets.one,1);assert.equal(result.all.failedGateCounts.matched_count_below_2,1);
+ assert.equal(result.all.failedGateCounts.token_count_below_2,1);assert.equal(result.all.failedGateCounts.matched_length_below_6,0);
+ assert.equal(result.nearPrice.rows,1);assert.equal(result.nearPrice.anonymousFeatureCombinations[0].score,1);
+ assert.equal(planYahooCardDetailOrder({ownTitle:title,ownPriceJPY:28499,rows}).rows[0].tier,'unknown_identity');
+ assert.ok(!JSON.stringify(result).includes(title));assert.ok(!JSON.stringify(result).includes('PRIVATE_ID'));
+});
+test('missing own type, missing candidate type and actual type differences remain separate gates',()=>{
+ const rows=[item('no-type','ヴァイオレット・エヴァーガーデン',28000),item('other-type','ヴァイオレット・エヴァーガーデン カード',28000),item('same-type',ownTitle,28000)];
+ const result=summarizeYahooCardTitleGates({ownTitle,ownPriceJPY:28499,rows});
+ assert.deepEqual(result.all.familyRelation,{own_missing:0,candidate_missing:1,different:1,same:1});
+ assert.equal(result.all.failedGateCounts.candidate_family_missing,1);assert.equal(result.all.failedGateCounts.family_different,1);
+ const missing=summarizeYahooCardTitleGates({ownTitle:'ヴァイオレット',ownPriceJPY:28499,rows});
+ assert.equal(missing.all.failedGateCounts.own_family_missing,3);
+});
+test('numeric gate histograms explain all retained rows and the near-price slice without exposing text or tokens',()=>{
+ const rows=[item('a',ownTitle,28000),item('b','APEX フィギュア',28000),item('c','別作品 フィギュア',500),item('d','PRIVATE_BODY',null)];
+ const before=structuredClone(rows),out=summarizeYahooCardTitleGates({ownTitle,ownPriceJPY:28499,rows});
+ assert.deepEqual(rows,before);assert.equal(out.all.rows,4);assert.equal(out.nearPrice.rows,2);
+ assert.equal(out.all.related,1);assert.equal(out.all.unknown,3);assert.equal(out.all.anonymousFeatureCombinations,undefined);
+ for(const key of ['firstFailedGate','familyRelation','scoreBuckets','matchedCountBuckets','matchedLengthBuckets','tokenCountBuckets'])
+  assert.equal(Object.values(out.all[key]).reduce((sum,count)=>sum+count,0),4,key);
+ assert.equal(out.nearPrice.anonymousFeatureCombinations.reduce((sum,row)=>sum+row.rows,0),2);
+ assert.equal(out.canRecommend,false);assert.doesNotMatch(JSON.stringify(out),/PRIVATE_BODY|APEX|tokens|url|priceJPY/);
+});
+test('gate summaries reject malformed inputs rather than emitting arbitrary values',()=>{
+ for(const input of [{ownTitle:null},{rows:null},{rows:[{}]},{rows:Array.from({length:201},()=>({title:'a'}))}])
+  assert.throws(()=>summarizeYahooCardTitleGates(input),/invalid_card_gate_summary/);
 });

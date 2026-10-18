@@ -13,6 +13,12 @@ test('counterfactual preserves saved source clocks and state, and does not equat
  assert.ok(result.planned.selectedTargetRows>=result.planned.uniqueDetailPages);
  assert.equal(result.source.checkedAt,state.checkedAt);assert.equal(result.source.frozenAt,state.comparisonAudit.frozenAt);
  for(const target of result.targets)assert.equal(Object.values(target.retainedReasons).reduce((sum,count)=>sum+count,0),target.counts.retained);
+ for(const target of result.targets){
+  assert.equal(target.titleGateDiagnostics.eligible.all.rows,target.counts.eligible);
+  assert.equal(target.titleGateDiagnostics.retained.all.rows,target.counts.retained);
+  assert.equal(target.titleGateDiagnostics.retained.all.unknown,target.orderTiers.unknown_identity);
+  assert.equal(target.titleGateDiagnostics.retained.all.related,target.orderTiers.related_near_price+target.orderTiers.related_other_price);
+ }
  assert.match(result.interpretation.join(' '),/does not prove lossless recall/);
 });
 test('a card conflict contradicted by later strict detail is counted, never hidden as zero loss',async()=>{

@@ -1,6 +1,6 @@
 import {summarizeSavedComparisonAudit} from './comparison-audit-summary.mjs';
 import {classifyYahooCardConflict,YAHOO_CARD_CONFLICT_REASONS} from './yahoo-card-conflicts.mjs';
-import {planYahooCardDetailOrder} from './yahoo-card-detail-plan.mjs';
+import {planYahooCardDetailOrder,summarizeYahooCardTitleGates} from './yahoo-card-detail-plan.mjs';
 
 const reasons=new Set(YAHOO_CARD_CONFLICT_REASONS);
 const histogram=rows=>{const result={};for(const row of rows){const key=reasons.has(row.conflict.reason)?row.conflict.reason:'unknown_reason';result[key]=(result[key]||0)+1;}return result;};
@@ -41,10 +41,13 @@ export function summarizeSavedCardCounterfactual(state,{now=Date.now()}={}){
      {classification:'unresolved',reason:'no_definitive_card_conflict'}};
    });
    const retained=eligible.filter(entry=>!entry.exclude);
-   const order=planYahooCardDetailOrder({ownTitle:target.ownObservation.title,ownPriceJPY:target.ownObservation.priceJPY,
-    rows:retained.map(({row})=>({id:row.id,title:row.cardObservations[0].title,
-     priceJPY:row.priceComparison.status==='confirmed_lower'?row.priceComparison.observations[0].deliveredPriceJPY:null}))});
-   return {target,eligible,retained,order};
+   const planRows=entries=>entries.map(({row})=>({id:row.id,title:row.cardObservations[0].title,
+    priceJPY:row.priceComparison.status==='confirmed_lower'?row.priceComparison.observations[0].deliveredPriceJPY:null}));
+   const context={ownTitle:target.ownObservation.title,ownPriceJPY:target.ownObservation.priceJPY};
+   const order=planYahooCardDetailOrder({...context,rows:planRows(retained)});
+   const titleGateDiagnostics={eligible:summarizeYahooCardTitleGates({...context,rows:planRows(eligible)}),
+    retained:summarizeYahooCardTitleGates({...context,rows:planRows(retained)})};
+   return {target,eligible,retained,order,titleGateDiagnostics};
   });
   const entries=targets.flatMap(target=>target.eligible),byId=new Map();
   for(const entry of entries){if(!byId.has(entry.row.id))byId.set(entry.row.id,[]);byId.get(entry.row.id).push(entry);}
@@ -70,7 +73,8 @@ export function summarizeSavedCardCounterfactual(state,{now=Date.now()}={}){
    const selectedIds=new Set(planned.selected[index].map(row=>row.id));
    const selected=target.retained.filter(entry=>selectedIds.has(entry.row.id));
    return {targetId:target.target.targetId,counts:counts(target),conflictReasons:histogram(target.eligible.filter(entry=>entry.exclude)),
-    retainedReasons:histogram(target.retained),orderTiers:target.order.counts,planned:{selectedRows:selected.length,newPageReads:planned.requests[index],
+    retainedReasons:histogram(target.retained),orderTiers:target.order.counts,titleGateDiagnostics:target.titleGateDiagnostics,
+    planned:{selectedRows:selected.length,newPageReads:planned.requests[index],
      explorationRows:planned.selected[index].filter(row=>row.exploration).length,
      previouslyPaired:sum(selected,entry=>entry.row.paired),previouslyUnpairedUnknown:sum(selected,entry=>!entry.row.paired),
      previouslyStrictRejected:sum(selected,entry=>entry.row.paired&&entry.row.baseline?.status==='rejected'),
