@@ -12,6 +12,7 @@ import { mapLimit } from './lib/worker-pool.mjs';
 import { knownYahooRefreshTasks,runKnownYahooRefresh,yahooFullAttemptTime } from './lib/yahoo-known-refresh.mjs';
 import { buildOwnedOffers,normalizeOfferPlatform } from '../public/owned-offers.js';
 import { createOwnSourceLoader } from './lib/own-source.mjs';
+import { createYahooScanPageObservation } from './lib/yahoo-scan-page-observation.mjs';
 import { inventoryReadPlan } from './lib/inventory-read-plan.mjs';
 import { withRakumaDiscovery } from './lib/rakuma-discovery-hints.mjs';
 import { configureImageFingerprintCache,imageFingerprints,imageTransferStats,imageByteCacheStats } from './lib/image.mjs';
@@ -197,7 +198,10 @@ const xianyuState=await xianyuStateFromEnv();
 const initialAccess=sessionManager.access();
 if(!initialAccess.allowed)console.log(`[闲鱼访问冷却] 原因=${initialAccess.reason} 下次允许检查=${initialAccess.retryAt}；本轮继续Yahoo与网页发布`);
 let xianyuMode=xianyuState?'saved':'anonymous',xianyuAuthExpired=false,anyXianyuLoginRequired=false;
-const {hydrate:legacyHydratedItem,yahooBundle:ownBundle,yahooResult:sharedYahooResult,rakumaPage:sharedRakumaPage,stats:publicReadStats}=createOwnSourceLoader({fetchYahooBundle:(id,options={})=>fetchYahooItemBundle(id,{...settings,yahooRequestPurpose:options.purpose||'candidate',yahooRequestTargetId:options.targetId||null}),fetchYahooResult:url=>fetchYahooResult(url,settings),fetchRakumaItem:item=>fetchRakumaItem(item,settings,{fetchPage:sharedRakumaPage}),fetchRakumaPage:url=>fetchRakumaPage(url,settings)});
+const pageObservation=settings.yahooObserveNormalPageRails===true&&!graphEnabled&&!comparisonAuditSession?.active
+  ?createYahooScanPageObservation({startedAt,deadlineAt:deadline,accounts,contexts}):null;
+let yahooPageObservation=null;
+const {hydrate:legacyHydratedItem,yahooBundle:ownBundle,yahooResult:sharedYahooResult,rakumaPage:sharedRakumaPage,stats:publicReadStats}=createOwnSourceLoader({fetchYahooBundle:(id,options={})=>fetchYahooItemBundle(id,{...settings,yahooRequestPurpose:options.purpose||'candidate',yahooRequestTargetId:options.targetId||null,...(pageObservation?{onYahooItemPageObserved:pageObservation.observe}:{})}),fetchYahooResult:url=>fetchYahooResult(url,settings),fetchRakumaItem:item=>fetchRakumaItem(item,settings,{fetchPage:sharedRakumaPage}),fetchRakumaPage:url=>fetchRakumaPage(url,settings)});
 let graphOutcome=null;
 function deferAccountPhase({contexts:phaseContexts},reason){
  for(const context of phaseContexts){
@@ -454,6 +458,8 @@ try{
 }finally{graphSession?.close();}
 }
 
+let scanPhaseFailed=true;
+try{
 if(comparisonAuditSession?.active){
  // This one declared diagnostic spends the normal cycle's source budget. All
  // pricing/cost obligations stay deferred, including the two audited targets.
@@ -474,6 +480,19 @@ if(comparisonAuditSession?.active){
  discover:discoverAccountPhase,scan:runAccountPhase,defer:deferAccountPhase,
  onPhase:row=>{accountPhaseObservations.push(row);console.log('[账号执行阶段]',JSON.stringify(row));}
 });
+scanPhaseFailed=false;
+}finally{
+ if(pageObservation){
+  try{yahooPageObservation=pageObservation.finish({contexts,settings:{...settings,matchCorrections},scanPhaseFailed});}
+  catch{
+   const totalManagedTargets=contexts.reduce((sum,context)=>sum+context.activeItems.length,0);
+   yahooPageObservation={version:1,scope:'normal_read_rails_observation_only',reason:'observer_finalization_failed',
+    totalManagedTargets,unresolvedTargets:totalManagedTargets,mappingPasses:0,scanPhaseFailed,
+    completeComparisons:0,searchObservedTargets:0,marketplaceRequests:0,imageRequests:0,checkedAt:null,searchCheckedAt:null,canRecommend:false};
+  }
+  console.log('[Yahoo页面共享观察]',JSON.stringify(yahooPageObservation));
+ }
+}
 refreshOwnedOffers();
 try{console.log('[全量读取计划]',JSON.stringify(inventoryReadPlan(contexts)))}
 catch{console.warn('[全量读取计划] diagnostics_unavailable')}
@@ -586,7 +605,7 @@ const result={
   version:6,checkedAt,dataRevision:checkedAt,settings:{...settings,yahooRequestDeadline:undefined,rakumaRequestDeadline:undefined,beforeYahooTransport:undefined,afterYahooTransport:undefined,signal:undefined,yahooComparisonAudit:undefined,attempts:undefined},accounts:accountResults,managedAccounts,portalUsers,appliedSyncIssues:previous?.appliedSyncIssues||{},
   manualCosts,matchCorrections,portalPreferences,dismissedDiscoveries,discoveryReviews,ownedTitleHistory,relistAliases,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode,xianyuAccess:sessionManager.access()},items:allItems,
   scanMeta:{codeSha:process.env.GITHUB_SHA||null,trigger:process.env.SCAN_TRIGGER||'local',startedAt:new Date(startedAt).toISOString(),durationSeconds:Math.round((Date.now()-startedAt)/1000),yahooTransport:yahooTransportStats(),publicReadStats,imageCacheStats,imageTransfers:imageTransferStats(),imageByteCache:imageByteCacheStats(),geometry:defaultGeometryRanker.stats,yahooAttemptStats,
-    comparisonAuditActive:comparisonAuditSession?.active===true,pricingEngine,graph:graphOutcome?{...graphOutcome.summary,reads:graphOutcome.stats,costIntegration:'existing_independent_cost_workers'}:null,
+    ...(yahooPageObservation?{yahooPageObservation}:{}),comparisonAuditActive:comparisonAuditSession?.active===true,pricingEngine,graph:graphOutcome?{...graphOutcome.summary,reads:graphOutcome.stats,costIntegration:'existing_independent_cost_workers'}:null,
     comparisonMode:settings.comparisonMode||'cross_platform',accountExecutionPolicy:graphEnabled?'experimental_graph':'yahoo_first_rakuma_last',accountPhases:accountPhaseObservations,comparisonTasks:Object.fromEntries(['yahoo','rakuma','mercari'].map(source=>[source,contexts.reduce((sum,context)=>sum+context.activeItems.filter(item=>requiredPricingPlatforms(item).includes(source)).length,0)])),budgetMinutes:Number(settings.scanBudgetMinutes)||12,profileConcurrency,yahooConcurrency,rakumaConcurrency,mercariConcurrency,rakumaLimit:Number.isFinite(rakumaLimit)?rakumaLimit:null,mercariLimit:Number.isFinite(mercariLimit)?mercariLimit:null,xianyuLimit}
 };
 const {summary}=await writeOutputs({root,result,previous,password});

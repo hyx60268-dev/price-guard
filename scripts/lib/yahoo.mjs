@@ -254,9 +254,21 @@ export async function fetchYahooItemBundle(id,settings={}){
     if(page.url===requestedUrl&&page.redirected===false)
       recommendationReceipt=yahooRecommendationReceipt(nextData,{requestedItemId:id,sourceUrl:page.url,observedAt:page.observedAt});
   }
-  return {detail,shipping:yahooTargetShipping(html,detail),recommendations:extractRecommendationCards(nextData),components:extractYahooBundleComponents(html),
+  const bundle={detail,shipping:yahooTargetShipping(html,detail),recommendations:extractRecommendationCards(nextData),components:extractYahooBundleComponents(html),
     observedAt:page.observedAt,fromCache:page.fromCache,sourceUrl:page.url||null,...(page.auditReservationId?{auditReservationId:page.auditReservationId}:{}),
     ...(recommendationReceipt?{recommendationReceipt}:{})};
+  // Optional observation of this already-read body only. The ordinary result
+  // stays identical; independent copies cannot mutate strict verifier inputs.
+  if(typeof settings.onYahooItemPageObserved==='function'){
+    try{
+      const receipt=recommendationReceipt||yahooRecommendationReceipt(nextData,{requestedItemId:id,sourceUrl:page.url,observedAt:page.observedAt});
+      const observed=settings.onYahooItemPageObserved(Object.freeze({page:Object.freeze({...page}),requestedItemId:id,
+        role:settings.yahooRequestPurpose||'candidate',detail:structuredClone(detail),shipping:structuredClone(bundle.shipping),
+        recommendationReceipt:structuredClone(receipt)}));
+      if(observed&&typeof observed.then==='function')Promise.resolve(observed).catch(()=>{});
+    }catch{/* A local diagnostic must never change source retries or quotes. */}
+  }
+  return bundle;
 }
 
 export function categoryText(detail,card={}){
