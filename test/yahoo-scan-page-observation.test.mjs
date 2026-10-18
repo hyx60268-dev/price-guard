@@ -103,7 +103,26 @@ test('source/byte and target-observation budgets are explicit and never drop man
     assert.equal(result.sourceCapacityRefusals+result.byteBudgetRefusals,1);
   }
   const h=harness({maxTargetObservationVisits:3});h.session.observe(event());const result=h.session.finish({contexts:h.contexts});
-  assert.equal(result.mappingTargetObservationVisits,3);assert.equal(result.omittedMappingCardObservations,1);assert.equal(result.totalManagedTargets,3);
+  assert.equal(result.mappingTargetObservationVisits,3);assert.equal(result.omittedMappingCardObservations,0);assert.equal(result.totalManagedTargets,3);
+  assert.equal(result.mappingTargetObservationVisitUpperBound,6);assert.equal(result.omittedTargetObservationVisits,3);
+  assert.equal(result.mappingStopped,true);assert.equal(result.mappingStoppedReason,'actual_visit_limit');
+});
+
+test('the real observer indexes later retained cards instead of clipping by the naive Cartesian bound',()=>{
+  const h=harness({maxTargetObservationVisits:3});
+  const names=['AAAAAAA','BBBBBBB','CCCCCCC'];
+  h.contexts.forEach((context,index)=>{
+    context.activeItems[0].title=names[index];
+    context.profileDiscovery.profileObservation.cards[0].title=names[index];
+  });
+  const input=event('source',['noise-x','noise-y','noise-z','match-a','match-b','match-c']);
+  input.recommendationReceipt.cards.forEach((card,index)=>{card.title=index<3?['XXXXXXX','YYYYYYY','ZZZZZZZ'][index]:names[index-3];});
+  h.session.observe(input);const result=h.session.finish({contexts:h.contexts});
+  assert.equal(result.retainedCardObservations,6);assert.equal(result.mappingTargetObservationVisitUpperBound,18);
+  assert.equal(result.mappingTargetObservationVisits,3);assert.equal(result.mappedTargets,3);assert.equal(result.targetCandidatePairs,3);
+  assert.equal(result.mappingStopped,false);assert.equal(result.omittedMappingCardObservations,0);assert.equal(result.omittedTargetObservationVisits,0);
+  assert.equal(result.actualIndexedWorkUnits,result.indexBuildPostingVisits+result.indexQueryPostingVisits+result.mappingTargetObservationVisits);
+  assert.equal(result.totalManagedTargets,3);assert.equal(result.completeComparisons,0);assert.equal(result.checkedAt,null);
 });
 
 test('conflicting body/receipt binding and cached body are unavailable; aggregate output cannot leak source content',()=>{
@@ -126,6 +145,10 @@ test('aggregate separates recall prices and exact observed detail field availabi
   assert.equal(result.mappedPairsMissingOwnObservedDetailFields,4);assert.equal(result.mappedPairsMissingCandidateObservedDetailFields,3);
   assert.equal(result.lowerListedPricePairs,3);assert.equal(result.unknownListedPricePairs,3);assert.equal(result.notLowerListedPricePairs,0);
   assert.equal(result.conflictingCardPairs,3);assert.equal(result.saleTermsVerificationPendingPairs,6);assert.equal(result.saleTermsVerifiedPairs,0);
+  assert.deepEqual(result.bodyFieldPresenceByCardPrice,{
+    both:{lower:1,not_lower:0,unknown:0,conflicting:0},own_only:{lower:0,not_lower:0,unknown:0,conflicting:1},
+    candidate_only:{lower:2,not_lower:0,unknown:0,conflicting:0},neither:{lower:0,not_lower:0,unknown:0,conflicting:2}
+  });
   assert.equal(result.detailInputAssessment,'retained_fields_only');assert.equal(result.completeComparisons,0);assert.equal(result.unresolvedTargets,3);
 });
 
@@ -174,6 +197,8 @@ test('pending own roots distinguish low listed prices, unknown prices and only n
   assert.equal(result.lowerLinkedPendingOwnRoots,kind==='lower'?3:0);
   assert.equal(result.unknownPriceLinkedPendingOwnRoots,kind==='unknown'?3:0);
   assert.equal(result.notLowerOnlyPendingOwnRoots,kind==='not_lower'?3:0);
+  assert.equal(result.bodyFieldPresenceByCardPrice.candidate_only[kind],3);
+  assert.equal(Object.values(result.bodyFieldPresenceByCardPrice).flatMap(Object.values).reduce((sum,value)=>sum+value,0),3);
   assert.equal(result.saleTermsVerifiedPairs,0);assert.equal(result.completeComparisons,0);
  }
 });

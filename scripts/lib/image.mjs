@@ -168,6 +168,13 @@ export function configureImageFingerprintCache({directory,now=Date.now,byteCache
  cache.clear();diagnostics.clear();for(const key of Object.keys(transferTotals))transferTotals[key]=0;cacheClock=now;persistentLoader=createFingerprintLoader({directory,fetchImage:download,fingerprint:calculateFingerprints,now,observeImageBytes,observeImageByteMiss,byteCacheOptions});
  return persistentLoader.stats;
 }
+export const peekKnownImageObservation=url=>persistentLoader.peekKnownObservation?.(url)||{status:'unknown'};
+export async function peekImageFingerprints(url,options={}){
+ const context={...options,now:options.now||cacheClock};
+ if(requestStopped(context))return null;
+ const value=await persistentLoader.peek(url,{stopped:()=>requestStopped(context)});
+ return requestStopped(context)?null:value;
+}
 const makeFingerprints=(url,options)=>url?persistentLoader.get(url,options):null;
 
 export async function imageFingerprints(url,options){

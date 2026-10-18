@@ -6,7 +6,6 @@ import {yahooProfileCardProblem} from './yahoo-profile-identity.mjs';
 import {buildOwnedOffers,normalizeOfferPlatform} from '../../public/owned-offers.js';
 import {PRICING_RULES_VERSION} from '../../public/pricing-policy.js';
 
-const bytes=value=>Buffer.byteLength(JSON.stringify(value),'utf8');
 const stamp=value=>typeof value==='number'?value:Date.parse(value||'');
 const yahoo=value=>normalizeOfferPlatform(value.platform,value.profileUrl||value.url)==='yahoo';
 const key=value=>`${value.accountId}:${value.id}`;
@@ -24,17 +23,13 @@ export function createYahooScanPageObservation({startedAt,deadlineAt,accounts=[]
     if(!Number.isSafeInteger(value)||value<1||value>maximum)throw Error('invalid_observation_bound');
   // Source admission ends at the original deadline. The short tail only permits local mapping.
   const finalizationDeadlineAt=deadlineAt+maxPostScanMs;
-  const options={now,cycleStartedAt:startedAt,deadlineAt:finalizationDeadlineAt,maxSources,maxCardsPerSource};
-  const pool=createYahooPageObservationPool(options),costs=new Map();
+  const options={now,cycleStartedAt:startedAt,deadlineAt:finalizationDeadlineAt,maxSources,maxCardsPerSource,maxRetainedEvidenceBytes};
+  const pool=createYahooPageObservationPool(options);
   const initial=new Map(contexts.map(context=>[context.account.id,{account:{...context.account},activeItems:context.activeItems.map(fallbackItem),
     previousItems:(context.previousItems||[]).map(fallbackItem),profileStatus:'missing'}]));
   const counters={observerCalls:0,rejectedSources:0,sourceCapacityRefusals:0,byteBudgetRefusals:0,observerFailures:0};
-  let retainedEvidenceBytes=0,observerDurationMs=0,originalObservedAtMin=null,originalObservedAtMax=null,finished=null;
-  function snapshot(){
-    const value=pool.snapshot(),keys=new Set(value.pages.map(page=>page.source.key));
-    for(const [key,cost] of costs)if(!keys.has(key)){retainedEvidenceBytes-=cost;costs.delete(key);}
-    return value;
-  }
+  let observerDurationMs=0,originalObservedAtMin=null,originalObservedAtMax=null,finished=null;
+  const snapshot=()=>pool.snapshot();
   function observe({page,requestedItemId,role,detail,shipping,recommendationReceipt:receipt}={}){
     if(finished)return;
     const start=performance.now();counters.observerCalls++;
@@ -47,20 +42,14 @@ export function createYahooScanPageObservation({startedAt,deadlineAt,accounts=[]
         receipt.sourceUrl!==url||stamp(receipt.observedAt)!==at||!Array.isArray(receipt.cards)){
         counters.rejectedSources++;return;
       }
-      const before=snapshot(),prior=before.pages.find(value=>value.source.id===requestedItemId);
-      if(!prior&&!before.conflicts.some(row=>row.id===requestedItemId)&&before.activeSources+before.conflicts.length>=maxSources){counters.sourceCapacityRefusals++;return;}
+      if(!pool.hasSourceCapacity(requestedItemId)){counters.sourceCapacityRefusals++;return;}
       const input={source:{id:requestedItemId,url,sha256:createHash('sha256').update(page.html,'utf8').digest('hex'),sha256Scope:'decoded_response_html_utf8',
         observedAt:at,fromCache:false,role:role==='known'?'candidate':role,status:200,redirected:false,auditReservationId:page.auditReservationId||null},
         detail,shipping,cards:receipt.cards.map(card=>({...card,priceSource:'yahoo_recommendation_receipt_v1'})),
         totalCards:receipt.totalCards,parserInvalidCards:receipt.invalidCards,sectionsTruncated:receipt.sectionsTruncated};
-      if(prior&&at<=prior.source.observedAt){pool.ingest(input);snapshot();return;}
-      const staging=createYahooPageObservationPool({...options,maxSources:1});staging.ingest(input);
-      const staged=staging.snapshot().pages[0];if(!staged){counters.rejectedSources++;return;}
-      const cost=bytes(staged),priorCost=prior?costs.get(prior.source.key)||0:0;
-      if(retainedEvidenceBytes-priorCost+cost>maxRetainedEvidenceBytes){counters.byteBudgetRefusals++;return;}
-      const admission=pool.ingest(input);snapshot();
-      if(admission.retained&&!costs.has(admission.source.key)){
-        costs.set(admission.source.key,cost);retainedEvidenceBytes+=cost;
+      const admission=pool.ingest(input);
+      if(admission.reason==='retained_evidence_byte_budget'){counters.byteBudgetRefusals++;return;}
+      if(admission.retained&&!admission.duplicate){
         originalObservedAtMin=Math.min(originalObservedAtMin??at,at);originalObservedAtMax=Math.max(originalObservedAtMax??at,at);
       }
     }catch{counters.observerFailures++;}
@@ -83,6 +72,7 @@ export function createYahooScanPageObservation({startedAt,deadlineAt,accounts=[]
       mappedTargetsWithBothObservedDetailFields:0,mappedPairsWithBothObservedDetailFields:0,
       mappedPairsMissingOwnObservedDetailFields:0,mappedPairsMissingCandidateObservedDetailFields:0,
       lowerListedPricePairs:0,notLowerListedPricePairs:0,unknownListedPricePairs:0,conflictingCardPairs:0,
+      bodyFieldPresenceByCardPrice:Object.fromEntries(['both','own_only','candidate_only','neither'].map(kind=>[kind,{lower:0,not_lower:0,unknown:0,conflicting:0}])),
       saleTermsVerificationPendingPairs:0,saleTermsVerifiedPairs:0,
       observerDurationMs,originalObservedAtMin,originalObservedAtMax,...counters,...noAuthority};
     try{
@@ -115,7 +105,12 @@ export function createYahooScanPageObservation({startedAt,deadlineAt,accounts=[]
       const observed=snapshot();Object.assign(base,{acceptedSourceReads:observed.counters.acceptedSourceReads,duplicateAdmissions:observed.counters.duplicateAdmissions,
         retainedSources:observed.activeSources,retainedCardObservations:observed.retainedCards,uniqueRailCandidateIds:observed.uniqueCandidateIds,
         duplicateCardObservations:observed.duplicateCardObservations,omittedRailCards:observed.counters.omittedCards,
-        expiredSources:observed.counters.expiredSources,retainedEvidenceBytes,maxRetainedEvidenceBytes,maxTargetObservationVisits});
+        expiredSources:observed.counters.expiredSources,newerUnretainedSources:observed.counters.newerUnretainedSources,
+        retentionUnavailable:observed.retentionUnavailable,retainedEvidenceBytes:observed.retention.retainedEvidenceBytes,
+        retainedEvidenceFormatVersion:observed.retention.formatVersion,retainedCardPayloads:observed.retention.retainedCardPayloads,
+        deduplicatedCardPayloadReferences:observed.retention.deduplicatedCardPayloadReferences,
+        expandedSnapshotEvidenceBytes:observed.retention.expandedSnapshotEvidenceBytes,
+        maxRetainedEvidenceBytes,maxTargetObservationVisits});
       const ownObserved=new Set(targets.filter(target=>yahoo(target)&&observed.pages.some(page=>page.source.id===target.id&&page.detail?.description?.trim()&&
         page.detail.sellerId===(target.profileCard?.sellerId||target.sellerId))).map(key));
       base.ownPageObservedTargets=ownObserved.size;base.pendingOwnPageTargets=totalManagedTargets-ownObserved.size;
@@ -125,22 +120,36 @@ export function createYahooScanPageObservation({startedAt,deadlineAt,accounts=[]
       if(scanPhaseFailed||time>=finalizationDeadlineAt){base.reason=scanPhaseFailed?'scan_phase_failed':'finalization_deadline';return finished=Object.freeze({...base,finishDurationMs:performance.now()-start});}
       base.mappingEligibleTargets=base.completeOwnedIndex?targets.filter(target=>yahoo(target)&&target.profileCard?.itemStatus==='OPEN'&&
         !yahooProfileCardProblem(target.profileCard,{now:time})&&ownership.yahoo.items.has(target.id)&&ownership.yahoo.sellers.has(target.profileCard.sellerId)).length:0;
-      let remaining=base.mappingEligibleTargets?Math.floor(maxTargetObservationVisits/base.mappingEligibleTargets):0,selected=0;
-      const pages=observed.pages.map(page=>{const cards=page.cards.slice(0,remaining);remaining-=cards.length;selected+=cards.length;return {...page,cards};});
-      base.omittedMappingCardObservations=observed.retainedCards-selected;base.mappingTargetObservationVisitUpperBound=base.mappingEligibleTargets*selected;
+      // The old Cartesian estimate clipped later observed pages before local
+      // recall. Index all retained cards and keep the same actual pair/time
+      // bounds. Mathematical eliminations are not unfinished mapping work.
+      base.omittedMappingCardObservations=0;
+      base.mappingTargetObservationVisitUpperBound=base.mappingEligibleTargets*observed.retainedCards;
       base.mappingPasses=1;
       const mappingEndsAt=mappingClock()+maxMappingDurationMs;
-      const mapping=mapYahooPoolToTargets({snapshot:{...observed,pages},targets,settings:{...settings,ownedOffers:ownership,ownedOffersComplete:base.completeOwnedIndex},now:time,
+      const mapping=mapYahooPoolToTargets({snapshot:observed,targets,settings:{...settings,ownedOffers:ownership,ownedOffersComplete:base.completeOwnedIndex},now:time,
+        maximumTargetObservationVisits:maxTargetObservationVisits,
         continueMapping:()=>mappingClock()<mappingEndsAt&&now()<finalizationDeadlineAt});
       Object.assign(base,{blockedTargets:mapping.rows.filter(row=>row.status==='blocked').length,mappedTargets:mapping.mappedTargets,unmappedTargets:mapping.unmappedTargets,
         targetCandidatePairs:mapping.targetCandidatePairs,uniqueCandidateIds:mapping.uniqueMappedCandidateIds,
         omittedCandidateMatches:mapping.omittedCandidateMatches,sharedTargetPairDuplicates:mapping.sharedTargetPairDuplicates,
         mappingStopped:mapping.mappingStopped,mappingTargetObservationVisits:mapping.actualTargetObservationVisits,mappingActualTargetObservationVisits:mapping.actualTargetObservationVisits,omittedTargetObservationVisits:mapping.omittedTargetObservationVisits});
+      for(const field of ['mappingCounterVersion','mappingStoppedReason','indexBuildComplete','naivePotentialTargetObservationVisits',
+        'scoredTargetObservationPairs','preexcludedOwnedCardObservations','preexcludedOwnedTargetObservationPairs',
+        'indexEliminatedTargetObservationPairs','budgetUnresolvedTargets','noRecallTargets',
+        'indexBuildObservationVisits','indexBuildPostingVisits','indexQueryPostingVisits','actualIndexedWorkUnits','maximumIndexedWorkUnits'])
+        if(mapping[field]!==undefined)base[field]=mapping[field];
       for(const row of mapping.rows){
         const ownPresent=ownDetailFields.has(row.targetKey);let bothPresent=false;
         for(const candidate of row.candidates){
           const candidatePage=detailPages.get(candidate.id);
           const candidatePresent=Boolean(candidatePage&&(!candidate.card.sellerId||candidatePage.detail.sellerId===candidate.card.sellerId));
+          // Field presence and a rail's listed price describe expected evidence
+          // needs only. They do not prove current strict identity or zero image
+          // requests, and repeated references are not independent confirmations.
+          const bodyKind=ownPresent?(candidatePresent?'both':'own_only'):(candidatePresent?'candidate_only':'neither');
+          const priceKind=candidate.conflictingCardObservations?'conflicting':candidate.lowerListedPrice===null?'unknown':candidate.lowerListedPrice?'lower':'not_lower';
+          base.bodyFieldPresenceByCardPrice[bodyKind][priceKind]++;
           if(!ownPresent)base.mappedPairsMissingOwnObservedDetailFields++;
           if(!candidatePresent)base.mappedPairsMissingCandidateObservedDetailFields++;
           if(ownPresent&&candidatePresent){base.mappedPairsWithBothObservedDetailFields++;bothPresent=true;}
@@ -166,5 +175,5 @@ export function createYahooScanPageObservation({startedAt,deadlineAt,accounts=[]
     }catch{base.reason='observation_unavailable';}
     return finished=Object.freeze({...base,finishDurationMs:performance.now()-start});
   }
-  return Object.freeze({observe,finish,snapshot});
+  return Object.freeze({observe,finish,snapshot,revision:()=>counters.observerCalls});
 }

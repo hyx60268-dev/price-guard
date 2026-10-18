@@ -22,6 +22,8 @@ const freshLifetime=(response,observedAt)=>{
 // reuse computation by SHA256. Neither path renews product identity timestamps.
 export function createFingerprintLoader({directory,fetchImage,fingerprint,now=Date.now,maxEntries=5000,observeImageBytes,observeImageByteMiss,byteCacheOptions}={}){
  const originalBytes=createOriginalImageByteCache({...byteCacheOptions,directory,now});
+ const completed=new Map(),latest=new Map(),pending=new Map(),urlWriters=new Set();
+ let pendingOverflow=0,diskReuseBlocked=false;
  const stats={httpFreshReuses:0,contentReuses:0,computed:0,writes:0,pruned:0,imageFetches:0,downloadBytes:0,computeDurationMs:0};
  const boundedEntries=Number.isFinite(maxEntries)&&maxEntries>0?Math.min(5000,Math.floor(maxEntries)):5000;
  const maxFiles=Math.max(2,boundedEntries*2);let pruning=null,initialized=false,writesSincePrune=0;
@@ -47,7 +49,15 @@ export function createFingerprintLoader({directory,fetchImage,fingerprint,now=Da
  }
  const read=async name=>{
   if(!directory)return null;
-  try{return JSON.parse(await fs.readFile(path.join(directory,name),'utf8'))}catch{return null}
+  let handle;
+  try{
+   // Malformed derived files cannot allocate unbounded memory on a read-only peek.
+   handle=await fs.open(path.join(directory,name),'r');const stat=await handle.stat();
+   const bound=name.startsWith('url-')?2048:64*1024;
+   if(!stat.isFile()||stat.size<2||stat.size>bound)return null;
+   const buffer=Buffer.alloc(stat.size+1);const {bytesRead}=await handle.read(buffer,0,buffer.length,0);
+   if(bytesRead!==stat.size)return null;return JSON.parse(buffer.subarray(0,bytesRead).toString('utf8'));
+  }catch{return null}finally{await handle?.close().catch(()=>{})}
  };
  const write=async(name,value,stopped=()=>false)=>{
   if(!directory||stopped())return;
@@ -66,6 +76,92 @@ export function createFingerprintLoader({directory,fetchImage,fingerprint,now=Da
   const entry=await read('body-'+sha+'.json');
   return entry?.version===version&&entry.fingerprint?.contentSha256===sha&&entry.checksum===hash(JSON.stringify(entry.fingerprint))?entry.fingerprint:null;
  };
+ const current=(url,record)=>Boolean(record)&&latest.get(url)===record&&!record.conflict;
+ const validFresh=(entry,time)=>entry?.version===version&&Number.isFinite(entry.observedAt)&&Number.isFinite(entry.expiresAt)&&
+  entry.observedAt>=0&&entry.observedAt<=time&&entry.expiresAt>time&&entry.expiresAt-entry.observedAt<=24*3600_000;
+ const permitted=(url,entry)=>{
+  const record=latest.get(url);
+  return !record||entry.observedAt>record.observedAt||entry.observedAt===record.observedAt&&record.ready===true&&entry.contentSha256===record.sha&&entry.expiresAt===record.expiresAt;
+ };
+ function recordObservation(url,observedAt,sha,expiresAt){
+  if(typeof url!=='string'||url.length>8192||!Number.isFinite(observedAt)||observedAt<0)return null;
+  const previous=latest.get(url);
+  if(previous&&observedAt<previous.observedAt)return null;
+  const conflict=Boolean(previous&&observedAt===previous.observedAt&&(previous.conflict||previous.sha!==sha||previous.expiresAt!==expiresAt));
+  const record={observedAt,sha,expiresAt,conflict,ready:false};
+  if(!latest.has(url)&&latest.size>=boundedEntries){
+   const oldest=latest.keys().next().value;latest.delete(oldest);completed.delete(oldest);
+   // Do not forget an unavailable watermark and then restore an older disk row.
+   // Recent completed entries remain usable; disk-only reuse stays conservative.
+   diskReuseBlocked=true;
+  }
+  latest.set(url,record);completed.delete(url);return record;
+ }
+ async function invalidate(url,record){
+  if(!record||!directory||latest.get(url)!==record)return;
+  if(urlWriters.has(url))return; // The active writer detects replacement and removes its own stale result.
+  if(urlWriters.size>=boundedEntries){diskReuseBlocked=true;return;}
+  urlWriters.add(url);
+  try{await fs.rm(path.join(directory,'url-'+hash(url)+'.json'),{force:true});}
+  catch{diskReuseBlocked=true;}
+  finally{urlWriters.delete(url);}
+ }
+ async function publish(url,record,value,stopped){
+  if(!directory||!current(url,record)||stopped()||urlWriters.has(url))return;
+  if(urlWriters.size>=boundedEntries){diskReuseBlocked=true;return;}
+  urlWriters.add(url);
+  try{
+   await write('url-'+hash(url)+'.json',value,()=>stopped()||!current(url,record));
+   // A newer observation may arrive while the atomic rename is settling.
+   // No other same-URL writer can publish until this stale result is removed.
+   if(stopped()||!current(url,record))await fs.rm(path.join(directory,'url-'+hash(url)+'.json'),{force:true});
+  }catch{diskReuseBlocked=true;}
+  finally{urlWriters.delete(url);}
+ }
+ const remember=(value,record=null)=>{
+  const observedAt=Date.parse(value?.imageObservedAt),expiresAt=value?.imageCacheExpiresAt,time=now();
+  if(typeof value?.url==='string'&&value.url.length<=8192&&Number.isFinite(time)&&
+   validFresh({version,observedAt,expiresAt},time)&&/^[a-f0-9]{64}$/.test(value.contentSha256||'')){
+   // Successful disk-only peeks also establish the known original clock/hash.
+   // Never let a late disk restoration replace a newer observed invalidation.
+   if(!record){
+    const known=latest.get(value.url);
+    if(!permitted(value.url,{observedAt,expiresAt,contentSha256:value.contentSha256})||
+     diskReuseBlocked&&!(known?.ready&&!known.conflict&&known.observedAt===observedAt&&known.sha===value.contentSha256&&known.expiresAt===expiresAt))return value;
+    record=recordObservation(value.url,observedAt,value.contentSha256,expiresAt);
+   }
+   if(!current(value.url,record))return value;
+   record.ready=true;
+   if(Buffer.byteLength(JSON.stringify(value),'utf8')>64*1024)return value;
+   if(completed.size>=boundedEntries&&!completed.has(value.url))completed.delete(completed.keys().next().value);
+   completed.set(value.url,structuredClone(value));
+  }else if(value?.url&&(!record||latest.get(value.url)===record))completed.delete(value.url);
+  return value;
+ };
+ // Synchronous final-publication check. Only settled known metadata is exposed:
+ // no disk read, transport, fingerprint, byte restoration, mutation or renewal.
+ function peekKnownObservation(url){
+  if(pendingOverflow||pending.has(url))return {status:'unavailable',reason:'pending'};
+  const record=latest.get(url);if(!record)return {status:'unknown'};
+  const time=now();if(!Number.isFinite(time)||time<0||record.observedAt>time)return {status:'unavailable',reason:'invalid_clock'};
+  if(record.conflict)return {status:'unavailable',reason:'same_time_conflict'};
+  if(!record.ready)return {status:'unavailable',reason:'original_unavailable'};
+  if(record.expiresAt<=time)return {status:'unavailable',reason:'expired'};
+  return {status:'available',contentSha256:record.sha,imageObservedAt:new Date(record.observedAt).toISOString(),imageCacheExpiresAt:record.expiresAt};
+ }
+ // Cache-only access: never calls load(), fetchImage(), fingerprint(), prune(),
+ // writes, or byte restoration. Pending and absent entries are ordinary misses.
+ async function peek(url,{stopped=()=>false}={}){
+  if(typeof url!=='string'||url.length>8192||stopped()||pendingOverflow||pending.has(url))return null;
+  const time=now();if(!Number.isFinite(time)||time<0)return null;const ready=completed.get(url);
+  if(ready&&ready.imageCacheExpiresAt>time&&Date.parse(ready.imageObservedAt)<=time)return structuredClone(ready);
+  completed.delete(url);if(diskReuseBlocked)return null;
+  const cached=await read('url-'+hash(url)+'.json');
+  if(stopped()||pendingOverflow||pending.has(url)||diskReuseBlocked||!validFresh(cached,time)||!permitted(url,cached))return null;
+  const value=await readContent(cached.contentSha256);
+  if(stopped()||pendingOverflow||pending.has(url)||diskReuseBlocked||!value||!validFresh(cached,now())||!permitted(url,cached))return null;
+  return structuredClone(remember({...value,url,imageObservedAt:new Date(cached.observedAt).toISOString(),imageCacheExpiresAt:cached.expiresAt,imageCacheSource:'http_fresh'}));
+ }
  // Bounds are per caller. In particular, never make another caller's pending
  // download inherit this signal/deadline. Fully verified persisted content is safe.
  async function get(url,options){
@@ -95,24 +191,32 @@ export function createFingerprintLoader({directory,fetchImage,fingerprint,now=Da
  }
  async function load(url,context,stopped=()=>false){
   if(stopped())return null;
+  const tracked=typeof url==='string'&&url.length<=8192&&(pending.has(url)||pending.size<boundedEntries);
+  if(tracked)pending.set(url,(pending.get(url)||0)+1);else pendingOverflow++;
+  let observation=null;
+  try{
   if(!initialized){initialized=true;await prune()}
   if(stopped())return null;
   const key='url-'+hash(url)+'.json',cached=await read(key),time=now();
   if(stopped())return null;
-  if(cached?.version===version&&Number.isFinite(cached.observedAt)&&Number.isFinite(cached.expiresAt)&&cached.observedAt>=0&&cached.observedAt<=time&&cached.expiresAt>time&&cached.expiresAt-cached.observedAt<=24*3600_000){
+  // Observation-only metadata cannot change the ordinary get request path.
+  // remember() separately refuses to promote any superseded/untrusted disk hit.
+  if(validFresh(cached,time)){
    const value=await readContent(cached.contentSha256);
    if(stopped())return null;
    if(value){
     const result={...value,url,imageObservedAt:new Date(cached.observedAt).toISOString(),imageCacheExpiresAt:cached.expiresAt,imageCacheSource:'http_fresh'};
     await reuseBytes(result,{stopped});if(stopped())return null;
-    stats.httpFreshReuses++;return result;
+    stats.httpFreshReuses++;return remember(result);
    }
   }
   if(stopped())return null;
   stats.imageFetches++;const response=await fetchImage(url,context);
-  if(stopped()||!response?.buffer)return null;
+  if(!response?.buffer)return null;
+  const observedAt=now(),sha=hash(response.buffer),expiresAt=observedAt+freshLifetime(response,observedAt),canStore=!/\bno-store\b/i.test(response.cacheControl||'');
+  observation=recordObservation(url,observedAt,sha,expiresAt);await invalidate(url,observation);
+  if(stopped())return null;
   stats.downloadBytes+=response.buffer.length;
-  const observedAt=now(),sha=hash(response.buffer),canStore=!/\bno-store\b/i.test(response.cacheControl||'');
   let value=canStore?await readContent(sha):null;
   if(stopped())return null;
   if(value)stats.contentReuses++;
@@ -123,12 +227,10 @@ export function createFingerprintLoader({directory,fetchImage,fingerprint,now=Da
   }
   const {url:_url,imageObservedAt:_observed,imageCacheExpiresAt:_expiry,imageCacheSource:_source,...content}=value;
   content.contentSha256=sha;
-  const expiresAt=observedAt+freshLifetime(response,observedAt);
   if(canStore){
    await write('body-'+sha+'.json',{version,fingerprint:content,checksum:hash(JSON.stringify(content))},stopped);
    if(stopped())return null;
-   await write(key,{version,contentSha256:sha,observedAt,expiresAt},stopped);
-   if(stopped())return null;
+
    if(writesSincePrune>=Math.min(100,maxFiles))await prune();
   }
   if(stopped())return null;
@@ -138,7 +240,16 @@ export function createFingerprintLoader({directory,fetchImage,fingerprint,now=Da
   // source observation and exact URL/hash binding. Missing bytes never refetch.
   if(expiresAt>observedAt){await originalBytes.put({...result,buffer:response.buffer},{stopped,signal:context?.signal});if(stopped())return null}
   observeBytes({...result,buffer:response.buffer});
+  if(expiresAt>observedAt&&observation&&current(url,observation)){
+   await publish(url,observation,{version,contentSha256:sha,observedAt,expiresAt},stopped);
+   if(stopped())return null;
+   return remember(result,observation);
+  }
   return result;
+  }finally{
+   if(observation&&latest.get(url)===observation&&!observation.ready)await invalidate(url,observation);
+   if(tracked){const count=pending.get(url)-1;if(count)pending.set(url,count);else pending.delete(url);}else pendingOverflow--;
+  }
  }
  function observeBytes(value){
   if(typeof observeImageBytes!=='function')return;
@@ -157,5 +268,5 @@ export function createFingerprintLoader({directory,fetchImage,fingerprint,now=Da
   }
   return result.reason;
  }
- return {get,stats,prune,reuseBytes,get byteStats(){return originalBytes.stats}};
+ return {get,peek,peekKnownObservation,stats,prune,reuseBytes,get byteStats(){return originalBytes.stats}};
 }
