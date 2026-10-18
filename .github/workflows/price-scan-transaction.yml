@@ -34,6 +34,8 @@ on:
         value: ${{ jobs.scan-and-publish.outputs.coverage_exit }}
       state_artifact:
         value: ${{ jobs.scan-and-publish.outputs.state_artifact || inputs.cadence_previous_artifact }}
+      audit_receipt_ready:
+        value: ${{ jobs.scan-and-publish.outputs.audit_receipt_ready }}
 permissions:
   contents: read
   issues: write
@@ -69,6 +71,7 @@ jobs:
       cost_exit: ${{ steps.cost.outputs.exit_code }}
       coverage_exit: ${{ steps.coverage.outputs.exit_code }}
       state_artifact: ${{ steps.checkpoint.outputs.artifact_name }}
+      audit_receipt_ready: ${{ steps.audit_receipt_readiness.outputs.ready || 'false' }}
     # Hold the shared state/session lock for the entire restore-to-publish transaction.
     concurrency:
       group: pages
@@ -124,6 +127,17 @@ jobs:
           CADENCE_EPOCH: ${{ inputs.cadence_epoch }}
           CADENCE_SLOT: ${{ inputs.cadence_slot }}
           CADENCE_EXPECTED_SHA: ${{ inputs.cadence_expected_sha }}
+      - name: 只读核对已恢复的对照执行记录
+        id: audit_receipt_restored
+        if: ${{ steps.admission.outputs.admitted == 'true' }}
+        run: |
+          if node scripts/check-comparison-audit-receipt.mjs; then
+            echo 'valid=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'valid=false' >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
       - name: 只读记录两款反馈商品的保存证据
         if: ${{ steps.admission.outputs.admitted == 'true' }}
         run: node scripts/pricing-target-diagnostics.mjs
@@ -279,6 +293,31 @@ jobs:
         uses: actions/deploy-pages@v4
         with:
           artifact_name: github-pages-${{ github.run_attempt }}-${{ inputs.cadence_slot || 'single' }}
+      - name: 只读回看已发布的对照执行记录
+        id: audit_receipt_published
+        if: ${{ steps.admission.outputs.admitted == 'true' && steps.deployment.outcome == 'success' }}
+        run: |
+          if node scripts/check-comparison-audit-receipt.mjs --published; then
+            echo 'valid=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'valid=false' >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+      - name: 明确记录对照执行记录是否核对通过
+        id: audit_receipt_readiness
+        if: ${{ always() && steps.admission.outputs.admitted == 'true' }}
+        env:
+          RESTORED_OUTCOME: ${{ steps.audit_receipt_restored.outcome }}
+          PUBLISHED_OUTCOME: ${{ steps.audit_receipt_published.outcome }}
+          RESTORED_VALID: ${{ steps.audit_receipt_restored.outputs.valid }}
+          PUBLISHED_VALID: ${{ steps.audit_receipt_published.outputs.valid }}
+        run: |
+          ready=false
+          if [ "$RESTORED_OUTCOME" = success ] && [ "$PUBLISHED_OUTCOME" = success ] && [ "$RESTORED_VALID" = true ] && [ "$PUBLISHED_VALID" = true ]; then ready=true; fi
+          echo "ready=$ready" >> "$GITHUB_OUTPUT"
+          echo "[COMPARISON AUDIT RECEIPT READINESS] ready=$ready; receipt-only validation; no activation or coverage acceptance"
+          if [ "$ready" != true ]; then echo '::warning title=对照准备未通过::执行记录尚未完成恢复和发布双向核对；普通采集与真实全量验收继续，禁止据此启用对照。'; fi
       - name: 记录云端成本验收退出码（保留失败）
         id: cost
         if: steps.admission.outputs.admitted == 'true'
