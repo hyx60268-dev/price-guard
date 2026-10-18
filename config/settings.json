@@ -12,6 +12,8 @@
   "scanDelayMs": 1200,
   "maxYahooDetailChecks": 8,
   "yahooRecommendationFallbackMaxCards": 20,
+  "yahooGeometryPriority": true,
+  "yahooGeometryReallocate": true,
   "yahooRecommendationVisualRecallThreshold": 0.84,
   "yahooUnderpriceRatio": 0.82,
   "yahooUnderpriceMinimumGapJPY": 1500,

@@ -19,7 +19,7 @@ const freshLifetime=(response,observedAt)=>{
 // A fresh URL entry follows the source's explicit public cache lifetime (capped
 // at24h). Otherwise the image body is read again; identical actual bytes can
 // reuse computation by SHA256. Neither path renews product identity timestamps.
-export function createFingerprintLoader({directory,fetchImage,fingerprint,now=Date.now,maxEntries=5000}={}){
+export function createFingerprintLoader({directory,fetchImage,fingerprint,now=Date.now,maxEntries=5000,observeImageBytes}={}){
  const stats={httpFreshReuses:0,contentReuses:0,computed:0,writes:0,pruned:0,imageFetches:0,downloadBytes:0,computeDurationMs:0};
  const boundedEntries=Number.isFinite(maxEntries)&&maxEntries>0?Math.min(5000,Math.floor(maxEntries)):5000;
  const maxFiles=Math.max(2,boundedEntries*2);let pruning=null,initialized=false,writesSincePrune=0;
@@ -125,7 +125,19 @@ export function createFingerprintLoader({directory,fetchImage,fingerprint,now=Da
    if(writesSincePrune>=Math.min(100,maxFiles))await prune();
   }
   if(stopped())return null;
-  return {...content,url,imageObservedAt:new Date(observedAt).toISOString(),imageCacheExpiresAt:expiresAt,imageCacheSource:'current_body'};
+  const result={...content,url,imageObservedAt:new Date(observedAt).toISOString(),imageCacheExpiresAt:expiresAt,imageCacheSource:'current_body'};
+  // Geometry may reuse only bytes this unchanged loader already downloaded and
+  // successfully fingerprinted, including content-hash computation reuse. A
+  // fresh derived-cache hit has no body and emits nothing. Observation is an
+  // optional synchronous, best-effort side effect: it cannot affect quotes,
+  // retries, cache writes or observation timestamps, even if it fails.
+  if(typeof observeImageBytes==='function'){
+   try{
+    const observed=observeImageBytes(Object.freeze({buffer:response.buffer,url,contentSha256:sha,imageObservedAt:result.imageObservedAt}));
+    if(observed&&typeof observed.then==='function')Promise.resolve(observed).catch(()=>{});
+   }catch{/* Local byte observation must never prevent fingerprint collection. */}
+  }
+  return result;
  }
  return {get,stats,prune};
 }

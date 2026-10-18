@@ -67,7 +67,10 @@ test('normal writer keeps gates inside pages, uniquely names every cycle artifac
  for(const line of writer.split('\n').filter(line=>/key: price-guard-state|name: github-pages-|artifact_name: github-pages-/.test(line)))assert.match(line,/inputs.cadence_slot/);
  const main=await fs.readFile(new URL('../.github/workflows/price-guard.yml',import.meta.url),'utf8');
  assert.match(main,/needs: scan-and-publish/);assert.match(main,/test "\$COST_EXIT" = 0 && test "\$COVERAGE_EXIT" = 0/);
- assert.doesNotMatch(text,/continue-on-error: true/);assert.ok(text.includes("needs.cadence-wait.result == 'success'"));assert.ok(text.includes("needs.cadence-wait.result == 'skipped'"));
+ // Only the optional, no-source geometry dependency/self-check may fail open.
+ // Source reads, state restoration/publication and product acceptance must not.
+ const critical=text.split(/(?=      - name:|      - run:|      - uses:)/).filter(step=>!/^      - name: (?:Prepare optional local geometry Python|Verify optional bounded geometry runtime without source reads)\n/.test(step)).join('');
+ assert.doesNotMatch(critical,/continue-on-error: true/);assert.ok(text.includes("needs.cadence-wait.result == 'success'"));assert.ok(text.includes("needs.cadence-wait.result == 'skipped'"));
 });
 
 test('fixed slots tolerate bounded startup jitter instead of aliasing into40minute cycles',()=>{
