@@ -14,7 +14,7 @@
   "yahooRecommendationFallbackMaxCards": 20,
   "yahooObserveNormalPageRails": true,
   "yahooSharedDetailOffers": true,
-  "yahooSharedOwnRootReads": true,
+  "yahooSharedOwnRootReads": false,
   "yahooGeometryPriority": true,
   "yahooGeometryReallocate": true,
   "yahooRecommendationVisualRecallThreshold": 0.84,
