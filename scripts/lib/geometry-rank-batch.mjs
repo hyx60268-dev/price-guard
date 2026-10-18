@@ -11,6 +11,8 @@ const hash=buffer=>createHash('sha256').update(buffer).digest('hex');
 const validObservation=row=>Buffer.isBuffer(row?.buffer)&&row.buffer.length>0&&row.buffer.length<=GEOMETRY_LIMITS.imageBytes&&
  /^[a-f0-9]{64}$/.test(row.contentSha256||'')&&hash(row.buffer)===row.contentSha256&&typeof row.imageObservedAt==='string'&&Number.isFinite(Date.parse(row.imageObservedAt));
 const failure=reason=>({status:'unavailable',reason,priorityIds:[],identityVerified:false,canRecommend:false});
+const FAILURE_REASONS=new Set(['runtime_unavailable','deadline','compute_budget','bytes_unavailable','invalid_inputs','input_limit','timeout','cancelled','output_limit','invalid_output','runtime_failed']);
+export const geometryFailureReason=reason=>FAILURE_REASONS.has(reason)?reason:'runtime_failed';
 
 // One local process for the complete batch, never one process per candidate.
 export async function executeGeometryBatch(input,{timeoutMs=GEOMETRY_LIMITS.batchMs,signal,spawnProcess=spawn}={}){
@@ -38,8 +40,8 @@ export async function executeGeometryBatch(input,{timeoutMs=GEOMETRY_LIMITS.batc
 
 export function createBoundedGeometryRanker({execute=executeGeometryBatch,now=Date.now,runtimeReady=true}={}){
  let busy=false,batches=0,totalMs=0;
- const stats={batches:0,inputImages:0,inputBytes:0,pairs:0,elapsedMs:0,unavailable:0};
- const unavailable=reason=>{stats.unavailable++;return failure(reason)};
+ const stats={batches:0,observedBatches:0,inputImages:0,inputBytes:0,pairs:0,elapsedMs:0,unavailable:0,unavailableReasons:{}};
+ const unavailable=reason=>{reason=geometryFailureReason(reason);stats.unavailable++;stats.unavailableReasons[reason]=(stats.unavailableReasons[reason]||0)+1;return failure(reason)};
  function canRun({deadlineAt,signal}={}){return runtimeReady===true&&!busy&&batches<GEOMETRY_LIMITS.batches&&totalMs<GEOMETRY_LIMITS.totalMs&&!signal?.aborted&&(!Number.isFinite(deadlineAt)||deadlineAt-now()>=250)}
  async function rank({own,candidates=[],deadlineAt,signal}={}){
   const stopped=()=>signal?.aborted||(Number.isFinite(deadlineAt)&&now()>=deadlineAt);
@@ -79,6 +81,7 @@ export function createBoundedGeometryRanker({execute=executeGeometryBatch,now=Da
      priorityIds.push(candidate.id);
     }
    }
+   stats.observedBatches++;
    return {status:'observed',priorityIds,paired:found.size,identityVerified:false,canRecommend:false};
   }catch{return unavailable('runtime_failed')}
   finally{const elapsed=Math.max(0,now()-start);totalMs+=elapsed;stats.elapsedMs+=elapsed;busy=false}

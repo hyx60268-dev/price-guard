@@ -105,13 +105,13 @@ test('successful loader observes original bytes after both computation and conte
  for(const file of await fs.readdir(directory))assert.doesNotMatch(await fs.readFile(path.join(directory,file),'utf8'),/original bytes|Buffer|"buffer"/);
 }));
 
-test('HTTP-fresh fingerprint reuse has no bytes, performs no extra fetch and never renews time',()=>fixture(async directory=>{
+test('HTTP-fresh fingerprint reuse restores bounded original bytes without extra fetch or renewed time',()=>fixture(async directory=>{
  let time=1000,fetches=0;const pool=createImageByteObservationPool();
  const options={directory,now:()=>time,fetchImage:async()=>{fetches++;return {buffer:Buffer.from('original bytes'),cacheControl:'public, max-age=3600'}},fingerprint:async()=>({dHash:'real'})};
  const first=await createFingerprintLoader(options).get(url);time=2000;
  const loader=createFingerprintLoader({...options,observeImageBytes:pool.observe}),second=await loader.get(url);
  assert.equal(fetches,1);assert.equal(loader.stats.httpFreshReuses,1);assert.equal(second.imageObservedAt,first.imageObservedAt);
- assert.equal(second.imageCacheSource,'http_fresh');assert.equal(pool.get(second),null);assert.equal(pool.stats.images,0);
+ assert.equal(second.imageCacheSource,'http_fresh');assert.equal(pool.get(second).buffer.toString(),'original bytes');assert.equal(pool.stats.images,1);
 }));
 
 test('no-store bytes are available only in the local pool and never persisted',()=>fixture(async directory=>{
@@ -167,7 +167,7 @@ test('scope captures normal map calls, deduplicates existing downloads and clear
   });
   assert.equal(pool.stats.images,0);assert.equal(pool.stats.bytes,0);
   const other=createImageByteObservationPool();
-  await withImageByteObservations(other,async()=>{const value=await imageFingerprints(url);assert.ok(value);assert.equal(other.get(value),null)});
+  await withImageByteObservations(other,async()=>{const value=await imageFingerprints(url);assert.ok(value);assert.equal(other.get(value).buffer.toString(),svg)});
   assert.equal(fetches,1);
  },{now:()=>1000});
 });

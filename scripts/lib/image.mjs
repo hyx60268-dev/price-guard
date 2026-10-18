@@ -7,6 +7,10 @@ const cache=new Map(),diagnostics=new Map();
 const transferTotals={fetches:0,settledFetches:0,completedDecodedBytes:0,durationMs:0,unknownBodyTransfers:0};
 export const imageTransferStats=()=>({...transferTotals});
 const imageByteObservations=new AsyncLocalStorage();
+const observeImageByteMiss=(value,reason)=>{
+  const scope=imageByteObservations.getStore();
+  if(scope?.active)return scope.pool.observeUnavailable?.(value,reason);
+};
 const observeImageBytes=value=>{
   const scope=imageByteObservations.getStore();
   if(scope?.active)return scope.pool.observe(value);
@@ -157,10 +161,11 @@ async function calculateFingerprints(buffer,url){
   }catch{recordDiagnostic(url,{...imageFingerprintDiagnostic(url),stage:'fingerprint',reason:'decode_error'});return null}
 }
 
-let persistentLoader=createFingerprintLoader({fetchImage:download,fingerprint:calculateFingerprints,observeImageBytes});
+let persistentLoader=createFingerprintLoader({fetchImage:download,fingerprint:calculateFingerprints,observeImageBytes,observeImageByteMiss});
 let cacheClock=Date.now;
-export function configureImageFingerprintCache({directory,now=Date.now}={}){
- cache.clear();diagnostics.clear();for(const key of Object.keys(transferTotals))transferTotals[key]=0;cacheClock=now;persistentLoader=createFingerprintLoader({directory,fetchImage:download,fingerprint:calculateFingerprints,now,observeImageBytes});
+export const imageByteCacheStats=()=>persistentLoader.byteStats;
+export function configureImageFingerprintCache({directory,now=Date.now,byteCacheOptions}={}){
+ cache.clear();diagnostics.clear();for(const key of Object.keys(transferTotals))transferTotals[key]=0;cacheClock=now;persistentLoader=createFingerprintLoader({directory,fetchImage:download,fingerprint:calculateFingerprints,now,observeImageBytes,observeImageByteMiss,byteCacheOptions});
  return persistentLoader.stats;
 }
 const makeFingerprints=(url,options)=>url?persistentLoader.get(url,options):null;
@@ -176,11 +181,15 @@ export async function imageFingerprints(url,options){
     // Resolved, explicitly HTTP-fresh results can be reused without refreshing
     // their observation. Pending operations belong only to their own callers.
     if(prior&&!prior.pending&&prior.expiresAt>cacheClock()){
-      const value=await prior.promise;return requestStopped(context)?null:value;
+      const value=await prior.promise;
+      if(requestStopped(context))return null;
+      if(imageByteObservations.getStore()?.active&&!imageByteObservations.getStore().pool.has?.(value))await persistentLoader.reuseBytes(value,{stopped:()=>requestStopped(context)});
+      return requestStopped(context)?null:{...value,imageCacheSource:'http_fresh'};
     }
     return makeFingerprints(url,context);
   }
-  if(!cache.has(url)){
+  const shared=cache.has(url);
+  if(!shared){
     if(cache.size>500)cache.delete(cache.keys().next().value);
     const entry={pending:true,expiresAt:0,promise:null};
     entry.promise=Promise.resolve().then(()=>makeFingerprints(url)).then(value=>{
@@ -190,7 +199,11 @@ export async function imageFingerprints(url,options){
     },error=>{if(cache.get(url)===entry)cache.delete(url);throw error});
     cache.set(url,entry);
   }
-  return cache.get(url).promise;
+  const value=await cache.get(url).promise;
+  // Promise sharing may originate outside this comparison. Restore into this
+  // caller's scope too, through a cache-only path with no freshness renewal.
+  if(imageByteObservations.getStore()?.active&&!imageByteObservations.getStore().pool.has?.(value))await persistentLoader.reuseBytes(value);
+  return shared&&value?.imageCacheExpiresAt>cacheClock()?{...value,imageCacheSource:'http_fresh'}:value;
 }
 
 export async function imageHash(url){

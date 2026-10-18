@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash,randomUUID } from 'node:crypto';
+import { createOriginalImageByteCache } from './image-byte-observations.mjs';
 
 const hash=value=>createHash('sha256').update(value).digest('hex');
 const version=1;
@@ -15,15 +16,17 @@ const freshLifetime=(response,observedAt)=>{
  return Number.isFinite(seconds)?Math.min(24*3600,Math.max(0,seconds-age))*1000:0;
 };
 
-// Persist only derived image fingerprints, never login state or source HTML.
+// Persist derived fingerprints and bounded original bytes, never login state or source HTML.
 // A fresh URL entry follows the source's explicit public cache lifetime (capped
 // at24h). Otherwise the image body is read again; identical actual bytes can
 // reuse computation by SHA256. Neither path renews product identity timestamps.
-export function createFingerprintLoader({directory,fetchImage,fingerprint,now=Date.now,maxEntries=5000,observeImageBytes}={}){
+export function createFingerprintLoader({directory,fetchImage,fingerprint,now=Date.now,maxEntries=5000,observeImageBytes,observeImageByteMiss,byteCacheOptions}={}){
+ const originalBytes=createOriginalImageByteCache({...byteCacheOptions,directory,now});
  const stats={httpFreshReuses:0,contentReuses:0,computed:0,writes:0,pruned:0,imageFetches:0,downloadBytes:0,computeDurationMs:0};
  const boundedEntries=Number.isFinite(maxEntries)&&maxEntries>0?Math.min(5000,Math.floor(maxEntries)):5000;
  const maxFiles=Math.max(2,boundedEntries*2);let pruning=null,initialized=false,writesSincePrune=0;
  async function prune(){
+  await originalBytes.prune();
   if(!directory)return;
   if(pruning)return pruning;
   pruning=(async()=>{
@@ -99,7 +102,11 @@ export function createFingerprintLoader({directory,fetchImage,fingerprint,now=Da
   if(cached?.version===version&&Number.isFinite(cached.observedAt)&&Number.isFinite(cached.expiresAt)&&cached.observedAt>=0&&cached.observedAt<=time&&cached.expiresAt>time&&cached.expiresAt-cached.observedAt<=24*3600_000){
    const value=await readContent(cached.contentSha256);
    if(stopped())return null;
-   if(value){stats.httpFreshReuses++;return {...value,url,imageObservedAt:new Date(cached.observedAt).toISOString(),imageCacheExpiresAt:cached.expiresAt,imageCacheSource:'http_fresh'}};
+   if(value){
+    const result={...value,url,imageObservedAt:new Date(cached.observedAt).toISOString(),imageCacheExpiresAt:cached.expiresAt,imageCacheSource:'http_fresh'};
+    await reuseBytes(result,{stopped});if(stopped())return null;
+    stats.httpFreshReuses++;return result;
+   }
   }
   if(stopped())return null;
   stats.imageFetches++;const response=await fetchImage(url,context);
@@ -126,18 +133,29 @@ export function createFingerprintLoader({directory,fetchImage,fingerprint,now=Da
   }
   if(stopped())return null;
   const result={...content,url,imageObservedAt:new Date(observedAt).toISOString(),imageCacheExpiresAt:expiresAt,imageCacheSource:'current_body'};
-  // Geometry may reuse only bytes this unchanged loader already downloaded and
-  // successfully fingerprinted, including content-hash computation reuse. A
-  // fresh derived-cache hit has no body and emits nothing. Observation is an
-  // optional synchronous, best-effort side effect: it cannot affect quotes,
-  // retries, cache writes or observation timestamps, even if it fails.
-  if(typeof observeImageBytes==='function'){
-   try{
-    const observed=observeImageBytes(Object.freeze({buffer:response.buffer,url,contentSha256:sha,imageObservedAt:result.imageObservedAt}));
-    if(observed&&typeof observed.then==='function')Promise.resolve(observed).catch(()=>{});
-   }catch{/* Local byte observation must never prevent fingerprint collection. */}
-  }
+  // Geometry may reuse only complete successfully fingerprinted original bodies.
+  // Public HTTP freshness permits bounded retention; every lookup preserves the
+  // source observation and exact URL/hash binding. Missing bytes never refetch.
+  if(expiresAt>observedAt){await originalBytes.put({...result,buffer:response.buffer},{stopped,signal:context?.signal});if(stopped())return null}
+  observeBytes({...result,buffer:response.buffer});
   return result;
  }
- return {get,stats,prune};
+ function observeBytes(value){
+  if(typeof observeImageBytes!=='function')return;
+  try{
+   const observed=observeImageBytes(Object.freeze({buffer:Buffer.from(value.buffer),url:value.url,contentSha256:value.contentSha256,imageObservedAt:value.imageObservedAt}));
+   if(observed&&typeof observed.then==='function')Promise.resolve(observed).catch(()=>{});
+  }catch{/* Observation cannot alter fingerprint collection or initiate transport. */}
+ }
+ async function reuseBytes(value,{stopped=()=>false}={}){
+  if(!value||stopped())return 'stopped';
+  const result=await originalBytes.get(value,{stopped});
+  if(stopped())return 'stopped';
+  if(result.value)observeBytes(result.value);
+  else if(typeof observeImageByteMiss==='function'){
+   try{const pending=observeImageByteMiss(value,result.reason);if(pending&&typeof pending.then==='function')Promise.resolve(pending).catch(()=>{})}catch{/* Optional diagnostic. */}
+  }
+  return result.reason;
+ }
+ return {get,stats,prune,reuseBytes,get byteStats(){return originalBytes.stats}};
 }
