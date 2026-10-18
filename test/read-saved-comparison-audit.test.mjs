@@ -21,6 +21,11 @@ test('readback decrypts one fixed Pages observation and emits only the allowlist
  assert.equal(mock.calls[0].request.method,'GET');assert.equal(mock.calls[0].request.redirect,'error');assert.equal(mock.calls[0].request.credentials,'omit');
  assert.equal(JSON.stringify(mock.calls[0]).includes(password),false);assert.deepEqual(state,before);
  assert.equal(result.summary.source.requestId,'lp-card-20261018-once-v1');
+ assert.equal(result.counterfactual.valid,true);assert.equal(result.counterfactual.sourceRequestsMade,0);
+ assert.equal(result.counterfactual.stateWrites,0);assert.equal(result.counterfactual.canRecommend,false);
+ assert.equal(result.counterfactual.source.codeSha,result.summary.source.codeSha);
+ assert.equal(result.counterfactual.targets.length,2);
+ assert.doesNotMatch(JSON.stringify(result.counterfactual),/synthetic-external|synthetic-shared|APEX|description/);
 });
 
 test('fork, arbitrary branch, cron, main push, rerun and checkout mismatch never receive the key or fetch data',async()=>{

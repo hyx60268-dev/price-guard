@@ -2,6 +2,7 @@ import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {decrypt} from './lib/crypto.mjs';
 import {summarizeSavedComparisonAudit} from './lib/comparison-audit-summary.mjs';
+import {summarizeSavedCardCounterfactual} from './lib/comparison-audit-counterfactual.mjs';
 
 // One fixed, already-published encrypted observation. No marketplace access,
 // checkout mutation, scan imports, local state reads/writes or claim operations.
@@ -47,7 +48,9 @@ export async function readSavedComparisonAudit({password,env,fetchImpl=globalThi
   try{state=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(plain));}catch{fail('state_json_invalid');}
   const report=summarizeSavedComparisonAudit(state,{now:now()});
   if(report?.valid!==true)return {...base,valid:false,reason:'summary_invalid',summaryReason:SAFE_SUMMARY_REASONS.has(report?.reason)?report.reason:'unknown_validation_failure',networkRequests};
-  return {...base,valid:true,networkRequests,summary:report};
+  const counterfactual=summarizeSavedCardCounterfactual(state,{now:now()});
+  if(counterfactual?.valid!==true)return {...base,valid:false,reason:'summary_invalid',summaryReason:'counterfactual_invalid',networkRequests};
+  return {...base,valid:true,networkRequests,summary:report,counterfactual};
  }catch(error){return {...base,valid:false,reason:SAFE_REASONS.has(error?.diagnosticReason)?error.diagnosticReason:'summary_invalid',networkRequests};}
  finally{clearTimeout(timer);controller?.abort();try{void (reader?reader.cancel():response?.body?.cancel())?.catch(()=>{});}catch{}}
 }
