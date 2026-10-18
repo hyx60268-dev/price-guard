@@ -14,7 +14,7 @@ import { buildOwnedOffers,normalizeOfferPlatform } from '../public/owned-offers.
 import { createOwnSourceLoader } from './lib/own-source.mjs';
 import { inventoryReadPlan } from './lib/inventory-read-plan.mjs';
 import { withRakumaDiscovery } from './lib/rakuma-discovery-hints.mjs';
-import { configureImageFingerprintCache,imageFingerprints } from './lib/image.mjs';
+import { configureImageFingerprintCache,imageFingerprints,imageTransferStats } from './lib/image.mjs';
 import { xianyuReviewPlan,mergeXianyuReview } from './lib/xianyu-review-plan.mjs';
 import { mercariCompare } from './lib/mercari.mjs';
 import { pricingDecision,requiredPricingPlatforms,pricingItemsForPlatform,pricingScopeLabel } from '../public/pricing-policy.js';
@@ -295,6 +295,7 @@ const yahooWork=(async()=>{
     }
     const profileSellerId=String(context.account.profileUrl||'').match(/\/user\/([^/?#]+)/i)?.[1]||'';
     const result=await yahooCompare(null,known?.knownRefresh?.mode==='details_only'?{...item,yahoo:known}:item,{...settings,matchCorrections,ownSellerId:item.sellerId||profileSellerId,forceYahooBroadSearch:forceYahoo||task.priority<=1},{fetchYahooItemBundle:id=>observedInput(id=>ownBundle(id,{purpose:id===item.id?'own':'candidate',targetId:item.id}),id),fetchYahooResult:url=>observedInput(sharedYahooResult,url)});context.yahooById.set(item.id,{...result,knownLastAttemptAt:known?.knownLastAttemptAt||prior.yahoo?.knownLastAttemptAt||null});
+    if(result.geometryRouting)console.log('[Yahoo图像排序]',JSON.stringify(result.geometryRouting));
     console.log(`[Yahoo ${taskIndex+1}/${yahooTasks.length}] ${context.account.name} ${item.id} cards=${result.cardCount} matches=${result.competitorCount} lowest=${result.lowestPrice} source=${result.sourceStatus?.search||'unknown'}`);
   }catch(error){
     noResponseDeferral=isRequestDeferred(error)&&!sourceInputObserved;
@@ -479,7 +480,7 @@ console.log('[ラクマ既知URL継続]',JSON.stringify([...rakumaHintStats.valu
   for(const [key,value] of Object.entries(row))sum[key]=(sum[key]||0)+value;return sum;
 },{})));
 
-console.log('[本轮公开读取统计]',JSON.stringify({publicReadStats,imageCacheStats,yahooAttemptStats,yahooGate:yahooRequestStats(),yahooTransport:yahooTransportStats(),rakumaAccess:rakumaAccessDiagnostic(),notes:'Read wall time includes gate waiting; overlapping durations are not scan wall time.'}));
+console.log('[本轮公开读取统计]',JSON.stringify({publicReadStats,imageCacheStats,imageTransfers:imageTransferStats(),yahooAttemptStats,yahooGate:yahooRequestStats(),yahooTransport:yahooTransportStats(),rakumaAccess:rakumaAccessDiagnostic(),notes:'Read wall time includes gate waiting; overlapping durations are not scan wall time.'}));
 const accountResults=[];
 for(const context of contexts){
   const rows=context.activeItems.map(item=>{
@@ -583,7 +584,7 @@ const result={
   cycleCoverage:cycleCoverage(allItems,accountResults,{startedAt,finishedAt:checkedAt,previousCoverage:previous?.cycleCoverage}),
   version:6,checkedAt,dataRevision:checkedAt,settings:{...settings,yahooRequestDeadline:undefined,rakumaRequestDeadline:undefined,beforeYahooTransport:undefined,afterYahooTransport:undefined,signal:undefined,yahooComparisonAudit:undefined,attempts:undefined},accounts:accountResults,managedAccounts,portalUsers,appliedSyncIssues:previous?.appliedSyncIssues||{},
   manualCosts,matchCorrections,portalPreferences,dismissedDiscoveries,discoveryReviews,ownedTitleHistory,relistAliases,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode,xianyuAccess:sessionManager.access()},items:allItems,
-  scanMeta:{codeSha:process.env.GITHUB_SHA||null,trigger:process.env.SCAN_TRIGGER||'local',startedAt:new Date(startedAt).toISOString(),durationSeconds:Math.round((Date.now()-startedAt)/1000),yahooTransport:yahooTransportStats(),publicReadStats,imageCacheStats,yahooAttemptStats,
+  scanMeta:{codeSha:process.env.GITHUB_SHA||null,trigger:process.env.SCAN_TRIGGER||'local',startedAt:new Date(startedAt).toISOString(),durationSeconds:Math.round((Date.now()-startedAt)/1000),yahooTransport:yahooTransportStats(),publicReadStats,imageCacheStats,imageTransfers:imageTransferStats(),yahooAttemptStats,
     comparisonAuditActive:comparisonAuditSession?.active===true,pricingEngine,graph:graphOutcome?{...graphOutcome.summary,reads:graphOutcome.stats,costIntegration:'existing_independent_cost_workers'}:null,
     comparisonMode:settings.comparisonMode||'cross_platform',accountExecutionPolicy:graphEnabled?'experimental_graph':'yahoo_first_rakuma_last',accountPhases:accountPhaseObservations,comparisonTasks:Object.fromEntries(['yahoo','rakuma','mercari'].map(source=>[source,contexts.reduce((sum,context)=>sum+context.activeItems.filter(item=>requiredPricingPlatforms(item).includes(source)).length,0)])),budgetMinutes:Number(settings.scanBudgetMinutes)||12,profileConcurrency,yahooConcurrency,rakumaConcurrency,mercariConcurrency,rakumaLimit:Number.isFinite(rakumaLimit)?rakumaLimit:null,mercariLimit:Number.isFinite(mercariLimit)?mercariLimit:null,xianyuLimit}
 };

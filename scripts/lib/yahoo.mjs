@@ -6,7 +6,11 @@ import {carryYahooDetailQueueVersion,planYahooDetailQueue,withYahooSchedulingChe
 import { knownYahooCandidates,knownYahooRevalidationCandidates,yahooTargetShipping } from './yahoo-known-refresh.mjs';
 import { extractYahooBundleComponents } from './merchant-bundles.mjs';
 import { merchantNameFromTitle } from './merchant-names.mjs';
-import { imageFingerprints,imageSetSimilarity,primaryProductSimilarity } from './image.mjs';
+import { imageFingerprints,imageSetSimilarity,primaryProductSimilarity,withImageByteObservations } from './image.mjs';
+import {createImageByteObservationPool} from './image-byte-observations.mjs';
+import {defaultGeometryRanker,GEOMETRY_LIMITS} from './geometry-rank-batch.mjs';
+import {classifyYahooCardConflict} from './yahoo-card-conflicts.mjs';
+import {planYahooThumbnailWork} from './yahoo-thumbnail-work-plan.mjs';
 import {createYahooReadObservations} from './yahoo-read-observations.mjs';
 import {yahooRecommendationReceipt} from './yahoo-recommendation-receipt.mjs';
 import {yahooProfileObservation} from './yahoo-profile-observation.mjs';
@@ -325,13 +329,16 @@ export function candidateEvidenceOrder(a,b){
   return 0;
 }
 
-export function visualRecallEligible({query='',candidate='',queryCategory='',candidateCategory='',imageScore=null,threshold=.84}={}){
-  if(!Number.isFinite(imageScore)||imageScore<Math.max(.80,Number(threshold)||.84))return false;
+function visualRecallContextCompatible({query='',candidate='',queryCategory='',candidateCategory=''}={}){
   if(hasExplicitVariantMismatch(query,candidate)||hasExplicitVariantMismatch(candidate,query))return false;
   const semantic=semanticSameItem({query,candidate,queryCategory,candidateCategory});
   if(['variant_mismatch','product_mismatch'].includes(semantic.reason))return false;
   const queryFamily=productFamily(query,queryCategory),candidateFamily=productFamily(candidate,candidateCategory);
   return !(queryFamily&&candidateFamily&&queryFamily!==candidateFamily);
+}
+export function visualRecallEligible({query='',candidate='',queryCategory='',candidateCategory='',imageScore=null,threshold=.84}={}){
+  return Number.isFinite(imageScore)&&imageScore>=Math.max(.80,Number(threshold)||.84)&&
+    visualRecallContextCompatible({query,candidate,queryCategory,candidateCategory});
 }
 
 export function unresolvedRaiseCandidates(preliminary=[],rejected=[]){
@@ -536,6 +543,12 @@ export async function evaluateYahooDetail({item,card,bundle,ownDetail,knownOnly=
 }
 
 export async function yahooCompare(_unusedPage,item,settings={},dependencies={}){
+  if(settings.yahooGeometryPriority!==true||settings.yahooKnownOnly===true)return runYahooCompare(_unusedPage,item,settings,dependencies);
+  const pool=createImageByteObservationPool({maxImages:32,maxBytes:GEOMETRY_LIMITS.totalBytes});
+  return withImageByteObservations(pool,()=>runYahooCompare(_unusedPage,item,settings,{...dependencies,geometryBytePool:pool}));
+}
+
+async function runYahooCompare(_unusedPage,item,settings={},dependencies={}){
   const knownOnly=settings.yahooKnownOnly===true;
   const requestedKnown=new Set(settings.yahooKnownCandidateIds||[]);
   const knownCardsInput=knownOnly?knownYahooRevalidationCandidates(item,settings).filter(card=>!requestedKnown.size||requestedKnown.has(card.id)).slice(0,2):[];
@@ -646,20 +659,59 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   }
   const visualRecallLimit=Math.max(0,Math.min(30,Number(settings.yahooRecommendationFallbackMaxCards)||20));
   const visualRecallThreshold=Math.max(.80,Number(settings.yahooRecommendationVisualRecallThreshold)||.84);
-  const visualRecallCards=cards.filter(card=>
+  const baselineVisualRecallCards=cards.filter(card=>
     !acceptedIds.has(card.id)&&card.id!==item.id&&!rejectedByMemory(settings.matchCorrections,item,'yahoo',card)&&card.image&&
     !isOwnedOffer(settings.ownedOffers,'yahoo',card)&&Number.isFinite(card.price)&&(!ownSellerId||card.sellerId!==ownSellerId)&&!isRejected(card.title)
   ).sort((a,b)=>Number(ownImages.includes(b.image))-Number(ownImages.includes(a.image))||a.price-b.price).slice(0,visualRecallLimit);
+  const ranker=dependencies.geometryRanker||defaultGeometryRanker,pool=dependencies.geometryBytePool;
+  const geometryBounds={deadlineAt:requestDeadline(settings,settings,'yahoo'),signal:settings.signal};
+  const geometryReady=settings.yahooGeometryPriority===true&&Boolean(pool?.get(ownImageEvidence[0]))&&ranker.canRun?.(geometryBounds)===true;
+  const thumbnailPlan=planYahooThumbnailWork({enabled:geometryReady&&settings.yahooGeometryReallocate===true,baseline:baselineVisualRecallCards,ownPrice:Number(item.ownPrice),
+    candidates:liveCards.filter(card=>card.id!==item.id&&card.image&&!rejectedByMemory(settings.matchCorrections,item,'yahoo',card)&&
+      !isOwnedOffer(settings.ownedOffers,'yahoo',card)&&(!ownSellerId||card.sellerId!==ownSellerId)&&!isRejected(card.title)&&
+      classifyYahooCardConflict({ownDetail,card}).classification!=='definitive_conflict'&&
+      visualRecallContextCompatible({query:item.title,candidate:card.title,queryCategory:ownCategory,candidateCategory:categoryText(null,card)}))});
+  const visualRecallCards=thumbnailPlan.selected,selectedVisualIds=new Set(visualRecallCards.map(card=>card.id));
+  const unobservedVisualCards=baselineVisualRecallCards.filter(card=>!selectedVisualIds.has(card.id));
+  const ownImageTransfers=pool?.transferStats;
   const visualFingerprints=await Promise.all(visualRecallCards.map(card=>fingerprint(card.image)));
+  const visualImageTransfers=pool?.transferStats;
+  const transferDelta=(after,before)=>after?Object.fromEntries(Object.keys(after).map(key=>[key,Math.max(0,after[key]-(before?.[key]||0))])):null;
+  let geometryRouting,geometryPriorityIds=new Set(),geometryOnlyIds=new Set();
+  // Reuse only successful bytes already obtained by the unchanged thumbnail
+  // path. A fingerprint-only cache miss never causes another image request.
+  if(settings.yahooGeometryPriority===true&&dependencies.geometryBytePool&&!knownOnly){
+    const pool=dependencies.geometryBytePool,ownBytes=pool.get(ownImageEvidence[0]);
+    const candidates=visualRecallCards.flatMap((card,index)=>{
+      if(classifyYahooCardConflict({ownDetail,card}).classification==='definitive_conflict'||
+        !visualRecallContextCompatible({query:item.title,candidate:card.title,queryCategory:ownCategory,candidateCategory:categoryText(null,card)}))return [];
+      const observation=pool.get(visualFingerprints[index]);
+      return observation?[{id:card.id,observation}]:[];
+    }).slice(0,GEOMETRY_LIMITS.pairs);
+    const geometryStarted=performance.now();
+    try{
+      const result=await ranker.rank({own:ownBytes,candidates,...geometryBounds});
+      if(result?.status==='observed')geometryPriorityIds=new Set((result.priorityIds||[]).filter(id=>candidates.some(row=>row.id===id)));
+      geometryRouting={status:result?.status==='observed'?'observed':'unavailable',availableImages:candidates.length+(ownBytes?1:0),paired:result?.status==='observed'?Number(result.paired)||0:0,hints:geometryPriorityIds.size,prioritySlots:0};
+    }catch{geometryRouting={status:'unavailable',availableImages:candidates.length+(ownBytes?1:0),paired:0,hints:0,prioritySlots:0}}
+    geometryRouting.elapsedMs=Math.max(0,Math.round(performance.now()-geometryStarted));
+    geometryRouting.imageWork={baselineCalls:baselineVisualRecallCards.length,selectedCalls:visualRecallCards.length,nearPriceCalls:thumbnailPlan.reallocated,unprocessedOriginalCards:unobservedVisualCards.length,ownTransfers:ownImageTransfers,cardTransfers:transferDelta(visualImageTransfers,ownImageTransfers)};
+  }
   for(let index=0;index<visualRecallCards.length;index++){
     const card=visualRecallCards[index],candidateCategory=categoryText(null,card);
     const previewImageScore=imageSetSimilarity(ownFingerprints,[visualFingerprints[index]]);
-    if(!visualRecallEligible({query:item.title,candidate:card.title,queryCategory:ownCategory,candidateCategory,imageScore:previewImageScore,threshold:visualRecallThreshold}))continue;
+    if(acceptedIds.has(card.id))continue;
+    const geometryRecall=geometryPriorityIds.has(card.id);
+    // An image hint changes recall/order only. Explicit specification conflicts
+    // cannot be rescued, and every hinted card still goes through full detail.
+    const normalVisualRecall=visualRecallEligible({query:item.title,candidate:card.title,queryCategory:ownCategory,candidateCategory,imageScore:previewImageScore,threshold:visualRecallThreshold});
+    if(!geometryRecall&&!normalVisualRecall)continue;
+    if(geometryRecall&&!normalVisualRecall)geometryOnlyIds.add(card.id);
     const tScore=titleScore(exactQuery,card.title),recallScore=titleScore(query,card.title);
     const semantic=semanticSameItem({query:item.title,candidate:card.title,queryCategory:ownCategory,candidateCategory});
     const conditionPriority=/(?:新品|未開封|未使用|未拆封|全新)/i.test(card.title)?0:
       /(?:中古|開封済|箱なし|箱無し|本体のみ|展示品)/i.test(card.title)?2:1;
-    preliminary.push({...card,titleScore:tScore,recallScore,semantic,fromRecommendation:recommendationEvidence(card),visualRecall:true,
+    preliminary.push({...card,titleScore:tScore,recallScore,semantic,fromRecommendation:recommendationEvidence(card),visualRecall:true,...(geometryRecall?{geometryRecall:true}:{}),
       previewImageScore,lotterySeriesUnconfirmed:lotterySeriesNeedsVisualConfirmation(item.title,card.title),conditionPriority});
     acceptedIds.add(card.id);
   }
@@ -689,7 +741,8 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   // Unselected old links follow new candidates even when their cached price is
   // lower. Otherwise a third known link could consume a reserved discovery slot.
   preliminary=[...knownCards.slice(0,recheckLimit),...preliminary.filter(card=>!knownIds.has(card.id)),...knownCards.slice(recheckLimit)];
-  const detailQueue=knownOnly?null:planYahooDetailQueue({item,detail:ownDetail,candidates:preliminary,knownIds,knownLimit:recheckLimit,limit:maxDetailChecks,prior:item.yahoo?.detailQueue,priorRulesVersion:item.yahoo?.rulesVersion});
+  const detailQueue=knownOnly?null:planYahooDetailQueue({item,detail:ownDetail,candidates:preliminary,knownIds,knownLimit:recheckLimit,limit:maxDetailChecks,prior:item.yahoo?.detailQueue,priorRulesVersion:item.yahoo?.rulesVersion,geometryPriorityIds,geometryOnlyIds});
+  if(geometryRouting)geometryRouting.prioritySlots=detailQueue?.geometryPriorityCount||0;
   // Backoff changes selection only. Every recalled card stays in preliminary
   // for unresolved-lower/raise guards and incomplete-coverage accounting.
   const detailCandidates=detailQueue?.cards||preliminary;
@@ -729,21 +782,25 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   const own={id:item.id,url:item.url||item.ownUrl,title:item.title,image:item.image,price:Number(item.ownPrice),titleScore:1,imageScore:1,isOwn:true};
   const comparable=[own,...competitors].filter(x=>Number.isFinite(x.price)).sort((a,b)=>a.price-b.price);
   const lowest=comparable[0]||null;
-  const unresolvedCandidates=unresolvedRaiseCandidates(preliminary,rejected);
-  const checkedIds=new Set([...competitors,...rejected].map(candidate=>candidate.id));
+  const unresolvedCandidates=[...unresolvedRaiseCandidates(preliminary,rejected),...unobservedVisualCards.filter(card=>!preliminary.some(row=>row.id===card.id))];
+  // Reallocated-away thumbnails have only cheap title screening, not a detail
+  // observation. Keep them unresolved even if that screen recorded a rejection.
+  const unobservedVisualIds=new Set(unobservedVisualCards.map(card=>card.id));
+  const checkedIds=new Set([...competitors,...rejected.filter(card=>!unobservedVisualIds.has(card.id))].map(candidate=>candidate.id));
   const provisionalFloor=lowest&&!lowest.isOwn?Number(lowest.price):Number(item.ownPrice);
-  const uncheckedLowerCandidates=preliminary.filter(candidate=>Number(candidate.price)<provisionalFloor&&!checkedIds.has(candidate.id));
+  const uncheckedLowerCandidates=[...preliminary,...unobservedVisualCards.filter(card=>!preliminary.some(row=>row.id===card.id))].filter(candidate=>Number(candidate.price)<provisionalFloor&&!checkedIds.has(candidate.id));
   const market=marketPriceDecision(item.ownPrice,competitors,settings,{plausibleCompetitors:unresolvedCandidates,ownSellerId});
   const {marketPrices,marketMedianPrice,marketMinPrice,marketMaxPrice,underpriced}=market;
   const reviewReasons=new Set(['detail_price_unavailable','primary_variant_unconfirmed','sale_description_unavailable','collectible_variant_image_unconfirmed','lottery_series_unconfirmed','physical_image_unconfirmed','detail_error','detail_id_mismatch','bonus_terms_unconfirmed']);
   const pendingReviews=rejected.filter(candidate=>reviewReasons.has(candidate.reason));
   const unconfirmedLowerCandidates=rejected.filter(candidate=>reviewReasons.has(candidate.reason)&&Number(candidate.price)<Number(item.ownPrice));
-  const verificationIncomplete=knownOnly||Boolean(broadSearchDue&&!search)||Boolean(detailQueue?.deferredCount)||uncheckedLowerCandidates.length>0||unconfirmedLowerCandidates.length>0||!competitors.length&&pendingReviews.length>0||!ownDetail?.description?.trim();
+  const verificationIncomplete=unobservedVisualCards.length>0||knownOnly||Boolean(broadSearchDue&&!search)||Boolean(detailQueue?.deferredCount)||uncheckedLowerCandidates.length>0||unconfirmedLowerCandidates.length>0||!competitors.length&&pendingReviews.length>0||!ownDetail?.description?.trim();
   const recommended=verificationIncomplete?Number(item.ownPrice):lowest&&!lowest.isOwn?Math.max(1,Math.floor(lowest.price)-1):market.recommendedPrice;
   const sourceCovered=Boolean(search||ownBundle);
   const matchLabel=verificationIncomplete?'存在待核验候选或详情缺失，暂不改价':lowest&&!lowest.isOwn?'已核验在售同款':underpriced?'与下一家同款存在提价空间':competitors.length?'已核验同款，你当前最低':'未发现同款';
+  if(geometryRouting)geometryRouting.imageWork.detailTransfers=transferDelta(pool?.transferStats,visualImageTransfers);
   return {
-    rulesVersion:MATCHING_RULES_VERSION,
+    rulesVersion:MATCHING_RULES_VERSION,...(geometryRouting?{geometryRouting}:{}),
     query,searchUrl,lowestPrice:lowest?.price??item.ownPrice,lowestUrl:lowest?.url??item.url,
     ...(knownOnly?{evidenceStatus:'incomplete',searchComplete:false,ownObservedPrice:item.ownPrice,knownRefresh:{mode:'details_only',reason:competitors.length?'verified_known_offers':'no_verified_known_offer'}}:{}),
     recommendedPrice:recommended,candidates:competitors.slice(0,5),cardCount:cards.length,

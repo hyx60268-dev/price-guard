@@ -64,7 +64,7 @@ export function carryYahooDetailQueueVersion({item,detail,prior,priorRulesVersio
  return prior;
 }
 
-export function planYahooDetailQueue({item,detail,candidates=[],knownIds=new Set(),knownLimit=2,limit=8,prior,priorRulesVersion,now=Date.now()}={}){
+export function planYahooDetailQueue({item,detail,candidates=[],knownIds=new Set(),knownLimit=2,limit=8,prior,priorRulesVersion,geometryPriorityIds=new Set(),geometryOnlyIds=new Set(),now=Date.now()}={}){
  const ownKey=yahooQueueOwnKey(item,detail);
  // A rules upgrade invalidates accepted/inspected outcomes. Only completed
  // unresolved scheduling work may cross the version boundary.
@@ -96,24 +96,30 @@ export function planYahooDetailQueue({item,detail,candidates=[],knownIds=new Set
  // or accepted offers. Keep them in the caller's recall/coverage set while giving
  // unseen cards room. Retry time is finite, and changed identity revokes it.
  const ready=rows.filter(row=>!row.scheduling||time(row.scheduling.retryAt)<=now);
- const known=ready.filter(row=>knownIds.has(row.card.id)).slice(0,Math.min(knownLimit,limit));
+ const normalReady=ready.filter(row=>!geometryOnlyIds.has(row.card.id));
+ const known=normalReady.filter(row=>knownIds.has(row.card.id)).slice(0,Math.min(knownLimit,limit));
  const reserved=new Set(known.map(row=>row.card.id));
- const unknown=ready.filter(row=>!knownIds.has(row.card.id));
+ const unknown=normalReady.filter(row=>!knownIds.has(row.card.id));
  // Keep the lowest retry-eligible unknown candidate, even if it was wrong last
  // cycle. A newly cheaper or changed card has no scheduling penalty.
  const low=unknown.length&&known.length<limit?[unknown[0]]:[];
  low.forEach(row=>reserved.add(row.card.id));
  // One existing slot retries the oldest due unresolved response, even while new
  // cards keep arriving. It cannot monopolize the remaining discovery slots.
- const retry=reserved.size<limit?ready.filter(row=>row.scheduling&&!reserved.has(row.card.id))
+ const retry=reserved.size<limit?normalReady.filter(row=>row.scheduling&&!reserved.has(row.card.id))
   .sort((a,b)=>time(a.scheduling.retryAt)-time(b.scheduling.retryAt)||a.index-b.index).slice(0,1):[];
  retry.forEach(row=>reserved.add(row.card.id));
- const rest=ready.filter(row=>!reserved.has(row.card.id)).sort((a,b)=>
+ // At most one existing slot may use geometry, after known/lowest/due retry.
+ // Keep at least one slot for the original uninspected/unknown exploration.
+ const geometry=reserved.size+1<limit?ready.filter(row=>!reserved.has(row.card.id)&&!knownIds.has(row.card.id)&&geometryPriorityIds.has(row.card.id)).slice(0,1):[];
+ geometry.forEach(row=>reserved.add(row.card.id));
+ const rest=normalReady.filter(row=>!reserved.has(row.card.id)).sort((a,b)=>
   Number(knownIds.has(a.card.id))-Number(knownIds.has(b.card.id))||a.orderAt-b.orderAt||a.index-b.index);
- const ordered=[...known,...low,...retry,...rest];
+ const ordered=[...known,...low,...retry,...geometry,...rest];
  const attempts=[],schedulingSelections=[];
  return {
   cards:ordered.map(row=>row.card),
+  geometryPriorityCount:geometry.length,
   deferredCount:rows.length-ready.length,
   record(card,attemptedAt=new Date().toISOString()){
    const row=rows.find(value=>value.card.id===card.id);if(!row)return;

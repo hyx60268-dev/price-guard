@@ -1,8 +1,26 @@
 import sharp from 'sharp';
 import { createHash } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createFingerprintLoader } from './image-fingerprint-cache.mjs';
 
 const cache=new Map(),diagnostics=new Map();
+const transferTotals={fetches:0,settledFetches:0,completedDecodedBytes:0,durationMs:0,unknownBodyTransfers:0};
+export const imageTransferStats=()=>({...transferTotals});
+const imageByteObservations=new AsyncLocalStorage();
+const observeImageBytes=value=>{
+  const scope=imageByteObservations.getStore();
+  if(scope?.active)return scope.pool.observe(value);
+};
+// The pool belongs to one comparison. Promise branches inherit that scope;
+// other concurrent comparisons never observe its bodies. Clear on every exit,
+// and ignore late work that outlives the owning comparison.
+export function withImageByteObservations(pool,fn){
+  const scope={pool,active:true};
+  return imageByteObservations.run(scope,async()=>{
+    try{return await fn()}
+    finally{scope.active=false;try{pool?.clear()}catch{/* Best-effort cleanup. */}}
+  });
+}
 function recordDiagnostic(url,value){
   if(!diagnostics.has(url)&&diagnostics.size>=500)diagnostics.delete(diagnostics.keys().next().value);
   diagnostics.set(url,{...value,checkedAt:new Date().toISOString()});
@@ -42,12 +60,16 @@ async function download(url,context={}){
     const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),12000),start=performance.now();
     const abort=()=>controller.abort();
     context.signal?.addEventListener('abort',abort,{once:true});
-    let httpStatus=null,receivedBytes=0,transportStarted=false,accessDenial=null;
+    let httpStatus=null,receivedBytes=0,bodyCompleted=false,transportStarted=false,accessDenial=null;
     const record=(reason,extra={})=>recordDiagnostic(url,{stage:'download',reason,attempt,httpStatus,elapsedMs:Math.round(performance.now()-start),...extra});
     try{
       if(requestStopped(context)){abort();return null}
       observeTransfer(context.observeImageTransferStart,{fetches:1});
       transportStarted=true;
+      const initiated={fetches:1,settledFetches:0,completedDecodedBytes:0,durationMs:0,unknownBodyTransfers:0};
+      transferTotals.fetches++;
+      const activeScope=imageByteObservations.getStore();
+      if(activeScope?.active)try{activeScope.pool.observeTransfer?.(initiated)}catch{/* Counts cannot change source access. */}
       const response=await fetch(url,{headers:{'user-agent':'Mozilla/5.0','accept':'image/avif,image/webp,image/*,*/*;q=0.8'},signal:controller.signal,redirect:context.auditTransport===true?'manual':'follow'});
       httpStatus=response.status;
       if(context.stopOnAccessDenial===true&&[401,403,429].includes(httpStatus)){
@@ -66,7 +88,7 @@ async function download(url,context={}){
       }
       const length=Number(response.headers.get('content-length'));
       if(Number.isFinite(length)&&length>12_000_000){record('body_too_large',{declaredBytes:length});return null}
-      const buffer=Buffer.from(await response.arrayBuffer());receivedBytes=buffer.length;
+      const buffer=Buffer.from(await response.arrayBuffer());receivedBytes=buffer.length;bodyCompleted=true;
       if(requestStopped(context)){abort();return null}
       const encoding=response.headers.get('content-encoding');
       if(!encoding&&Number.isFinite(length)&&length>0&&buffer.length!==length){record('body_length_mismatch',{declaredBytes:length,receivedBytes:buffer.length});return null}
@@ -85,6 +107,10 @@ async function download(url,context={}){
       // decoded arrayBuffer bytes, not Content-Length or estimated wire bytes.
       // An expired/cache-only call starts no transport and emits no event.
       if(transportStarted){
+        const scope=imageByteObservations.getStore();
+        const transfer={fetches:0,settledFetches:1,completedDecodedBytes:receivedBytes,durationMs:Math.max(0,performance.now()-start),unknownBodyTransfers:!bodyCompleted&&httpStatus>=200&&httpStatus<300?1:0};
+        for(const key of Object.keys(transferTotals))transferTotals[key]+=transfer[key];
+        if(scope?.active)try{scope.pool.observeTransfer?.(transfer)}catch{/* Optional local counters cannot change transport. */}
         try{observeTransfer(context.observeImageTransfer,{fetches:1,bytes:receivedBytes,
           durationMs:Math.min(Number.MAX_SAFE_INTEGER,Math.max(0,Math.round(performance.now()-start))),httpStatus:boundedStatus(httpStatus)})}
         // Preserve a source denial if the observer also fails. Throwing here
@@ -131,10 +157,10 @@ async function calculateFingerprints(buffer,url){
   }catch{recordDiagnostic(url,{...imageFingerprintDiagnostic(url),stage:'fingerprint',reason:'decode_error'});return null}
 }
 
-let persistentLoader=createFingerprintLoader({fetchImage:download,fingerprint:calculateFingerprints});
+let persistentLoader=createFingerprintLoader({fetchImage:download,fingerprint:calculateFingerprints,observeImageBytes});
 let cacheClock=Date.now;
 export function configureImageFingerprintCache({directory,now=Date.now}={}){
- cache.clear();diagnostics.clear();cacheClock=now;persistentLoader=createFingerprintLoader({directory,fetchImage:download,fingerprint:calculateFingerprints,now});
+ cache.clear();diagnostics.clear();for(const key of Object.keys(transferTotals))transferTotals[key]=0;cacheClock=now;persistentLoader=createFingerprintLoader({directory,fetchImage:download,fingerprint:calculateFingerprints,now,observeImageBytes});
  return persistentLoader.stats;
 }
 const makeFingerprints=(url,options)=>url?persistentLoader.get(url,options):null;

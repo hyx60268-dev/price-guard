@@ -16,4 +16,23 @@ jobs:
           node-version: '20'
           cache: npm
       - run: npm ci
+      - uses: actions/setup-python@v5
+        timeout-minutes: 3
+        with:
+          python-version: '3.12'
+          architecture: x64
+          cache: pip
+          cache-dependency-path: requirements-geometry.txt
+      - name: Install pinned local geometry runtime and run no-source self-check
+        timeout-minutes: 3
+        run: |
+          run_timed() {
+            phase="$1"; shift; started=$(date +%s%3N)
+            set +e; "$@"; code=$?; set -e
+            printf '{"geometryPreparationPhase":"%s","elapsedMs":%s,"exitCode":%s}\n' "$phase" "$(( $(date +%s%3N) - started ))" "$code"
+            return "$code"
+          }
+          run_timed venv python3 -m venv .geometry-venv
+          run_timed wheels .geometry-venv/bin/python -m pip --isolated --disable-pip-version-check install --index-url https://pypi.org/simple --only-binary=:all: --no-deps --require-hashes -r requirements-geometry.txt
+          run_timed generated_self_check env PATH="$PWD/.geometry-venv/bin:$PATH" node scripts/check-geometry-runtime.mjs
       - run: npm test
