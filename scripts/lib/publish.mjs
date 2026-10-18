@@ -14,6 +14,7 @@ import { pricingCoverage } from './pricing-coverage.mjs';
 import { scopeCycleCoverage } from './cycle-coverage.mjs';
 import { FRONTEND_VERSION } from '../../public/build-version.js';
 import { withRakumaDiscovery } from './rakuma-discovery-hints.mjs';
+import {countSharedQuoteRows,summarizeSharedQuotePublication} from './shared-quote-publication-counts.mjs';
 
 function safeUsername(value=''){return String(value).trim().toLowerCase().replace(/[^a-z0-9_-]/g,'').slice(0,48)}
 function safeEmail(value=''){
@@ -120,13 +121,16 @@ export function portalUsersForResult(result={},envValue=process.env.PORTAL_USERS
 
 export function scopeResultForPortalUser(result,user){
   const allowed=new Set(user.accountIds||[]);
+  // The all-account preparation snapshot is not a member-scoped diagnostic.
+  const {publicationCounts,...memberSharedDetailSummary}=result.scanMeta?.sharedDetailSummary||{};
+  const scanMeta=result.scanMeta?.sharedDetailSummary?{...result.scanMeta,sharedDetailSummary:memberSharedDetailSummary}:result.scanMeta;
   const accounts=(result.accounts||[]).filter(account=>allowed.has(account.id));
   const items=(result.items||[]).filter(item=>allowed.has(item.accountId));
   const manualCosts=Object.fromEntries(Object.entries(result.manualCosts||{}).filter(([,record])=>allowed.has(record?.accountId)));
   const managedAccounts=(result.managedAccounts||[]).filter(account=>allowed.has(account.id));
   const notificationEmail=safeEmail(result.portalPreferences?.[user.username]?.notificationEmail||user.notificationEmail);
   const matchCorrections=Object.fromEntries(Object.entries(result.matchCorrections||{}).filter(([,record])=>allowed.has(record.accountId)));
-  return {...result,comparisonAudit:undefined,comparisonAuditReceipt:undefined,pricingCoverage:pricingCoverage(items,accounts),cycleCoverage:scopeCycleCoverage(result.cycleCoverage,user.accountIds),matchCorrections,portalUsers:undefined,portalPreferences:undefined,portalUser:{username:user.username,displayName:user.displayName,role:'member',notificationEmail},accounts,items,manualCosts,managedAccounts,
+  return {...result,scanMeta,comparisonAudit:undefined,comparisonAuditReceipt:undefined,pricingCoverage:pricingCoverage(items,accounts),cycleCoverage:scopeCycleCoverage(result.cycleCoverage,user.accountIds),matchCorrections,portalUsers:undefined,portalPreferences:undefined,portalUser:{username:user.username,displayName:user.displayName,role:'member',notificationEmail},accounts,items,manualCosts,managedAccounts,
     merchantMonitors:undefined,listingHistory:undefined,appliedSyncIssues:undefined,dismissedDiscoveries:{},discoveryReviews:{},
     relistAliases:Object.fromEntries(Object.entries(result.relistAliases||{}).filter(([key])=>allowed.has(key.slice(0,key.lastIndexOf(':'))))),
     ownedTitleHistory:items.map(item=>item.title).filter(Boolean)};
@@ -172,12 +176,13 @@ export async function writeOutputs({root,result,previous,password}){
   const ownership=buildOwnedOffers([...(result.accounts||[]),...(result.managedAccounts||[])],result.items||[]);
   const previousByKey=new Map((previous?.items||[]).map(item=>[JSON.stringify([item.accountId,item.id]),item]));
   const auditOwnership=buildOwnedOffers([...(result.accounts||[]),...(result.managedAccounts||[])],[...(result.items||[]),...Object.values(result.listingHistory||{})]);
+  const sharedPublicationNow=Date.now(),sharedPublicationBefore=countSharedQuoteRows(result.items||[]);
   const nativeOwnedSellers=ownedNativeSupplierSellerKeys([...(result.accounts||[]),...(result.managedAccounts||[])],result.items||[]);
   result.items=(result.items||[]).map(raw=>{
     const native=Object.hasOwn(raw,'nativeSupplierQuotes')||raw.procurementSource?.nativeSupplierQuotes?{...raw,nativeSupplierQuotes:currentNativeSupplierQuotes(raw,{matchCorrections:result.matchCorrections,ownedSellerKeys:nativeOwnedSellers})}:raw;
     const item=withRakumaDiscovery(currentPurchasableOffers(native,result.matchCorrections),
       previousByKey.get(JSON.stringify([raw.accountId,raw.id]))||{},{matchCorrections:result.matchCorrections,ownedOffers:ownership});
-    if(Object.hasOwn(item,'sharedYahooOffers'))item.sharedYahooOffers=currentSharedYahooOffers(item,{ownershipIndex:auditOwnership,corrections:result.matchCorrections});
+    if(Object.hasOwn(item,'sharedYahooOffers'))item.sharedYahooOffers=currentSharedYahooOffers(item,{ownershipIndex:auditOwnership,corrections:result.matchCorrections,now:sharedPublicationNow});
     if(item.comparisonAudit){
       const audit=item.comparisonAudit,target=audit.target,own=target?.ownObservation;
       if(audit.version!==1||audit.kind!=='standalone_frozen_yahoo_comparison_audit'||target?.targetId!==item.id||target?.accountId!==item.accountId||own?.id!==item.id||own?.title!==item.title||own?.sourceUrl!==`https://paypayfleamarket.yahoo.co.jp/item/${item.id}`)item.comparisonAudit=undefined;
@@ -197,6 +202,7 @@ export async function writeOutputs({root,result,previous,password}){
   if(result.scanMeta?.sharedDetailSummary){
     const offers=result.items.flatMap(item=>item.sharedYahooOffers||[]);
     result.scanMeta.sharedDetailSummary={...result.scanMeta.sharedDetailSummary,
+      publicationCounts:summarizeSharedQuotePublication(result,{before:sharedPublicationBefore,now:sharedPublicationNow}),
       outputOffers:offers.length,outputOfferTargets:result.items.filter(item=>item.sharedYahooOffers?.length).length};
   }
   for(const account of result.accounts||[])account.items=result.items.filter(i=>i.accountId===account.id);
