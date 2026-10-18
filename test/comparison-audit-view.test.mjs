@@ -319,3 +319,58 @@ test('malformed envelopes and row containers fail closed without reading externa
   }
   assert.equal(comparisonAuditPresentation(null, { now }), null);
 });
+
+
+test('lower-price mode exposes target-only skipped and unknown populations without changing pricing',()=>{
+ const item=product(),before=pricingDecision(item,{now});item.comparisonAudit.flowMode='lower_price_card_first';
+ Object.assign(item.comparisonAudit.target.counts,{confirmedLowerPrice:12,unknownPrice:3,skippedNotLower:7,mainflowCardOnly:4,mainflowDetailPaired:8,baselineValidationPaired:2});
+ const result=select(item),view=dom(item);try{
+  assert.equal(result.flowMode,'lower_price_card_first');
+  const content=view.window.document.querySelector('.comparison-audit').textContent;
+  assert.match(content,/确认更低 12/);assert.match(content,/金额或运费未知 3/);assert.match(content,/确认不低而跳过 7/);
+  assert.match(content,/主流程卡片提示 4/);assert.match(content,/疑难详情结果 8/);assert.match(content,/另做卡片详情对照 2/);
+  assert.match(content,/未配对部分不能当作没有漏报/);assert.doesNotMatch(content,/998877/);
+  assert.deepEqual(pricingDecision(item,{now}),before);
+ }finally{view.window.close()}
+});
+
+test('unknown card price can expose a later bound comparable lower detail without inventing a card quote',()=>{
+ const item=product();item.comparisonAudit.flowMode='lower_price_card_first';changeCard(item,{price:null,priceKind:'unknown'});
+ item.comparisonAudit.target.rows[0].detailPriceComparison={own:{status:'confirmed',priceJPY:10000},candidate:{status:'confirmed',priceJPY:9000}};
+ item.comparisonAudit.target.rows[0].cardFirst={mode:'detail_required',reason:'ordinary_price_unconfirmed',cardId:'z201'};
+ const before=pricingDecision(item,{now}),result=select(item),view=dom(item);try{
+  assert.equal(result.rows.length,1);assert.equal(result.rows[0].cardPriceJPY,null);assert.equal(result.rows[0].hint,false);
+  assert.equal(result.rows[0].detailPriceJPY,9000);assert.equal(result.rows[0].baselineStatus,'comparable');
+  assert.match(view.window.document.body.textContent,/原卡片标价未确认/);assert.match(view.window.document.body.textContent,/后读详情低价记录/);
+  assert.doesNotMatch(view.window.document.body.textContent,/原卡片普通标价：/);assert.deepEqual(pricingDecision(item,{now}),before);
+ }finally{view.window.close()}
+ for(const mutate of [row=>{row.paired=false},row=>{row.baseline.status='unknown'},row=>{row.detailObservation.priceJPY=11000;row.baseline.priceJPY=11000}]){
+  const copy=structuredClone(item);mutate(copy.comparisonAudit.target.rows[0]);assert.equal(select(copy).rows.length,0);
+ }
+});
+
+
+test('newflow cannot display foreign or unconfirmed card/detail amounts as JPY',()=>{
+ const item=product();item.comparisonAudit.flowMode='lower_price_card_first';
+ const row=item.comparisonAudit.target.rows[0];
+ row.priceComparison={status:'confirmed_lower',own:{status:'confirmed',priceJPY:10000},observations:[{status:'confirmed',priceJPY:9000}]};
+ row.detailPriceComparison={own:{status:'confirmed',priceJPY:10000},candidate:{status:'confirmed',priceJPY:9000}};
+ assert.equal(select(item).rows[0].cardPriceJPY,9000);assert.equal(select(item).rows[0].detailPriceJPY,9000);
+ const foreign=structuredClone(item);changeCard(foreign,{currency:'unknown'});
+ foreign.comparisonAudit.target.rows[0].priceComparison.observations[0]={status:'unknown',reason:'ordinary_price_unconfirmed'};
+ const observed=select(foreign).rows[0];assert.equal(observed.cardPriceJPY,null);assert.equal(observed.detailPriceJPY,9000);assert.equal(observed.hint,false);
+ for(const candidate of [{status:'unknown',reason:'ordinary_price_unconfirmed'},{status:'confirmed',priceJPY:8000}]){
+  const copy=structuredClone(foreign);copy.comparisonAudit.target.rows[0].detailPriceComparison.candidate=candidate;
+  assert.equal(select(copy).rows.length,0);
+ }
+ const unknownDetail=structuredClone(item);unknownDetail.comparisonAudit.target.rows[0].baseline.status='unknown';
+ unknownDetail.comparisonAudit.target.rows[0].detailPriceComparison.candidate={status:'unknown',reason:'ordinary_price_unconfirmed'};
+ assert.equal(select(unknownDetail).rows[0].detailPriceJPY,null);
+});
+
+test('card currency and shipping remain bound to the frozen producer receipt',()=>{
+ for(const patch of [{currency:'JPY'},{shipping:{shippingKnown:true,currency:'JPY',shippingJPY:0}}]){
+  const item=product();Object.assign(item.comparisonAudit.target.rows[0].cardObservations[0],patch);
+  assert.equal(select(item).rows.length,0);
+ }
+});

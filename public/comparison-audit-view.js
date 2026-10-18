@@ -23,7 +23,8 @@ function canonicalYahoo(id, url) {
   return url === canonical ? canonical : null;
 }
 function counts(value) {
-  return Object.fromEntries(['total', 'eligibleLowPrice', 'paired', 'unpaired'].map(key => [key, count(value?.[key])]));
+  return Object.fromEntries(['total', 'eligibleLowPrice', 'paired', 'unpaired', 'confirmedLowerPrice', 'unknownPrice',
+    'skippedNotLower', 'mainflowCardOnly', 'mainflowDetailPaired', 'baselineValidationPaired'].map(key => [key, count(value?.[key])]));
 }
 function currentOwnership(index, item) {
   const yahoo = index?.yahoo;
@@ -36,7 +37,8 @@ function rejected(item, row, options) {
     Boolean(rejectedByMemory(options.corrections, item, 'yahoo', row));
 }
 function sameCard(left, right) {
-  return ['id', 'url', 'title', 'price', 'sellerId', 'itemStatus', 'priceKind', 'observedAt'].every(key => left[key] === right[key]);
+  return ['id', 'url', 'title', 'price', 'sellerId', 'itemStatus', 'priceKind', 'currency', 'observedAt'].every(key => left[key] === right[key]) &&
+    Object.hasOwn(left, 'shipping') === Object.hasOwn(right, 'shipping') && JSON.stringify(left.shipping) === JSON.stringify(right.shipping);
 }
 function validDetail(detail, id, frozenAt, now) {
   const at = timestamp(detail?.observedAt);
@@ -68,6 +70,7 @@ export function comparisonAuditPresentation(item = {}, options = {}) {
     normalizeOfferPlatform(item.platform, item.ownUrl || item.url) !== 'yahoo' || !currentOwnership(ownershipIndex, item) ||
     !plain(corrections) || Object.values(corrections).some(value => !plain(value))) return null;
   const audit = item.comparisonAudit, target = audit?.target, own = target?.ownObservation;
+  const lowerPriceMode = audit?.flowMode === 'lower_price_card_first';
   const started = timestamp(audit?.startedAt), frozen = timestamp(audit?.frozenAt), observed = timestamp(own?.observedAt);
   if (!plain(audit) || audit.version !== 1 || audit.kind !== KIND || audit.ownershipCheckedAtPublication !== true || !text(audit.requestId) || !plain(target) ||
     target.targetId !== item.id || target.accountId !== item.accountId || !plain(own) || own.id !== item.id || own.title !== item.title ||
@@ -90,38 +93,47 @@ export function comparisonAuditPresentation(item = {}, options = {}) {
       !Array.isArray(row.cardObservations) || row.cardObservations.length === 0) continue;
     const cards = row.cardObservations;
     if (cards.some(card => !plain(card) || card.id !== row.id || !canonicalYahoo(card.id, card.url) ||
-      !text(card.title) || !text(card.sellerId) || !price(card.price) || card.priceKind !== 'ordinary' ||
+      !text(card.title) || !text(card.sellerId) || !(price(card.price) && card.priceKind === 'ordinary' || lowerPriceMode && card.price === null && card.priceKind === 'unknown') ||
       timestamp(card.observedAt) !== observed || rejected(item, card, { ownershipIndex, corrections }) ||
       !receipt.cards.some(saved => plain(saved) && sameCard(card, saved)))) continue;
     const card = cards[0];
-    if (!(card.price < own.priceJPY)) continue;
+    const cardPriceKnown = price(card.price) && card.priceKind === 'ordinary' && (card.currency === undefined || card.currency === 'JPY') &&
+      (!Object.hasOwn(card, 'shipping') || card.shipping?.shippingKnown === true && card.shipping.currency === 'JPY' && card.shipping.shippingJPY === 0) &&
+      (!lowerPriceMode || row.priceComparison?.own?.status === 'confirmed' && row.priceComparison.own.priceJPY === own.priceJPY &&
+        Array.isArray(row.priceComparison.observations) && row.priceComparison.observations.length === cards.length &&
+        row.priceComparison.observations.every((value,index) => value?.status === 'confirmed' && value.priceJPY === cards[index].price));
     const detail = row.detailObservation;
     // Any observed seller/ID that is now owned excludes the entire row, even if
     // the card originally identified an outside seller. Never hide that evidence.
     if (plain(detail) && rejected(item, { ...detail, url: detail.sourceUrl }, { ownershipIndex, corrections })) continue;
     const detailBound = validDetail(detail, row.id, frozen, now);
     const baseline = row.baseline;
+    const detailPriceConfirmed = !lowerPriceMode || row.detailPriceComparison?.candidate?.status === 'confirmed' &&
+      row.detailPriceComparison.candidate.priceJPY === detail?.priceJPY && row.detailPriceComparison?.own?.status === 'confirmed' &&
+      row.detailPriceComparison.own.priceJPY === own.priceJPY;
     const paired = row.paired === true && detailBound;
-    const comparable = paired && baseline?.status === 'comparable' && baseline.comparable === true &&
+    const comparable = paired && detailPriceConfirmed && baseline?.status === 'comparable' && baseline.comparable === true &&
       baseline.currentDetailRead === true && detail.status === 'OPEN' && text(detail.description) &&
       price(detail.priceJPY) && baseline.priceJPY === detail.priceJPY;
     const rejectedBaseline = paired && baseline?.status === 'rejected' && baseline.comparable === false && baseline.currentDetailRead === true;
+    if (!(cardPriceKnown && card.price < own.priceJPY) && !(!cardPriceKnown && lowerPriceMode && comparable && detail.priceJPY < own.priceJPY)) continue;
     const conflict = cards.some(value => !sameCard(value, card));
-    const hint = !conflict && genuineHint(row, card, own);
+    const hint = cardPriceKnown && !conflict && genuineHint(row, card, own);
     const available = !conflict && card.itemStatus === 'OPEN' && card.availabilityEvidence?.itemId === card.id &&
       ['current_search_card', 'current_seller_card', 'current_detail'].includes(card.availabilityEvidence?.source) &&
       timestamp(card.availabilityEvidence.observedAt) === observed;
-    visible.push({ id: card.id, url: card.url, title: card.title, cardPriceJPY: card.price, cardObservedAt: card.observedAt,
+    visible.push({ id: card.id, url: card.url, title: card.title, cardPriceJPY: cardPriceKnown ? card.price : null, cardObservedAt: card.observedAt,
       hint, conflictingCards: conflict, availabilityConfirmedAtCard: available,
       cardSold: cards.some(value => ['SOLD', 'CLOSED'].includes(value.itemStatus)),
       baselineStatus: comparable ? 'comparable' : rejectedBaseline ? 'rejected' : baseline?.status === 'blocked' ? 'blocked' : 'unknown',
       baselineReason: text(baseline?.reason || row.unpairedReason || row.cardFirst?.reason).slice(0, 240),
       paired, detailObservedAt: detailBound ? detail.observedAt : null,
-      detailPriceJPY: detailBound && price(detail.priceJPY) ? detail.priceJPY : null,
+      detailPriceJPY: detailBound && detailPriceConfirmed && price(detail.priceJPY) ? detail.priceJPY : null,
       expired: now - observed > HISTORY_AFTER_MS });
   }
-  visible.sort((a, b) => a.cardPriceJPY - b.cardPriceJPY || a.id.localeCompare(b.id));
+  visible.sort((a, b) => (a.cardPriceJPY ?? a.detailPriceJPY) - (b.cardPriceJPY ?? b.detailPriceJPY) || a.id.localeCompare(b.id));
   return { requestId: audit.requestId, startedAt: audit.startedAt, frozenAt: Number.isFinite(frozen) ? audit.frozenAt : null,
+    flowMode: audit.flowMode === 'lower_price_card_first' ? 'lower_price_card_first' : 'paired_baseline',
     status: audit.status === 'completed' ? 'completed' : 'incomplete', stopReason: text(audit.stopReason).slice(0, 240),
     counts: counts(target.counts), collectionComplete: target.collectionComplete === true,
     historical: true, expired: now - observed > HISTORY_AFTER_MS, originalOwnObservedAt: own.observedAt,
@@ -137,8 +149,8 @@ function rowMarkup(row) {
       row.baselineStatus === 'blocked' ? '详情检查受阻，结果未知，不能视为同款报价' : '详情检查未完成或结果未知，同款、规格与可购状态待核验';
   return `<li data-comparison-audit-id="${escape(row.id)}" data-audit-baseline="${escape(row.baselineStatus)}">
     <a target="_blank" rel="noopener noreferrer" href="${escape(row.url)}">${escape(row.title)} ↗</a>
-    <strong>${row.hint ? '卡片低价线索：图片与标题高度相似，未详情核实' : '较低卡片标价记录，同款关系待核验'}</strong>
-    <span>原卡片普通标价：${yen(row.cardPriceJPY)}（相对本次自家原始标价）</span>
+    <strong>${row.hint ? '卡片低价线索：图片与标题高度相似，未详情核实' : row.cardPriceJPY === null ? '后读详情低价记录，保留原始核验时间' : '较低卡片标价记录，同款关系待核验'}</strong>
+    <span>${row.cardPriceJPY === null ? '原卡片标价未确认，保留后进入详情检查' : `原卡片普通标价：${yen(row.cardPriceJPY)}（相对本次自家原始标价）`}</span>
     <span>卡片原始读取时间：${timeMarkup(row.cardObservedAt)}</span>
     <span>${row.cardSold ? '卡片记录非在售，不能视为可购报价' : row.availabilityConfirmedAtCard ? '卡片当时有在售证据；当前可购状态仍待核验' : '卡片可购状态未确认，待详情核验'}；当前规格、数量、成色、附件与销售说明待核验。</span>
     ${row.conflictingCards ? '<span>同一候选的卡片记录不一致，不能认定为高相似度线索。</span>' : ''}
@@ -156,6 +168,8 @@ export function comparisonAuditMarkup(item = {}, options = {}) {
     <p>历史审计记录${audit.expired ? '（样本已超过 20 分钟，仅供回看）' : '（仅供回看）'}：不承诺当前价格、库存或同款关系有效。</p>
     <p class="muted">请求 ${escape(audit.requestId)} · 开始 ${timeMarkup(audit.startedAt)}${audit.frozenAt ? ` · 候选冻结 ${timeMarkup(audit.frozenAt)}` : ' · 候选尚未冻结'} · ${audit.status === 'completed' ? '对照执行结束' : '对照未完整结束'}${audit.stopReason ? `（${escape(audit.stopReason)}）` : ''}</p>
     ${countMarkup('本商品冻结口径', audit.counts)}
+    ${audit.flowMode === 'lower_price_card_first' ? `<p class="muted">本次先比较到手价：确认更低 ${audit.counts.confirmedLowerPrice ?? '未记录'} · 金额或运费未知 ${audit.counts.unknownPrice ?? '未记录'} · 确认不低而跳过 ${audit.counts.skippedNotLower ?? '未记录'}。未知项保留待查，跳过项仍计入冻结总数。</p>
+    <p class="muted">主流程卡片提示 ${audit.counts.mainflowCardOnly ?? '未记录'} · 疑难详情结果 ${audit.counts.mainflowDetailPaired ?? '未记录'} · 另做卡片详情对照 ${audit.counts.baselineValidationPaired ?? '未记录'}。卡片提示不会自动调价；未配对部分不能当作没有漏报。</p>` : ''}
     <p class="muted">以上为冻结样本计数，保留原口径；下方已重新排除当前自有账号与纠错记录。已成对仅表示两种检查均有结果，不表示核实同款。${audit.collectionComplete ? '' : '推荐卡片收集不完整，未收集或未成对部分不能当作没有低价。'}</p>
     <p class="muted">卡片与后读详情来自不同时间，不能当作同时刻的价格真值，也不能据此推算漏判率。当前价格、库存与规格仍需重新核验。</p>
     ${audit.rows.length ? `<ul class="samples">${audit.rows.map(rowMarkup).join('')}</ul>` : '<p>没有可安全展示的较低卡片标价记录；这不代表没有外部低价。</p>'}

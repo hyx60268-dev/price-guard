@@ -8,16 +8,19 @@ import {validateComparisonAuditReceipt} from './lib/comparison-audit-state.mjs';
 // Independent readback only. No state writes, receipt initialization/consumption,
 // marketplace reads, credentials in requests, redirects, or retry loops.
 const PUBLISHED_STATE='https://hyx60268-dev.github.io/price-guard/data/state.json.enc';
-const MAX_BYTES=32*1024*1024,TIMEOUT_MS=10_000;
+// The verified 2026-10-18 full encrypted publication is 79,317,494 bytes.
+// Keep a fixed bounded ceiling, not the former diagnostic-only 32 MiB limit.
+export const COMPARISON_AUDIT_RECEIPT_MAX_BYTES=128*1024*1024;
+const MAX_BYTES=COMPARISON_AUDIT_RECEIPT_MAX_BYTES,TIMEOUT_MS=10_000;
 const sha=value=>typeof value==='string'&&/^[a-f0-9]{40}$/.test(value);
 const iso=value=>typeof value==='string'&&Number.isFinite(Date.parse(value))&&new Date(value).toISOString()===value;
 const plain=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const fail=reason=>{throw Object.assign(new Error(reason),{receiptReason:reason});};
 const hash=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
-const SAFE_REASONS=new Set(['invalid_options','missing_dashboard_key','state_unreadable','state_too_large','state_decryption_failed','state_json_invalid','state_metadata_invalid','receipt_invalid','expected_code_sha_required','local_code_sha_mismatch','published_revision_mismatch','published_receipt_mismatch','published_http_denied','published_http_error','published_body_unavailable','published_body_too_large','published_network','published_timeout']);
+const SAFE_REASONS=new Set(['invalid_options','missing_dashboard_key','state_unreadable','state_too_large','state_decryption_failed','state_json_invalid','state_metadata_invalid','receipt_invalid','expected_code_sha_required','local_code_sha_mismatch','published_revision_mismatch','published_receipt_mismatch','published_http_denied','published_http_error','published_body_unavailable','published_body_too_large','published_network','published_timeout','expected_publication_required','prerequisite_revision_mismatch']);
 
-function inspect(bytes,password,now){
- if(bytes.length>MAX_BYTES)fail('state_too_large');
+function inspect(bytes,password,now,maxBytes=MAX_BYTES){
+ if(bytes.length>maxBytes)fail('state_too_large');
  let plaintext,state,receipt;
  try{plaintext=decrypt(bytes,password);}catch{fail('state_decryption_failed');}
  try{state=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(plaintext));}catch{fail('state_json_invalid');}
@@ -26,12 +29,23 @@ function inspect(bytes,password,now){
  return {receipt,codeSha:state.scanMeta.codeSha,revision:{checkedAt:state.checkedAt,dataRevision:state.dataRevision,finishedAt:state.cycleCoverage?.finishedAt??null}};
 }
 
-async function readLocal(filename){
- try{const stat=await fs.stat(filename);if(!stat.isFile())fail('state_unreadable');if(stat.size>MAX_BYTES)fail('state_too_large');return await fs.readFile(filename);}
- catch(error){if(SAFE_REASONS.has(error?.receiptReason))throw error;fail('state_unreadable');}
+async function readLocal(filename,maxBytes){
+ let handle;
+ try{
+  handle=await fs.open(filename,'r');const stat=await handle.stat();
+  if(!stat.isFile())fail('state_unreadable');if(stat.size>maxBytes)fail('state_too_large');
+  const chunks=[];let size=0;
+  for(;;){
+   const chunk=Buffer.alloc(Math.min(64*1024,maxBytes-size+1));
+   const {bytesRead}=await handle.read(chunk,0,chunk.length,null);if(!bytesRead)break;
+   size+=bytesRead;if(size>maxBytes)fail('state_too_large');chunks.push(chunk.subarray(0,bytesRead));
+  }
+  return Buffer.concat(chunks,size);
+ }catch(error){if(SAFE_REASONS.has(error?.receiptReason))throw error;fail('state_unreadable');}
+ finally{await handle?.close().catch(()=>{});}
 }
 
-async function readPublished(fetchImpl,timeoutMs,onStart){
+async function readPublished(fetchImpl,timeoutMs,maxBytes,onStart){
  const controller=new AbortController();let reader,response,timer;
  const expired=new Promise((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(Object.assign(new Error('timeout'),{receiptReason:'published_timeout'}));},timeoutMs);});
  const read=async()=>{
@@ -41,10 +55,10 @@ async function readPublished(fetchImpl,timeoutMs,onStart){
   if(controller.signal.aborted)fail('published_timeout');
   if(!response.ok)fail([401,403,429].includes(response.status)?'published_http_denied':'published_http_error');
   const length=response.headers?.get('content-length');
-  if(length&&/^\d+$/.test(length)&&Number(length)>MAX_BYTES)fail('published_body_too_large');
+  if(length&&/^\d+$/.test(length)&&BigInt(length)>BigInt(maxBytes))fail('published_body_too_large');
   reader=response.body?.getReader();if(!reader)fail('published_body_unavailable');
   const chunks=[];let size=0;
-  for(;;){const row=await reader.read();if(controller.signal.aborted)fail('published_timeout');if(row.done)break;size+=row.value.byteLength;if(size>MAX_BYTES)fail('published_body_too_large');chunks.push(row.value);}
+  for(;;){const row=await reader.read();if(controller.signal.aborted)fail('published_timeout');if(row.done)break;size+=row.value.byteLength;if(size>maxBytes)fail('published_body_too_large');chunks.push(row.value);}
   return Buffer.concat(chunks,size);
  };
  try{return await Promise.race([read(),expired]);}
@@ -52,27 +66,31 @@ async function readPublished(fetchImpl,timeoutMs,onStart){
  finally{clearTimeout(timer);controller.abort();try{void (reader?reader.cancel():response?.body?.cancel())?.catch(()=>{});}catch{}}
 }
 
-export async function checkComparisonAuditReceipt({root,password,mode='restored',expectedCodeSha,fetchImpl=globalThis.fetch,now=Date.now,timeoutMs=TIMEOUT_MS}={}){
+export async function checkComparisonAuditReceipt({root,password,mode='restored',expectedCodeSha,expectedPublication,fetchImpl=globalThis.fetch,now=Date.now,timeoutMs=TIMEOUT_MS,maxBytes=MAX_BYTES}={}){
  let networkRequests=0;
- const base={version:1,readOnly:true,mode:['restored','published'].includes(mode)?mode:'invalid'};
+ const base={version:1,readOnly:true,mode:['restored','published','prerequisite'].includes(mode)?mode:'invalid'};
  try{
-  if(typeof root!=='string'||!path.isAbsolute(root)||!['restored','published'].includes(mode)||typeof now!=='function'||!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>TIMEOUT_MS)fail('invalid_options');
+  if(typeof root!=='string'||!path.isAbsolute(root)||!['restored','published','prerequisite'].includes(mode)||typeof now!=='function'||!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>TIMEOUT_MS||!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>MAX_BYTES)fail('invalid_options');
   if(typeof password!=='string'||password.length<8)fail('missing_dashboard_key');
   const observedAt=now();if(!Number.isFinite(observedAt))fail('invalid_options');
   if(mode==='published'&&!sha(expectedCodeSha))fail('expected_code_sha_required');
   const filename=mode==='published'?path.join(root,'public/data/state.json.enc'):path.join(root,'state/latest.json.enc');
-  const expected=inspect(await readLocal(filename),password,observedAt);
-  if(mode==='published'){
-   if(expected.codeSha!==expectedCodeSha)fail('local_code_sha_mismatch');
+  const expected=inspect(await readLocal(filename,maxBytes),password,observedAt,maxBytes);
+  if(mode==='prerequisite'){
+   if(!plain(expectedPublication)||!sha(expectedPublication.codeSha)||!['checkedAt','dataRevision','finishedAt'].every(key=>iso(expectedPublication[key])&&Date.parse(expectedPublication[key])<=observedAt))fail('expected_publication_required');
+   if(expected.codeSha!==expectedPublication.codeSha||['checkedAt','dataRevision','finishedAt'].some(key=>expected.revision[key]!==expectedPublication[key]))fail('prerequisite_revision_mismatch');
+  }
+  if(mode==='published'||mode==='prerequisite'){
+   if(mode==='published'&&expected.codeSha!==expectedCodeSha)fail('local_code_sha_mismatch');
    if(!iso(expected.revision.finishedAt)||Date.parse(expected.revision.finishedAt)>observedAt)fail('state_metadata_invalid');
-   const published=inspect(await readPublished(fetchImpl,timeoutMs,()=>networkRequests++),password,observedAt);
-   if(published.codeSha!==expectedCodeSha||hash(published.revision)!==hash(expected.revision))fail('published_revision_mismatch');
+   const published=inspect(await readPublished(fetchImpl,timeoutMs,maxBytes,()=>networkRequests++),password,observedAt,maxBytes);
+   if(published.codeSha!==expected.codeSha||hash(published.revision)!==hash(expected.revision))fail('published_revision_mismatch');
    if(hash(published.receipt)!==hash(expected.receipt))fail('published_receipt_mismatch');
   }
   const verifiedAt=now();if(!Number.isFinite(verifiedAt)||verifiedAt<observedAt)fail('invalid_options');
   // Same-SHA historical local/public artifacts can agree. This establishes
   // receipt parity, not cache lineage, a fresh scan, or complete replay history.
-  return {...base,valid:true,evidenceScope:mode==='published'?'local_publication_receipt_parity':'restored_receipt_validation',codeSha:expected.codeSha,receipt:{version:expected.receipt.version,revision:expected.receipt.revision,consumedCount:expected.receipt.consumed.length},networkRequests,diagnosticObservedAt:new Date(verifiedAt).toISOString()};
+  return {...base,valid:true,evidenceScope:mode==='published'?'local_publication_receipt_parity':mode==='prerequisite'?'pinned_prior_publication_receipt_parity':'restored_receipt_validation',codeSha:expected.codeSha,receipt:{version:expected.receipt.version,revision:expected.receipt.revision,consumedCount:expected.receipt.consumed.length},networkRequests,diagnosticObservedAt:new Date(verifiedAt).toISOString()};
  }catch(error){return {...base,valid:false,reason:SAFE_REASONS.has(error?.receiptReason)?error.receiptReason:'invalid_options',networkRequests};}
 }
 

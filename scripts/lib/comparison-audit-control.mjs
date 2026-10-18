@@ -61,6 +61,8 @@ export function decideComparisonAuditActivation({ activation, context = {}, rece
   const marker = comparisonAuditMarker(activation.requestId);
   if (!message.includes(marker)) return inactive('no_matching_marker');
   if (message.split(PREFIX).length - 1 !== 1 || message.split(marker).length - 1 !== 1) return blocked('ambiguous_marker');
+  if (activation.flowMode !== undefined && !['paired_baseline', 'lower_price_card_first'].includes(activation.flowMode) ||
+    activation.baselineValidation !== undefined && typeof activation.baselineValidation !== 'boolean') return blocked('invalid_audit_flow_mode');
   const issued = time(activation.issuedAt), expires = time(activation.expiresAt);
   if (!Number.isFinite(now) || !Number.isFinite(issued) || !Number.isFinite(expires) || expires <= issued || expires - issued > COMPARISON_AUDIT_LIMITS.activationTtlMs) return blocked('invalid_activation_window');
   if (now < issued || now >= expires) return blocked('activation_expired_or_not_due');

@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {encrypt,decrypt} from '../scripts/lib/crypto.mjs';
-import {comparisonAuditMarker,COMPARISON_AUDIT_LIMITS} from '../scripts/lib/comparison-audit-control.mjs';
+import {comparisonAuditMarker,COMPARISON_AUDIT_LIMITS,decideComparisonAuditActivation} from '../scripts/lib/comparison-audit-control.mjs';
 import {PRICING_RULES_VERSION} from '../public/pricing-policy.js';
 import {normalizeOfferPlatform} from '../public/owned-offers.js';
 
@@ -43,7 +43,7 @@ function initialState(){
   return [`${record.accountId}:${record.itemId}:${record.platform}:${record.candidateId}`,record];
  }));
  matchCorrections['momoka:momoka-2:yahoo:deleted-correction']={accountId:'momoka',itemId:'momoka-2',platform:'yahoo',candidateId:'deleted-correction',deleted:true,updatedAt:OLD};
- return {checkedAt:OLD,items,accounts,scanMeta:{codeSha:SHA},
+ return {checkedAt:OLD,dataRevision:OLD,cycleCoverage:{finishedAt:OLD},items,accounts,scanMeta:{codeSha:SHA},
   scanAdmission:{version:1,runKey:'123:1',codeSha:SHA,claimedAt:iso(NOW-1),slotKey:''},
   comparisonAuditReceipt:{version:1,revision:0,consumed:[]},
   manualCosts:{'melon:melon-1':{accountId:'melon',itemId:'melon-1',purchaseCNY:123,manualFeeCNY:4,shippingJPY:500,updatedAt:OLD}},matchCorrections,
@@ -62,7 +62,7 @@ const htmlFor=data=>`<!doctype html><html><script id="__NEXT_DATA__">${JSON.stri
 // Only forbidden normal workers, image bytes and browser/session exports are
 // replaced. fetch never leaves this process: every allowed response is fixture
 // HTML or the synthetic current-main response. No market or remote is touched.
-async function runFixture(t,{mode='success',previous:restored}={}){
+async function runFixture(t,{mode='success',previous:restored,flowMode,baselineValidation}={}){
  t.mock.timers.enable({apis:['Date'],now:NOW});
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'scan-comparison-audit-integration-'));
  const savedEnv=Object.fromEntries(envKeys.map(key=>[key,process.env[key]])),savedFetch=globalThis.fetch;
@@ -70,8 +70,14 @@ async function runFixture(t,{mode='success',previous:restored}={}){
  console.log=()=>{};console.warn=()=>{};
  const previous=structuredClone(restored||initialState()),events=[],forbidden=[],network=[],imageEvents=[];
  const byId=new Map(previous.items.map(item=>[item.id,item]));
- const activation={enabled:true,requestId,issuedAt:iso(NOW-60_000),expiresAt:iso(NOW+3600000),targets};
+ const activation={enabled:true,requestId,issuedAt:iso(NOW-60_000),expiresAt:iso(NOW+3600000),prerequisitePublication:{codeSha:SHA,checkedAt:OLD,dataRevision:OLD,finishedAt:OLD},targets,...(flowMode===undefined?{}:{flowMode}),...(baselineValidation===undefined?{}:{baselineValidation})};
  if(mode==='expired')activation.expiresAt=iso(NOW);
+ if(mode==='overlong')activation.expiresAt=iso(NOW+3*3600000);
+ if(mode==='duplicate_target')activation.targets=[targets[0],targets[0]];
+ if(mode==='missing_binding')activation.targets=[targets[0],{accountId:'boss',itemId:'unbound-foreign-id'}];
+ if(mode==='corrupt_receipt')previous.comparisonAuditReceipt={version:1,revision:2,consumed:[]};
+ if(mode==='missing_pin')delete activation.prerequisitePublication;
+ if(mode==='future_pin')activation.prerequisitePublication.checkedAt=iso(NOW+1);
  if(mode==='missing_receipt')delete previous.comparisonAuditReceipt;
  if(mode==='replay')previous.comparisonAuditReceipt={version:1,revision:1,consumed:[{requestId,expectedSha:SHA,runId:'122',startedAt:iso(NOW-60_000),consumedAt:iso(NOW-60_000),deadlineAt:iso(NOW+660_000)}]};
  if(mode==='missing_admission')delete previous.scanAdmission;
@@ -120,14 +126,27 @@ async function runFixture(t,{mode='success',previous:restored}={}){
   const eventFile=path.join(root,'event.json'),outputFile=path.join(root,'github-output');
   await fs.writeFile(eventFile,JSON.stringify({after:SHA,head_commit:{message:`Synthetic audit ${comparisonAuditMarker(requestId)}`}}));
   for(const key of envKeys)process.env[key]='';
-  Object.assign(process.env,{DASHBOARD_PASSWORD:password,PRICE_SCAN_ENGINE:'legacy',GITHUB_SHA:SHA,GITHUB_RUN_ID:'123',GITHUB_RUN_ATTEMPT:'1',
-   GITHUB_EVENT_NAME:'push',GITHUB_EVENT_PATH:eventFile,GITHUB_REF:'refs/heads/main',GITHUB_REPOSITORY:'synthetic/fixture',GITHUB_TOKEN:'synthetic-token',
+  Object.assign(process.env,{DASHBOARD_PASSWORD:password,PRICE_SCAN_ENGINE:'legacy',GITHUB_SHA:SHA,GITHUB_RUN_ID:'123',GITHUB_RUN_ATTEMPT:mode==='rerun'?'2':'1',
+   GITHUB_EVENT_NAME:mode==='cron'?'schedule':'push',GITHUB_EVENT_PATH:eventFile,GITHUB_REF:'refs/heads/main',GITHUB_REPOSITORY:'synthetic/fixture',GITHUB_TOKEN:'synthetic-token',
    GITHUB_OUTPUT:outputFile,GITHUB_ACTIONS:'true',SCAN_WRITER_LOCK:mode==='missing_lock'?'':'pages'});
   globalThis.fetch=async(input,options={})=>{
    const url=String(input);network.push(url);
    if(url==='https://api.github.com/repos/synthetic/fixture/branches/main'){
     assert.equal(options.headers.authorization,'Bearer synthetic-token');
     return {ok:true,json:async()=>({commit:{sha:mode==='stale_main'?'b'.repeat(40):SHA}})};
+   }
+   if(url==='https://hyx60268-dev.github.io/price-guard/data/state.json.enc'){
+    assert.equal(options.redirect,'error');
+    const before=JSON.parse(decrypt(await fs.readFile(stateFile),password));
+    assert.deepEqual(before.comparisonAuditReceipt,previous.comparisonAuditReceipt,'receipt parity happens before consumption');
+    if(mode==='publication_denied')return new Response('fixture unavailable',{status:403});
+    if(mode==='publication_corrupt')return new Response('fixture unreadable encrypted bytes');
+    const published=structuredClone(previous);
+    if(mode==='publication_old')published.dataRevision=iso(NOW-3*3600000);
+    if(mode==='publication_new')published.dataRevision=iso(NOW-1);
+    if(mode==='publication_other_sha')published.scanMeta.codeSha='c'.repeat(40);
+    if(mode==='publication_missing_ledger')delete published.comparisonAuditReceipt;
+    return new Response(encrypt(Buffer.from(JSON.stringify(published)),password));
    }
    const parsed=new URL(url);assert.equal(parsed.origin,origin,'unexpected non-fixture network destination');
    assert.equal(options.redirect,'manual','every audit transport must expose redirects instead of hiding additional HTTP requests');
@@ -151,13 +170,14 @@ async function runFixture(t,{mode='success',previous:restored}={}){
     const own=byId.get(id),target=own&&targets.find(row=>row.itemId===id);
     kind=own?'own':'detail';accountId=own?.accountId;
     if(own)assert.ok(target,'only the two configured own details are permitted');
-    const detail={id,title:TITLE,description:DESCRIPTION,price:own?.ownPrice??100,status:'OPEN',seller:{id:own?.sellerId??'external-current'},
+    const detail={id,title:TITLE,description:DESCRIPTION,price:own?.ownPrice??(mode==='low_card_flow'?9000:100),status:'OPEN',seller:{id:own?.sellerId??'external-current'},
      images:[own?.image??`https://synthetic.invalid/${id}.jpg`],delivery:{fee:'出品者負担'}};
-    const rawCard=(cardId,sellerId)=>({itemId:cardId,title:TITLE,price:100,image:{url:`https://synthetic.invalid/${cardId}.jpg`},seller:{id:sellerId},log:{rctype:'vector',rcsm:1}});
+    const rawCard=(cardId,sellerId)=>({itemId:cardId,title:TITLE,price:mode==='low_card_flow'?9000:100,image:{url:`https://synthetic.invalid/${cardId}.jpg`},seller:{id:sellerId},log:{rctype:'vector',rcsm:1}});
     const cards=own?[
      rawCard(`new-external-${id}`,'external-current'),rawCard('momoka-2','p3'),rawCard('historical-own','p99'),
      rawCard('melon-sold-0',''),rawCard(`corrected-${id}`,'external-corrected')
     ]:[];
+    if(own&&mode==='low_card_flow'){cards.push({...rawCard(`higher-${id}`,'external-higher'),price:11000});cards.push({...rawCard(`unknown-${id}`,'external-current'),price:null});}
     data={props:{initialState:{itemsState:{items:{item:detail}},recommendsState:{recommends:{recommends:{related:{recommendItems:{items:cards}}}}}}}};
    }
    events.push({kind,id,accountId,url,at:Date.now()});
@@ -167,7 +187,10 @@ async function runFixture(t,{mode='success',previous:restored}={}){
    return {ok:true,status:200,headers:new Headers(),url,redirected:false,text:async()=>{
     // Actual transport completion keeps its own observed time. Moving fake
     // Date beyond the unchanged 5.5-second gate prevents real fixture waits.
-    t.mock.timers.tick(6000);return htmlFor(data);
+    t.mock.timers.tick(6000);
+    const detail=data?.props?.initialState?.itemsState?.items?.item;
+    const priceArea=mode==='low_card_flow'&&detail?`<main><h1>${detail.title}</h1><div><span class="ItemPrice__Component">${detail.price}円</span><span class="ItemDetail__ShippingFreeLabel">送料無料</span></div><h2>商品の説明</h2></main>`:'';
+    return htmlFor(data)+priceArea;
    }};
   };
   let error;
@@ -311,17 +334,19 @@ test('real scan: all profile pages share the 80-page ceiling and exhaustion cann
 });
 
 for(const [mode,reason] of [['replay',/already_consumed/],['expired',/expired/],['stale_main',/unexpected_main_sha/],
- ['missing_receipt',/receipt/],['missing_admission',/scanAdmission/],['missing_lock',/writer lock/]]){
+ ['missing_receipt',/receipt/],['corrupt_receipt',/receipt/],['overlong',/invalid_activation_window/],['duplicate_target',/distinct bound/],['missing_binding',/target binding/],['rerun',/runKey|rerun|admission/i],['cron',/not_main_push/],['missing_admission',/scanAdmission/],['missing_lock',/writer lock/],['missing_pin',/expected_publication/],['future_pin',/expected_publication/],
+ ['publication_old',/published_revision_mismatch/],['publication_new',/published_revision_mismatch/],['publication_other_sha',/published_revision_mismatch/],['publication_missing_ledger',/receipt_invalid/],['publication_denied',/published_http_denied/],['publication_corrupt',/state_decryption_failed/]]){
  test(`real scan: ${mode} fails before any source and cannot replace durable state`,async t=>{
   const outcome=await runFixture(t,{mode});assert.ok(outcome.error);assert.match(String(outcome.error),reason);
   assert.deepEqual(outcome.events,[]);assert.deepEqual(outcome.imageEvents,[]);assert.equal(outcome.stateUnchanged,true);
+  assert.ok(outcome.network.filter(url=>url==='https://hyx60268-dev.github.io/price-guard/data/state.json.enc').length<=1,'failed prerequisite never retries Pages');
   assert.deepEqual(outcome.disk,outcome.previous);assert.deepEqual(outcome.published,[]);assert.equal(outcome.output,'');
  });
 }
 
-test('production defaults stay disabled and the same scan output suppresses merchant and share-image source work',async()=>{
+test('production configuration is disabled or bounded one-shot, and audit output suppresses unrelated source work',async()=>{
  const config=JSON.parse(await fs.readFile(path.join(source,'config/comparison-audit.json'),'utf8'));
- assert.equal(config.enabled,false);assert.deepEqual(config.targets,[]);
+ assertSafeProductionAuditConfig(config);
  const workflow=await fs.readFile(path.join(source,'.github/workflows/price-scan-transaction.yml'),'utf8');
  const steps=workflow.split(/\n      - /);
  const scan=steps.find(step=>/run: npm run scan\s/.test(step));
@@ -330,4 +355,57 @@ test('production defaults stay disabled and the same scan output suppresses merc
   const step=steps.find(value=>value.includes(`run: ${command}`));assert.ok(step,command);
   assert.match(step,/if:.*steps\.scan\.outputs\.comparison_audit != 'true'/,`${command} must skip an audit-only scan`);
  }
+});
+
+
+for(const baselineValidation of [false,true])test(`real scan lower-price card-first mode and validation=${baselineValidation} survive encrypted publication without pricing promotion`,async t=>{
+ const outcome=await runFixture(t,{mode:'low_card_flow',flowMode:'lower_price_card_first',baselineValidation});assertPreserved(outcome);
+ const report=outcome.disk.comparisonAudit;
+ assert.equal(report.flowMode,'lower_price_card_first');assert.equal(report.baselineValidationEnabled,baselineValidation);
+ assert.equal(report.status,'completed');assert.equal(report.mainflowComplete,true);assert.equal(report.canRecommend,false);
+ assert.equal(report.counts.skippedNotLower,2,JSON.stringify(report.targets.flatMap(target=>target.rows.map(row=>({id:row.id,cardFirst:row.cardFirst,priceComparison:row.priceComparison})))));assert.equal(report.counts.unknownPrice,2);
+ assert.equal(report.counts.mainflowCardOnly,2,JSON.stringify(report.targets.flatMap(target=>target.rows.map(row=>({id:row.id,cardFirst:row.cardFirst,priceComparison:row.priceComparison})))));assert.equal(report.counts.mainflowDetailPaired,2);
+ assert.equal(report.counts.baselineValidationPaired,baselineValidation?2:0);
+ assert.equal(report.requestPhases.prerequisite.pageFetches,6);assert.equal(report.requestPhases.newflow.pageFetches,2);
+ assert.equal(report.requestPhases.baseline_validation.pageFetches,baselineValidation?2:0);
+ assert.equal(report.controller.counts.pageFetches,baselineValidation?10:8);
+ assert.ok(outcome.events.filter(row=>row.kind==='detail').every(row=>!row.id.startsWith('higher-')));
+ assert.ok(outcome.imageEvents.every(row=>!row.url.includes('/higher-')));
+ for(const target of report.targets){
+  const unknown=target.rows.find(row=>row.id===`unknown-${target.targetId}`);
+  assert.equal(unknown.priceComparison.status,'unknown');assert.equal(unknown.cardObservations[0].price,null);
+  assert.equal(unknown.detailPhase,'newflow');assert.equal(unknown.paired,true);
+  const strong=target.rows.find(row=>row.id===`new-external-${target.targetId}`);
+  assert.equal(strong.mainflow.mode,'card_only');assert.equal(strong.paired,baselineValidation);
+ }
+ for(const snapshot of [outcome.disk,...outcome.published,outcome.member])for(const item of snapshot.items.filter(row=>row.comparisonAudit)){
+  assert.equal(item.comparisonAudit.flowMode,'lower_price_card_first');
+  assert.equal(item.comparisonAudit.baselineValidationEnabled,baselineValidation);
+ }
+});
+
+
+function assertSafeProductionAuditConfig(config){
+ if(config.enabled===false){assert.deepEqual(config.targets,[]);return}
+ assert.equal(config.enabled,true);assert.equal(config.flowMode,'lower_price_card_first');assert.equal(config.baselineValidation,true);
+ assert.match(config.prerequisitePublication.codeSha,/^[a-f0-9]{40}$/);
+ for(const field of ['checkedAt','dataRevision','finishedAt'])assert.ok(new Date(config.prerequisitePublication[field]).toISOString()===config.prerequisitePublication[field]&&Date.parse(config.prerequisitePublication[field])<=Date.parse(config.issuedAt));
+ assert.equal(config.targets.length,2);assert.equal(new Set(config.targets.map(row=>row.itemId)).size,2);
+ assert.ok(config.targets.every(row=>typeof row.accountId==='string'&&row.accountId.trim()&&/^z[0-9]+$/.test(row.itemId)&&
+  (row.knownCandidateIds===undefined||Array.isArray(row.knownCandidateIds)&&row.knownCandidateIds.every(id=>/^z[0-9]+$/.test(id)))));
+ const now=Date.parse(config.issuedAt)+1,startedAt=iso(now),commitMessage=comparisonAuditMarker(config.requestId);
+ const context={eventName:'push',ref:'refs/heads/main',runId:'123',runAttempt:1,expectedSha:SHA,codeSha:SHA,eventSha:SHA,currentMainSha:SHA,startedAt,commitMessage};
+ const receipt={version:1,revision:0,consumed:[]};
+ assert.equal(decideComparisonAuditActivation({activation:config,context,receipt,now}).admitted,true);
+ for(const eventName of ['push','schedule','workflow_dispatch']){
+  const ordinary=decideComparisonAuditActivation({activation:config,context:{...context,eventName,commitMessage:'ordinary source update'},receipt,now});
+  assert.equal(ordinary.active,false);assert.equal(ordinary.requested,false);assert.equal(ordinary.reason,'no_matching_marker');
+ }
+}
+
+test('bounded configuration contract cannot turn an ordinary event, replay, invalid binding or broken receipt into activation',()=>{
+ const config={enabled:true,flowMode:'lower_price_card_first',baselineValidation:true,requestId:'synthetic-safe-audit',issuedAt:iso(NOW),expiresAt:iso(NOW+3600000),prerequisitePublication:{codeSha:SHA,checkedAt:OLD,dataRevision:OLD,finishedAt:OLD},targets:[{accountId:'melon',itemId:'z1'},{accountId:'melon',itemId:'z2'}]};
+ assertSafeProductionAuditConfig(config);
+ for(const patch of [{enabled:'true'},{baselineValidation:false},{flowMode:'paired_baseline'},{requestId:'bad'},{expiresAt:iso(NOW+3*3600000)},{targets:[]},{targets:[config.targets[0],config.targets[0]]},{targets:[config.targets[0],{accountId:'',itemId:'z2'}]}])
+  assert.throws(()=>assertSafeProductionAuditConfig({...config,...patch}));
 });

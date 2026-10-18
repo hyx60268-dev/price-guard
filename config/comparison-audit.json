@@ -1,8 +1,31 @@
 {
-  "enabled": false,
+  "enabled": true,
+  "flowMode": "lower_price_card_first",
+  "baselineValidation": true,
   "legacyStateCodeShas": [
     "3567cfb040b71b78a231a2a390af0284a3b514f7",
     "74001066173c0d1d6556c1b6c91f7fb9f765de83"
   ],
-  "targets": []
+  "targets": [
+    {
+      "accountId": "melon",
+      "itemId": "z705310958"
+    },
+    {
+      "accountId": "melon",
+      "itemId": "z705438862",
+      "knownCandidateIds": [
+        "z704300094"
+      ]
+    }
+  ],
+  "requestId": "lp-card-20261018-once-v1",
+  "issuedAt": "2026-10-18T02:15:00.000Z",
+  "expiresAt": "2026-10-18T03:45:00.000Z",
+  "prerequisitePublication": {
+    "codeSha": "46c72780141b5347cced00c94a6d41b4f0beff57",
+    "checkedAt": "2026-10-18T02:04:03.001Z",
+    "dataRevision": "2026-10-18T02:04:03.001Z",
+    "finishedAt": "2026-10-18T02:04:03.001Z"
+  }
 }

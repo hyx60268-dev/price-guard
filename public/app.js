@@ -379,13 +379,13 @@ function render(){
   $('#statusGrid').insertAdjacentHTML('beforeend',statusCard('20分钟全量周期',cycleLabel,cycleComplete&&cycleFresh&&cycleCadenceMet?'good':'warn'));
   const summary=pricingSummary(list);
   $('#pricingProgress').hidden=!list.length;
-  $('#pricingProgress').innerHTML=`<div><strong>${summary.scopeLabel}有效覆盖 ${summary.ready}/${summary.total} 件</strong><span>${summary.remaining?'有效比价尚未齐全':'保存的比价仍有效'}</span></div><progress max="${Math.max(1,summary.total)}" value="${summary.ready}" aria-label="${summary.scopeLabel}有效核验商品数"></progress><p>${escapeHtml(summary.note)}</p><div class="pricing-counts">${[['queued','排队扫描'],['stale','数据过期'],['error','采集失败'],['insufficient','信息不足']].map(([state,label])=>`<span class="state-${state}">${label} ${summary[state]}</span>`).join('')}</div><p>至少一个平台有有效结果 ${summary.withEvidence}/${summary.total} 件 · 可用调价建议 ${summary.actionable} 条</p><small>本次云端扫描时间：${escapeHtml(data.checkedAt?new Date(data.checkedAt).toLocaleString('zh-CN'):'等待扫描')}。此处包含仍有效的历史比价，不代表20分钟内全量更新完成；完整周期另列。过期后会重新排队；部分平台已核验的低价可提供降价参考，提价需全部完成。</small>`;
+  $('#pricingProgress').innerHTML=`<div><strong>${summary.scopeLabel}有效覆盖 ${summary.ready}/${summary.total} 件</strong><span>${summary.remaining?'有效比价尚未齐全':'保存的比价仍有效'}</span></div><progress max="${Math.max(1,summary.total)}" value="${summary.ready}" aria-label="${summary.scopeLabel}有效核验商品数"></progress><p>${escapeHtml(summary.note)}</p><div class="pricing-counts">${[['queued','排队扫描'],['deferred','本轮暂缓'],['stale','数据过期'],['error','采集失败'],['insufficient','信息不足']].map(([state,label])=>`<span class="state-${state}">${label} ${summary[state]}</span>`).join('')}</div><p>至少一个平台有有效结果 ${summary.withEvidence}/${summary.total} 件 · 可用调价建议 ${summary.actionable} 条</p><small>本次云端扫描时间：${escapeHtml(data.checkedAt?new Date(data.checkedAt).toLocaleString('zh-CN'):'等待扫描')}。此处包含仍有效的历史比价，不代表20分钟内全量更新完成；完整周期另列。过期后会重新排队；部分平台已核验的低价可提供降价参考，提价需全部完成。</small>`;
   for(const [platform,label] of Object.entries(PLATFORM_LABELS)){
     const eligible=list.filter(item=>requiredPricingPlatforms(item).includes(platform));
     if(!eligible.length)continue;
-    const counts={ready:0,queued:0,stale:0,error:0,insufficient:0};
+    const counts={ready:0,queued:0,deferred:0,stale:0,error:0,insufficient:0};
     for(const item of eligible)counts[pricingStatus(item).platforms.find(row=>row.platform===platform).state]++;
-    $('#statusGrid').insertAdjacentHTML('beforeend',statusCard(label,`有效 ${counts.ready}/${eligible.length} · 排队 ${counts.queued} · 过期 ${counts.stale} · 失败 ${counts.error} · 信息不足 ${counts.insufficient}`,counts.ready===eligible.length?'good':'warn'));
+    $('#statusGrid').insertAdjacentHTML('beforeend',statusCard(label,`有效 ${counts.ready}/${eligible.length} · 排队 ${counts.queued} · 暂缓 ${counts.deferred} · 过期 ${counts.stale} · 失败 ${counts.error} · 信息不足 ${counts.insufficient}`,counts.ready===eligible.length?'good':'warn'));
   }
   $('#kpis').innerHTML=stats().map(([label,value])=>`<div class="kpi"><strong>${value}</strong><span>${label}</span></div>`).join('');
   const filtered=selected(),pageCount=Math.max(1,Math.ceil(filtered.length/PAGE_SIZE));pricingPage=Math.min(Math.max(1,pricingPage),pageCount);
