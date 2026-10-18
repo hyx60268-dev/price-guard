@@ -65,14 +65,31 @@ test('many shared-background hints cannot occupy all eight real detail reads',as
  assert.ok(result.uncheckedLowerCandidateCount>=9,'unselected geometry hints do not disappear from unresolved coverage');
 });
 
-test('HTTP-fresh fingerprints in a new scope never trigger geometry byte refill',async t=>{
+test('HTTP-fresh fingerprints restore already downloaded bytes in a new scope without refetch',async t=>{
  configureImageFingerprintCache();const reads=[],fetches=[];let rankCalls=0;
  t.mock.method(globalThis,'fetch',async url=>{fetches.push(url);return new Response(url===weakImage?weak:bytes,{headers:{'cache-control':'public,max-age=3600'}})});
  const geometry=createBoundedGeometryRanker({execute:async()=>{rankCalls++;return {reason:'runtime_unavailable'}}});
  const deps=dependencies({reads,fetches,ranker:geometry});
  await yahooCompare(null,item,{yahooGeometryPriority:true},deps);const afterFirst=fetches.length;
  await yahooCompare(null,item,{yahooGeometryPriority:true},deps);
- assert.equal(fetches.length,afterFirst);assert.equal(rankCalls,1,'no bytes in second scope means no second process');
+ assert.equal(fetches.length,afterFirst);assert.equal(rankCalls,2,'the second scope reuses original cached bytes without image refetch');
+});
+
+test('an earlier own-image observation is reused by the real normal comparison without changing its source clock',async t=>{
+ let time=1000;configureImageFingerprintCache({now:()=>time});const fetches=[],reads=[],observations=[];
+ t.mock.method(globalThis,'fetch',async url=>{fetches.push(url);return new Response(url===weakImage?weak:bytes,{headers:{'cache-control':'public,max-age=3600'}})});
+ const {imageFingerprints}=await import('../scripts/lib/image.mjs');
+ const before=await imageFingerprints(ownImage);time=2000;
+ const working=ranker(),geometry={canRun:options=>working.canRun(options),rank:async args=>{
+  observations.push({time:args.own?.imageObservedAt,hash:args.own?.contentSha256});return working.rank(args);
+ }};
+ const result=await yahooCompare(null,item,{yahooGeometryPriority:true,maxYahooDetailChecks:8},dependencies({reads,fetches,ranker:geometry}));
+ assert.equal(fetches.filter(url=>url===ownImage).length,1);
+ assert.deepEqual(observations,[{time:before.imageObservedAt,hash:before.contentSha256}]);
+ assert.equal(before.imageObservedAt,new Date(1000).toISOString());
+ assert.equal(result.geometryRouting.imageEligibility.ownBytesAvailable,true);
+ assert.equal(result.geometryRouting.status,'observed');assert.equal(result.geometryRouting.prioritySlots,1);
+ assert.equal(reads.length,8);assert.equal(result.status,'incomplete');
 });
 
 for(const [ownTitle,conflictTitle] of [
@@ -107,8 +124,9 @@ for(const failure of [false,true])test(`normal reallocation records real cache m
  assert.equal(result.geometryRouting.imageWork.cardTransfers.fetches,4,'cache miss difference is real mocked transport, not fingerprint-call arithmetic');
  assert.equal(result.geometryRouting.imageWork.cardTransfers.completedDecodedBytes,weak.length*4);assert.ok(result.geometryRouting.imageWork.cardTransfers.durationMs>=0);
  assert.equal(fetches.length-warmed,5,'one existing own + four newly selected thumbnails, no fallback refill');
- assert.deepEqual(reads,near.slice(0,8).map(card=>card.id));assert.equal(result.detailCheckedCount,8);
- assert.equal(result.status,'incomplete');assert.ok(result.uncheckedLowerCandidateCount>=4);assert.equal(result.plausibleMinPrice,516);assert.equal(result.recommendedPrice,item.ownPrice);
+ assert.deepEqual(reads,failure?near.slice(0,8).map(card=>card.id):['near-0','old-visual-0',...near.slice(1,7).map(card=>card.id)]);assert.equal(result.detailCheckedCount,8);
+ assert.equal(result.geometryRouting.prioritySlots,failure?0:1,'newly reusable old bodies may get only one geometric priority slot');
+ assert.equal(result.status,'incomplete');assert.ok(result.uncheckedLowerCandidateCount>=4);assert.equal(result.plausibleMinPrice,failure?516:501);assert.equal(result.recommendedPrice,item.ownPrice);
 });
 
 test('known missing runtime or exhausted compute budget never reallocates images',async t=>{

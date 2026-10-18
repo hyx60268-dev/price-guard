@@ -49,4 +49,15 @@ test('unavailable statistics include invalid outputs and missing bytes without d
  assert.equal((await ranker.rank({...args,own:null})).status,'unavailable');
  assert.equal((await ranker.rank(args)).reason,'invalid_output');
  assert.equal(ranker.stats.unavailable,2);assert.equal(ranker.stats.batches,1);
+ assert.deepEqual(ranker.stats.unavailableReasons,{bytes_unavailable:1,invalid_output:1});
+ assert.equal(ranker.stats.observedBatches,0);
+});
+
+test('aggregate reasons preserve bounded failures without exposing callback errors or source data',async()=>{
+ const ranker=createBoundedGeometryRanker({execute:async()=>({reason:'private-key https://secret.invalid raw_body'})});
+ await ranker.rank(args);
+ assert.deepEqual(ranker.stats.unavailableReasons,{runtime_failed:1});
+ assert.doesNotMatch(JSON.stringify(ranker.stats),/private-key|secret\.invalid|raw_body/);
+ const observed=createBoundedGeometryRanker({execute:async()=>({value:structuredClone(good)})});
+ await observed.rank(args);assert.equal(observed.stats.observedBatches,1);assert.equal(observed.stats.unavailable,0);
 });

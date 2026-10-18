@@ -8,7 +8,7 @@ import { extractYahooBundleComponents } from './merchant-bundles.mjs';
 import { merchantNameFromTitle } from './merchant-names.mjs';
 import { imageFingerprints,imageSetSimilarity,primaryProductSimilarity,withImageByteObservations } from './image.mjs';
 import {createImageByteObservationPool} from './image-byte-observations.mjs';
-import {defaultGeometryRanker,GEOMETRY_LIMITS} from './geometry-rank-batch.mjs';
+import {defaultGeometryRanker,GEOMETRY_LIMITS,geometryFailureReason} from './geometry-rank-batch.mjs';
 import {classifyYahooCardConflict} from './yahoo-card-conflicts.mjs';
 import {planYahooThumbnailWork} from './yahoo-thumbnail-work-plan.mjs';
 import {createYahooReadObservations} from './yahoo-read-observations.mjs';
@@ -682,18 +682,30 @@ async function runYahooCompare(_unusedPage,item,settings={},dependencies={}){
   // path. A fingerprint-only cache miss never causes another image request.
   if(settings.yahooGeometryPriority===true&&dependencies.geometryBytePool&&!knownOnly){
     const pool=dependencies.geometryBytePool,ownBytes=pool.get(ownImageEvidence[0]);
+    const ownBytesReason=pool.unavailableReason?.(ownImageEvidence[0]);
+    const imageEligibility={ownFingerprintAvailable:Boolean(ownImageEvidence[0]),ownBytesAvailable:Boolean(ownBytes),
+      ownBytesReason:ownBytes?null:['bytes_missing','bytes_corrupt','bytes_expired'].includes(ownBytesReason)?ownBytesReason:'not_observed',
+      ownFingerprintSource:['http_fresh','current_body'].includes(ownImageEvidence[0]?.imageCacheSource)?ownImageEvidence[0].imageCacheSource:'unknown',
+      selectedCards:visualRecallCards.length,explicitConflict:0,contextConflict:0,fingerprintUnavailable:0,bytesUnavailable:0,availableCandidateBytes:0,
+      candidateByteMissReasons:{bytes_missing:0,bytes_corrupt:0,bytes_expired:0,not_observed:0}};
     const candidates=visualRecallCards.flatMap((card,index)=>{
-      if(classifyYahooCardConflict({ownDetail,card}).classification==='definitive_conflict'||
-        !visualRecallContextCompatible({query:item.title,candidate:card.title,queryCategory:ownCategory,candidateCategory:categoryText(null,card)}))return [];
+      if(classifyYahooCardConflict({ownDetail,card}).classification==='definitive_conflict'){imageEligibility.explicitConflict++;return [];}
+      if(!visualRecallContextCompatible({query:item.title,candidate:card.title,queryCategory:ownCategory,candidateCategory:categoryText(null,card)})){imageEligibility.contextConflict++;return [];}
+      if(!visualFingerprints[index]){imageEligibility.fingerprintUnavailable++;return [];}
       const observation=pool.get(visualFingerprints[index]);
+      if(!observation){imageEligibility.bytesUnavailable++;const missingReason=pool.unavailableReason?.(visualFingerprints[index]);imageEligibility.candidateByteMissReasons[Object.hasOwn(imageEligibility.candidateByteMissReasons,missingReason)?missingReason:'not_observed']++;}
+      else imageEligibility.availableCandidateBytes++;
       return observation?[{id:card.id,observation}]:[];
     }).slice(0,GEOMETRY_LIMITS.pairs);
     const geometryStarted=performance.now();
     try{
       const result=await ranker.rank({own:ownBytes,candidates,...geometryBounds});
       if(result?.status==='observed')geometryPriorityIds=new Set((result.priorityIds||[]).filter(id=>candidates.some(row=>row.id===id)));
-      geometryRouting={status:result?.status==='observed'?'observed':'unavailable',availableImages:candidates.length+(ownBytes?1:0),paired:result?.status==='observed'?Number(result.paired)||0:0,hints:geometryPriorityIds.size,prioritySlots:0};
-    }catch{geometryRouting={status:'unavailable',availableImages:candidates.length+(ownBytes?1:0),paired:0,hints:0,prioritySlots:0}}
+      geometryRouting={status:result?.status==='observed'?'observed':'unavailable',reason:result?.status==='observed'?null:geometryFailureReason(result?.reason),availableImages:candidates.length+(ownBytes?1:0),paired:result?.status==='observed'?Number(result.paired)||0:0,hints:geometryPriorityIds.size,prioritySlots:0};
+    }catch{geometryRouting={status:'unavailable',reason:'runtime_failed',availableImages:candidates.length+(ownBytes?1:0),paired:0,hints:0,prioritySlots:0}}
+    geometryRouting.imageEligibility=imageEligibility;
+    geometryRouting.bytePool=pool.stats;
+    geometryRouting.readyBeforeImageSelection=geometryReady;
     geometryRouting.elapsedMs=Math.max(0,Math.round(performance.now()-geometryStarted));
     geometryRouting.imageWork={baselineCalls:baselineVisualRecallCards.length,selectedCalls:visualRecallCards.length,nearPriceCalls:thumbnailPlan.reallocated,unprocessedOriginalCards:unobservedVisualCards.length,ownTransfers:ownImageTransfers,cardTransfers:transferDelta(visualImageTransfers,ownImageTransfers)};
   }
