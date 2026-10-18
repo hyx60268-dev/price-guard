@@ -1,3 +1,4 @@
+import {comparisonAuditRequested,openScanComparisonAudit,executeScanComparisonAudit} from './lib/comparison-audit-scan.mjs';
 import { runAccountScanPhases } from './lib/account-scan-phases.mjs';
 import { scanAdmissionSnapshot } from './lib/scan-admission.mjs';
 import { createLiveInventoryGraph } from './lib/live-inventory-graph.mjs';
@@ -9,11 +10,11 @@ import { runPublicProcurement } from './lib/procurement-runner.mjs';
 import { xianyuAccessDiagnostic } from './lib/xianyu-evidence.mjs';
 import { mapLimit } from './lib/worker-pool.mjs';
 import { knownYahooRefreshTasks,runKnownYahooRefresh,yahooFullAttemptTime } from './lib/yahoo-known-refresh.mjs';
-import { buildOwnedOffers } from '../public/owned-offers.js';
+import { buildOwnedOffers,normalizeOfferPlatform } from '../public/owned-offers.js';
 import { createOwnSourceLoader } from './lib/own-source.mjs';
 import { inventoryReadPlan } from './lib/inventory-read-plan.mjs';
 import { withRakumaDiscovery } from './lib/rakuma-discovery-hints.mjs';
-import { configureImageFingerprintCache } from './lib/image.mjs';
+import { configureImageFingerprintCache,imageFingerprints } from './lib/image.mjs';
 import { xianyuReviewPlan,mergeXianyuReview } from './lib/xianyu-review-plan.mjs';
 import { mercariCompare } from './lib/mercari.mjs';
 import { pricingDecision,requiredPricingPlatforms,pricingItemsForPlatform,pricingScopeLabel } from '../public/pricing-policy.js';
@@ -24,7 +25,7 @@ import { loadXianyuSession } from './lib/xianyu-session.mjs';
 import { deferredXianyuAccess } from './lib/xianyu-access.mjs';
 import { fileURLToPath } from 'node:url';
 import { openContext } from './lib/browser.mjs';
-import { discoverYahooProfile,fetchYahooItemBundle,fetchYahooResult,marketPriceDecision,yahooCompare,yahooRequestStats,initializeYahooRequestAccess,yahooRequestAccessSnapshot } from './lib/yahoo.mjs';
+import { discoverYahooProfile,fetchYahooItemBundle,fetchYahooResult,marketPriceDecision,yahooCompare,yahooRequestStats,yahooTransportStats,initializeYahooRequestAccess,yahooRequestAccessSnapshot } from './lib/yahoo.mjs';
 import { discoverRakumaProfile,fetchRakumaItem,fetchRakumaPage,rakumaCompare,rakumaAccessDiagnostic,initializeRakumaRequestAccess,rakumaRequestAccessSnapshot } from './lib/rakuma.mjs';
 import { cachedComparison,deferredYahooComparison,comparisonIncomplete as isComparisonIncomplete,pricingCoverage } from './lib/pricing-coverage.mjs';
 import { cycleCoverage } from './lib/cycle-coverage.mjs';
@@ -129,17 +130,45 @@ const contexts=await mapLimit(accounts,Math.min(profileConcurrency,accounts.leng
 const relistAliases={...(previous?.relistAliases||{})};
 const refreshOwnedOffers=()=>{settings.ownedOffers=buildOwnedOffers(accounts,contexts.flatMap(c=>[...c.previousItems,...c.activeItems]));};
 refreshOwnedOffers();
+let comparisonAuditSession=null,comparisonAuditResult=null,comparisonAuditConfig=null;
+try{comparisonAuditConfig=await readJson(path.join(root,'config/comparison-audit.json'))}catch(error){if(error.code!=='ENOENT')throw error;}
+if(comparisonAuditConfig){
+ const env=process.env,event=env.GITHUB_EVENT_PATH?await readJson(env.GITHUB_EVENT_PATH):{};
+ const requested=comparisonAuditRequested(comparisonAuditConfig,event);
+ if(requested){
+  if(graphEnabled||fullPriceAudit)throw Error('Comparison validation requires the bounded ordinary scan');
+  if(!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(env.GITHUB_REPOSITORY||'')||!env.GITHUB_TOKEN)throw Error('Current main verification unavailable');
+  const response=await fetch(`https://api.github.com/repos/${env.GITHUB_REPOSITORY}/branches/main`,{headers:{authorization:`Bearer ${env.GITHUB_TOKEN}`,accept:'application/vnd.github+json'},signal:AbortSignal.timeout(20_000)});
+  if(!response.ok)throw Error('Current main verification failed');
+  const currentMainSha=(await response.json()).commit?.sha;
+  comparisonAuditSession=await openScanComparisonAudit({root,password,activation:comparisonAuditConfig,previous,accounts,startedAt:new Date(startedAt).toISOString(),context:{
+   writerLockHeld:env.GITHUB_ACTIONS==='true'&&env.SCAN_WRITER_LOCK==='pages',expectedSha:env.GITHUB_SHA,codeSha:env.GITHUB_SHA,currentMainSha,eventSha:event.after,commitMessage:event.head_commit?.message,
+   eventName:env.GITHUB_EVENT_NAME,ref:env.GITHUB_REF,runId:env.GITHUB_RUN_ID,runAttempt:env.GITHUB_RUN_ATTEMPT}});
+  Object.assign(settings,comparisonAuditSession.settings);
+  if(env.GITHUB_OUTPUT)await fs.appendFile(env.GITHUB_OUTPUT,'comparison_audit=true\n');
+ }else if(comparisonAuditConfig.enabled===false&&env.GITHUB_RUN_ID){
+  // A missing legacy ledger may be prepared only in this explicitly disabled
+  // version. Failure does not weaken a later active claim or reset history.
+  try{comparisonAuditSession=await openScanComparisonAudit({root,password,activation:comparisonAuditConfig,legacyStateCodeShas:comparisonAuditConfig.legacyStateCodeShas,previous,accounts,startedAt:new Date(startedAt).toISOString(),context:{writerLockHeld:env.GITHUB_ACTIONS==='true'&&env.SCAN_WRITER_LOCK==='pages',codeSha:env.GITHUB_SHA,runId:env.GITHUB_RUN_ID,runAttempt:env.GITHUB_RUN_ATTEMPT}})}
+  catch{console.warn('[对照执行记录] disabled_preparation_unavailable');}
+ }
+}
 async function discoverAccountPhase({contexts:phaseContexts}){
  await mapLimit(phaseContexts,Math.min(profileConcurrency,phaseContexts.length),async context=>{
   const {account,catalogItems,previousItems}=context;
   console.log(`\n=== 账号 ${account.name} (${account.id}) ===`);
   if(Date.now()>=deadline){context.profileStatus='deferred_due_to_priority';context.profileError='shared_scan_deadline';return;}
   try{
-    const discovered=account.platform==='rakuma'?await discoverRakumaProfile(account.profileUrl,settings):await discoverYahooProfile(null,account.profileUrl,settings);
+    const discovered=account.platform==='rakuma'?await discoverRakumaProfile(account.profileUrl,settings):await discoverYahooProfile(null,account.profileUrl,{...settings,yahooRequestAccountId:account.id});
     if(discovered.items.length||discovered.complete===true){
       context.profileDiscovery=discovered;
       context.activeItems=reconcileLiveItems(catalogItems,previousItems,discovered.items,account.id,Object.values(previous?.listingHistory||{}));
       context.profileStatus='live';
+      if(discovered.profileObservation){
+        const cards=new Map((discovered.profileObservation.cards||[]).filter(card=>card.itemStatus==='OPEN').map(card=>[card.id,card]));
+        context.activeItems=context.activeItems.map(item=>({...item,yahooProfileCard:cards.get(item.id)||null}));
+      }
+      if(discovered.profileObservation){const observation=discovered.profileObservation;console.log('[Yahoo主页字段观察]',JSON.stringify({complete:observation.complete,membershipCount:observation.membershipIds?.length||0,quoteEligibleCount:observation.quoteEligibleCount||0,quoteIneligibleReasons:observation.quoteIneligibleReasons||{},schemas:observation.schemaReceipts}));}
       console.log(`${account.platform} 主页成功：${discovered.pages} 页，${context.activeItems.length} 件当前在售`);
     }else console.warn(`${account.platform} 主页返回 0 件；沿用保存清单 ${context.activeItems.length} 件`);
   }catch(error){context.profileStatus=isRequestDeferred(error)?'deferred':'error';context.profileError=String(error);console.warn(`${account.platform} 主页失败；沿用保存清单：${context.profileError}`)}
@@ -167,7 +196,7 @@ const xianyuState=await xianyuStateFromEnv();
 const initialAccess=sessionManager.access();
 if(!initialAccess.allowed)console.log(`[闲鱼访问冷却] 原因=${initialAccess.reason} 下次允许检查=${initialAccess.retryAt}；本轮继续Yahoo与网页发布`);
 let xianyuMode=xianyuState?'saved':'anonymous',xianyuAuthExpired=false,anyXianyuLoginRequired=false;
-const {hydrate:legacyHydratedItem,yahooBundle:ownBundle,yahooResult:sharedYahooResult,rakumaPage:sharedRakumaPage,stats:publicReadStats}=createOwnSourceLoader({fetchYahooBundle:id=>fetchYahooItemBundle(id,settings),fetchYahooResult:url=>fetchYahooResult(url,settings),fetchRakumaItem:item=>fetchRakumaItem(item,settings,{fetchPage:sharedRakumaPage}),fetchRakumaPage:url=>fetchRakumaPage(url,settings)});
+const {hydrate:legacyHydratedItem,yahooBundle:ownBundle,yahooResult:sharedYahooResult,rakumaPage:sharedRakumaPage,stats:publicReadStats}=createOwnSourceLoader({fetchYahooBundle:(id,options={})=>fetchYahooItemBundle(id,{...settings,yahooRequestPurpose:options.purpose||'candidate',yahooRequestTargetId:options.targetId||null}),fetchYahooResult:url=>fetchYahooResult(url,settings),fetchRakumaItem:item=>fetchRakumaItem(item,settings,{fetchPage:sharedRakumaPage}),fetchRakumaPage:url=>fetchRakumaPage(url,settings)});
 let graphOutcome=null;
 function deferAccountPhase({contexts:phaseContexts},reason){
  for(const context of phaseContexts){
@@ -224,7 +253,7 @@ const yahooWork=(async()=>{
       const profileSellerId=String(context.account.profileUrl||'').match(/\/user\/([^/?#]+)/i)?.[1]||'';
       return yahooCompare(null,{...item,yahoo:prior.yahoo},{...settings,matchCorrections,ownSellerId:item.sellerId||profileSellerId,
         yahooKnownOnly:true,yahooKnownCandidateIds:candidates.slice(0,1).map(value=>value.id),yahooKnownRefreshDeadline:knownDeadline},
-        {fetchYahooItemBundle:id=>ownBundle(id)});
+        {fetchYahooItemBundle:id=>ownBundle(id,{purpose:id===item.id?'own':'known',targetId:item.id})});
     },
     log:record=>console.log('[已知竞品复核]',JSON.stringify(record))
   });
@@ -243,7 +272,10 @@ const yahooWork=(async()=>{
     context.yahooById.set(item.id,fresh);return;
   }
   if(Date.now()>=deadline){
-    context.yahooById.set(item.id,known||cachedYahoo(prior,item,'scan_budget')||{status:'deferred_budget',cacheReason:'rules_changed',rulesVersion:prior.yahoo?.rulesVersion??MATCHING_RULES_VERSION,checkedAt:null,lowestPrice:item.ownPrice,lowestUrl:item.url,recommendedPrice:item.ownPrice,candidates:[]});return;
+    // Expiry revokes this cycle's obligation, not durable links or queue progress.
+    // cachedYahoo deliberately rejects old rules and must not erase that history.
+    const saved=prior.yahoo||item.cachedYahoo||{rulesVersion:MATCHING_RULES_VERSION,lowestPrice:item.ownPrice,lowestUrl:item.url,recommendedPrice:item.ownPrice,candidates:[]};
+    context.yahooById.set(item.id,known||deferredYahooComparison(saved,new RequestDeferredError('request_deadline'),item));return;
   }
   // The next gate turn may already be outside this cycle even while wall
   // time has a few seconds left. Do not send every remaining item through an
@@ -262,7 +294,7 @@ const yahooWork=(async()=>{
       item.ownPrice=item.sourceDetail.price;
     }
     const profileSellerId=String(context.account.profileUrl||'').match(/\/user\/([^/?#]+)/i)?.[1]||'';
-    const result=await yahooCompare(null,known?.knownRefresh?.mode==='details_only'?{...item,yahoo:known}:item,{...settings,matchCorrections,ownSellerId:item.sellerId||profileSellerId,forceYahooBroadSearch:forceYahoo||task.priority<=1},{fetchYahooItemBundle:id=>observedInput(ownBundle,id),fetchYahooResult:url=>observedInput(sharedYahooResult,url)});context.yahooById.set(item.id,{...result,knownLastAttemptAt:known?.knownLastAttemptAt||prior.yahoo?.knownLastAttemptAt||null});
+    const result=await yahooCompare(null,known?.knownRefresh?.mode==='details_only'?{...item,yahoo:known}:item,{...settings,matchCorrections,ownSellerId:item.sellerId||profileSellerId,forceYahooBroadSearch:forceYahoo||task.priority<=1},{fetchYahooItemBundle:id=>observedInput(id=>ownBundle(id,{purpose:id===item.id?'own':'candidate',targetId:item.id}),id),fetchYahooResult:url=>observedInput(sharedYahooResult,url)});context.yahooById.set(item.id,{...result,knownLastAttemptAt:known?.knownLastAttemptAt||prior.yahoo?.knownLastAttemptAt||null});
     console.log(`[Yahoo ${taskIndex+1}/${yahooTasks.length}] ${context.account.name} ${item.id} cards=${result.cardCount} matches=${result.competitorCount} lowest=${result.lowestPrice} source=${result.sourceStatus?.search||'unknown'}`);
   }catch(error){
     noResponseDeferral=isRequestDeferred(error)&&!sourceInputObserved;
@@ -420,7 +452,17 @@ try{
 }finally{graphSession?.close();}
 }
 
-if(graphEnabled){
+if(comparisonAuditSession?.active){
+ // This one declared diagnostic spends the normal cycle's source budget. All
+ // pricing/cost obligations stay deferred, including the two audited targets.
+ try{
+  const yahooContexts=contexts.filter(context=>normalizeOfferPlatform(context.account.platform,context.account.profileUrl)==='yahoo');
+  await discoverAccountPhase({contexts:yahooContexts});
+  comparisonAuditResult=await executeScanComparisonAudit({session:comparisonAuditSession,activation:comparisonAuditConfig,contexts,settings:{...settings,matchCorrections},readBundle:fetchYahooItemBundle,imageFingerprints});
+ }catch(error){const snapshot=comparisonAuditSession.controller.snapshot();comparisonAuditResult={version:1,kind:'standalone_frozen_yahoo_comparison_audit',requestId:comparisonAuditConfig.requestId,status:'incomplete',stopReason:snapshot.stopped||(isRequestDeferred(error)?error.reason||'source_request_deferred':'audit_prerequisite_failed'),canRecommend:false,procurementCostEligible:false,targets:[],controller:snapshot};}
+ deferAccountPhase({contexts},'deferred_due_to_comparison_audit');
+ console.log('[卡片详情配对对照]',JSON.stringify({requestId:comparisonAuditResult.requestId,status:comparisonAuditResult.status,stopReason:comparisonAuditResult.stopReason,counts:comparisonAuditResult.counts||null,transport:comparisonAuditResult.controller?.counts,imageTransfers:comparisonAuditResult.imageTransfers||null,canRecommend:false,procurementCostEligible:false}));
+}else if(graphEnabled){
  // The opt-in experimental graph retains its established all-root contract;
  // production uses the explicitly phased legacy engine below.
  await discoverAccountPhase({contexts});
@@ -437,7 +479,7 @@ console.log('[ラクマ既知URL継続]',JSON.stringify([...rakumaHintStats.valu
   for(const [key,value] of Object.entries(row))sum[key]=(sum[key]||0)+value;return sum;
 },{})));
 
-console.log('[本轮公开读取统计]',JSON.stringify({publicReadStats,imageCacheStats,yahooAttemptStats,yahooGate:yahooRequestStats(),rakumaAccess:rakumaAccessDiagnostic(),notes:'Read wall time includes gate waiting; overlapping durations are not scan wall time.'}));
+console.log('[本轮公开读取统计]',JSON.stringify({publicReadStats,imageCacheStats,yahooAttemptStats,yahooGate:yahooRequestStats(),yahooTransport:yahooTransportStats(),rakumaAccess:rakumaAccessDiagnostic(),notes:'Read wall time includes gate waiting; overlapping durations are not scan wall time.'}));
 const accountResults=[];
 for(const context of contexts){
   const rows=context.activeItems.map(item=>{
@@ -517,24 +559,32 @@ for(const context of contexts){
     xianyuRejectionReasons:xianyuValues.flatMap(value=>value.rejected||[]).reduce((counts,value)=>{counts[value.reason]=(counts[value.reason]||0)+1;return counts},{})
   };
   accountResults.push({id:context.account.id,name:context.account.name,platform:context.account.platform,profileUrl:context.account.profileUrl,managed:context.account.managed,
-    profileStatus:context.profileStatus,profileError:context.profileError,priorityDeferredReason:context.priorityDeferredReason||null,profileDelta:context.profileDelta,itemCount:rows.length,
+    yahooProfileObservation:context.profileDiscovery?.profileObservation||null,profileStatus:context.profileStatus,profileError:context.profileError,priorityDeferredReason:context.priorityDeferredReason||null,profileDelta:context.profileDelta,itemCount:rows.length,
     ...(graphEnabled?{inventoryObservation:{observedAt:context.profileDiscovery?.observedAt??null,fromCache:context.profileDiscovery?.fromCache!==false,complete:context.profileDiscovery?.complete===true,truncated:context.profileDiscovery?.truncated===true}}:{}),
     lastCatalogCount:context.catalogItems.length,scanStats,items:rows});
 }
 
+if(comparisonAuditResult){
+ for(const account of accountResults)for(const item of account.items){
+  const target=comparisonAuditResult.targets?.find(row=>row.accountId===item.accountId&&row.targetId===item.id);
+  if(target)item.comparisonAudit={version:1,kind:'standalone_frozen_yahoo_comparison_audit',target,requestId:comparisonAuditResult.requestId,startedAt:comparisonAuditResult.startedAt,deadlineAt:comparisonAuditResult.deadlineAt,frozenAt:comparisonAuditResult.frozenAt,status:comparisonAuditResult.status,stopReason:comparisonAuditResult.stopReason,canRecommend:false,procurementCostEligible:false};
+ }
+}
 const checkedAt=new Date().toISOString(),allItems=accountResults.flatMap(account=>account.items);
 // Retain public listings already sold before monitoring started, without adding
 // them to active inventory or assigning an inferred sale/first-seen date.
 const {listingHistory,ownedTitleHistory}=mergeOwnedListingHistory({previous,contexts,items:allItems,relistAliases});
 const result={
   scanAdmission:await scanAdmissionSnapshot(root),
+  comparisonAuditReceipt:comparisonAuditSession?.active?await comparisonAuditSession.state.readReceipt():comparisonAuditSession?.receipt??previous?.comparisonAuditReceipt,
+  comparisonAudit:comparisonAuditResult||previous?.comparisonAudit,
   externalSearchAccess:externalSearchAccessSnapshot(),yahooRequestAccess:yahooRequestAccessSnapshot(),rakumaRequestAccess:rakumaRequestAccessSnapshot(),
   merchantMonitors:previous?.merchantMonitors||[],listingHistory,pricingCoverage:pricingCoverage(allItems,accountResults),
   cycleCoverage:cycleCoverage(allItems,accountResults,{startedAt,finishedAt:checkedAt,previousCoverage:previous?.cycleCoverage}),
-  version:6,checkedAt,dataRevision:checkedAt,settings:{...settings,yahooRequestDeadline:undefined,rakumaRequestDeadline:undefined},accounts:accountResults,managedAccounts,portalUsers,appliedSyncIssues:previous?.appliedSyncIssues||{},
+  version:6,checkedAt,dataRevision:checkedAt,settings:{...settings,yahooRequestDeadline:undefined,rakumaRequestDeadline:undefined,beforeYahooTransport:undefined,afterYahooTransport:undefined,signal:undefined,yahooComparisonAudit:undefined,attempts:undefined},accounts:accountResults,managedAccounts,portalUsers,appliedSyncIssues:previous?.appliedSyncIssues||{},
   manualCosts,matchCorrections,portalPreferences,dismissedDiscoveries,discoveryReviews,ownedTitleHistory,relistAliases,login:{xianyuRequired:anyXianyuLoginRequired,xianyuAuthExpired,xianyuMode,xianyuAccess:sessionManager.access()},items:allItems,
-  scanMeta:{codeSha:process.env.GITHUB_SHA||null,trigger:process.env.SCAN_TRIGGER||'local',startedAt:new Date(startedAt).toISOString(),durationSeconds:Math.round((Date.now()-startedAt)/1000),publicReadStats,imageCacheStats,yahooAttemptStats,
-    pricingEngine,graph:graphOutcome?{...graphOutcome.summary,reads:graphOutcome.stats,costIntegration:'existing_independent_cost_workers'}:null,
+  scanMeta:{codeSha:process.env.GITHUB_SHA||null,trigger:process.env.SCAN_TRIGGER||'local',startedAt:new Date(startedAt).toISOString(),durationSeconds:Math.round((Date.now()-startedAt)/1000),yahooTransport:yahooTransportStats(),publicReadStats,imageCacheStats,yahooAttemptStats,
+    comparisonAuditActive:comparisonAuditSession?.active===true,pricingEngine,graph:graphOutcome?{...graphOutcome.summary,reads:graphOutcome.stats,costIntegration:'existing_independent_cost_workers'}:null,
     comparisonMode:settings.comparisonMode||'cross_platform',accountExecutionPolicy:graphEnabled?'experimental_graph':'yahoo_first_rakuma_last',accountPhases:accountPhaseObservations,comparisonTasks:Object.fromEntries(['yahoo','rakuma','mercari'].map(source=>[source,contexts.reduce((sum,context)=>sum+context.activeItems.filter(item=>requiredPricingPlatforms(item).includes(source)).length,0)])),budgetMinutes:Number(settings.scanBudgetMinutes)||12,profileConcurrency,yahooConcurrency,rakumaConcurrency,mercariConcurrency,rakumaLimit:Number.isFinite(rakumaLimit)?rakumaLimit:null,mercariLimit:Number.isFinite(mercariLimit)?mercariLimit:null,xianyuLimit}
 };
 const {summary}=await writeOutputs({root,result,previous,password});

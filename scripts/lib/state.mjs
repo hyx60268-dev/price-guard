@@ -1,3 +1,4 @@
+import { mergeComparisonAuditReceipts } from './comparison-audit-state.mjs';
 import { mergeScanAdmission } from './scan-admission.mjs';
 import { mergeSourceAccessHolds } from './source-access-hold.mjs';
 import { mergeYahooRequestAccess } from './yahoo-request-access.mjs';
@@ -123,6 +124,7 @@ export function reconcileDurableState(cache={},published={}){
   return {
     ...base,
     scanAdmission:mergeScanAdmission(cache.scanAdmission,published.scanAdmission),
+    comparisonAuditReceipt:mergeComparisonAuditReceipts(cache.comparisonAuditReceipt,published.comparisonAuditReceipt),
     ...(base.items?{items}:{}),
     externalSearchAccess:mergeExternalSearchAccess(cache.externalSearchAccess,published.externalSearchAccess),
     yahooRequestAccess:mergeYahooRequestAccess(cache.yahooRequestAccess,published.yahooRequestAccess),

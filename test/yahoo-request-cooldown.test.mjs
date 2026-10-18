@@ -17,7 +17,7 @@ async function fixture(t,fetchImpl){
   t.mock.timers.enable({apis:['Date','setTimeout'],now:START});
   t.mock.method(globalThis,'fetch',fetchImpl);
   t.mock.method(console,'warn',()=>{});
-  return {stats:yahooRequestStats,read:(name='item',settings={})=>fetchYahooResult('https://fixture.test/'+name,settings),advance:async ms=>{t.mock.timers.tick(ms);await flush()}};
+  return {stats:yahooRequestStats,read:async(name='item',settings={})=>{const observed=await fetchYahooResult('https://fixture.test/'+name,settings);assert.equal(observed.fromCache,false);assert.equal(observed.redirected,false);assert.ok(Number.isFinite(observed.observedAt)&&observed.observedAt<=Date.now());const {observedAt,fromCache,redirected,...body}=observed;return body},advance:async ms=>{t.mock.timers.tick(ms);await flush()}};
 }
 
 test('Retry-After parses numeric and HTTP-date deadlines without the former 120-second ceiling',()=>{

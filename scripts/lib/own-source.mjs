@@ -1,9 +1,10 @@
 // Platform workers share public own-listing reads, not competitor decisions or costs.
 export function createOwnSourceLoader({fetchYahooBundle,fetchYahooResult,fetchRakumaItem,fetchRakumaHtml,fetchRakumaPage,now=Date.now}){
  const bundles=new Map(),details=new Map(),results=new Map(),rakumaPages=new Map();
- const stats={yahooResultRequests:0,yahooResultReuses:0,rakumaPageRequests:0,rakumaPageReuses:0,rakumaReadWallMs:0};
- const yahooBundle=id=>{
-  if(!bundles.has(id))bundles.set(id,fetchYahooBundle(id));
+ const stats={yahooBundleRequests:0,yahooBundleReuses:0,yahooResultRequests:0,yahooResultReuses:0,rakumaPageRequests:0,rakumaPageReuses:0,rakumaReadWallMs:0};
+ const yahooBundle=(id,options={})=>{
+  if(!bundles.has(id)){stats.yahooBundleRequests++;bundles.set(id,fetchYahooBundle(id,options))}
+  else stats.yahooBundleReuses++;
   return bundles.get(id);
  };
  // Share raw public query observations, never product matching decisions. Two
@@ -14,7 +15,7 @@ export function createOwnSourceLoader({fetchYahooBundle,fetchYahooResult,fetchRa
   if(request)stats.yahooResultReuses++;
   else{
    stats.yahooResultRequests++;
-   request=Promise.resolve().then(()=>fetchYahooResult(url)).then(result=>({...result,observedAt:new Date(now()).toISOString()}));
+   request=Promise.resolve().then(()=>fetchYahooResult(url)).then(result=>{const original=result?.observedAt,at=typeof original==='number'?original:Date.parse(original||'');if(original!==undefined&&original!==null&&(!Number.isFinite(at)||at<0||at>now()))throw Error('Yahoo search original observation unavailable');return {...result,observedAt:Number.isFinite(at)?new Date(at).toISOString():new Date(now()).toISOString()}});
    results.set(url,request);
    request.catch(()=>{if(results.get(url)===request)results.delete(url)});
   }
@@ -42,10 +43,14 @@ export function createOwnSourceLoader({fetchYahooBundle,fetchYahooResult,fetchRa
   if(!details.has(key))details.set(key,(async()=>{
    const source=prior.sourceDetail,stamp=Date.parse(source?.checkedAt||'');
    if(source?.description&&source.listingId===item.id&&prior.title===item.title&&prior.ownPrice===item.ownPrice&&prior.image===item.image&&stamp<=now()&&now()-stamp<6*3600000)return source;
-   const detail=item.platform==='rakuma'?await fetchRakumaItem(item):(await yahooBundle(item.id)).detail;
+   const bundle=item.platform==='rakuma'?null:await yahooBundle(item.id,{purpose:'own'});
+   const detail=item.platform==='rakuma'?await fetchRakumaItem(item):bundle.detail;
    if(!detail?.description?.trim())throw Error('自有商品销售正文缺失');
    if(detail.status&&detail.status!=='OPEN')throw Error('自有商品不再在售，等待库存更新');
-   return {...detail,listingId:item.id,checkedAt:detail.sourceObservedAt||new Date(now()).toISOString()};
+   const original=detail.sourceObservedAt??bundle?.observedAt;
+   const at=typeof original==='number'?original:Date.parse(original||'');
+   if(original!==undefined&&original!==null&&(!Number.isFinite(at)||at<0||at>now()))throw Error('自有详情原始观测时间不可用');
+   return {...detail,listingId:item.id,checkedAt:Number.isFinite(at)?new Date(at).toISOString():new Date(now()).toISOString()};
   })());
   const sourceDetail=await details.get(key);item.sourceDetail=sourceDetail;
   const images=(sourceDetail.images||[]).map(image=>typeof image==='string'?image:image?.url).filter(Boolean);

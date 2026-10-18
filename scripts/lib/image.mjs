@@ -17,25 +17,48 @@ function bitsToHex(bits){
 }
 
 const requestStopped=({signal,deadlineAt,now=Date.now}={})=>signal?.aborted||(Number.isFinite(deadlineAt)&&now()>=deadlineAt);
+const boundedStatus=status=>Number.isInteger(status)&&status>=100&&status<=599?status:null;
+function boundedRetryAfter(response){
+  const retry=response.headers.get('retry-after'),date=Date.parse(retry||'');
+  return retry&&/^\d{1,10}$/.test(retry)?retry:Number.isFinite(date)?new Date(date).toUTCString():null;
+}
+function observeTransfer(observer,metrics){
+  if(observer==null)return;
+  try{
+    const result=observer(Object.freeze(metrics));
+    if(result&&typeof result.then==='function'){
+      // An audit observer must finish synchronously. Consume rejected async
+      // callbacks without awaiting them or turning their failure into a retry.
+      Promise.resolve(result).catch(()=>{});
+      throw new Error('async_observer');
+    }
+  }catch{throw Object.assign(new Error('image_transfer_observation_failed'),{auditReason:'image_transfer_observation_failed'})}
+}
 
 async function download(url,context={}){
-  const attempts=2;
+  const attempts=context.auditTransport===true?1:2;
   for(let attempt=1;attempt<=attempts;attempt++){
     if(requestStopped(context))return null;
     const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),12000),start=performance.now();
     const abort=()=>controller.abort();
     context.signal?.addEventListener('abort',abort,{once:true});
-    let httpStatus=null;
+    let httpStatus=null,receivedBytes=0,transportStarted=false,accessDenial=null;
     const record=(reason,extra={})=>recordDiagnostic(url,{stage:'download',reason,attempt,httpStatus,elapsedMs:Math.round(performance.now()-start),...extra});
     try{
       if(requestStopped(context)){abort();return null}
-      const response=await fetch(url,{headers:{'user-agent':'Mozilla/5.0','accept':'image/avif,image/webp,image/*,*/*;q=0.8'},signal:controller.signal});
+      observeTransfer(context.observeImageTransferStart,{fetches:1});
+      transportStarted=true;
+      const response=await fetch(url,{headers:{'user-agent':'Mozilla/5.0','accept':'image/avif,image/webp,image/*,*/*;q=0.8'},signal:controller.signal,redirect:context.auditTransport===true?'manual':'follow'});
       httpStatus=response.status;
+      if(context.stopOnAccessDenial===true&&[401,403,429].includes(httpStatus)){
+        const retryAfter=boundedRetryAfter(response);
+        record('http_error',{retryAfter});
+        accessDenial=Object.assign(new Error('source_denied'),{auditReason:'source_denied',httpStatus:boundedStatus(httpStatus),retryAfter});
+        throw accessDenial;
+      }
       if(requestStopped(context)){abort();return null}
       if(!response.ok){
-        const retry=response.headers.get('retry-after');
-        const date=Date.parse(retry||'');
-        const retryAfter=retry&&/^\d{1,10}$/.test(retry)?retry:Number.isFinite(date)?new Date(date).toUTCString():null;
+        const retryAfter=boundedRetryAfter(response);
         record('http_error',{retryAfter});
         // Authentication/access/rate-limit responses are not transient image retries.
         if([401,403,429].includes(response.status)||attempt===attempts)return null;
@@ -43,7 +66,7 @@ async function download(url,context={}){
       }
       const length=Number(response.headers.get('content-length'));
       if(Number.isFinite(length)&&length>12_000_000){record('body_too_large',{declaredBytes:length});return null}
-      const buffer=Buffer.from(await response.arrayBuffer());
+      const buffer=Buffer.from(await response.arrayBuffer());receivedBytes=buffer.length;
       if(requestStopped(context)){abort();return null}
       const encoding=response.headers.get('content-encoding');
       if(!encoding&&Number.isFinite(length)&&length>0&&buffer.length!==length){record('body_length_mismatch',{declaredBytes:length,receivedBytes:buffer.length});return null}
@@ -51,10 +74,24 @@ async function download(url,context={}){
       record('body_received',{receivedBytes:buffer.length});
       return {buffer,cacheControl:response.headers.get('cache-control'),cacheAge:response.headers.get('age'),responseDate:response.headers.get('date')};
     }catch(error){
+      if(accessDenial&&error===accessDenial||error?.auditReason==='image_transfer_observation_failed')throw error;
       if(requestStopped(context)){record(Number.isFinite(context.deadlineAt)&&context.now()>=context.deadlineAt?'deadline':'aborted');return null}
       record(controller.signal.aborted||['AbortError','TimeoutError'].includes(error?.name)?'timeout':'network_error');
       if(attempt===attempts)return null;
-    }finally{clearTimeout(timeout);context.signal?.removeEventListener('abort',abort)}
+    }finally{
+      clearTimeout(timeout);context.signal?.removeEventListener('abort',abort);
+      // One observation per actual fetch attempt, including failures and late
+      // settlements after the bounded loader returned. Bytes are completed,
+      // decoded arrayBuffer bytes, not Content-Length or estimated wire bytes.
+      // An expired/cache-only call starts no transport and emits no event.
+      if(transportStarted){
+        try{observeTransfer(context.observeImageTransfer,{fetches:1,bytes:receivedBytes,
+          durationMs:Math.min(Number.MAX_SAFE_INTEGER,Math.max(0,Math.round(performance.now()-start))),httpStatus:boundedStatus(httpStatus)})}
+        // Preserve a source denial if the observer also fails. Throwing here
+        // bypasses the retry catch above and cannot initiate another request.
+        catch(error){throw accessDenial||error}
+      }
+    }
   }
   return null;
 }

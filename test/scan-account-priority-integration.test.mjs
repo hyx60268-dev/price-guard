@@ -6,6 +6,7 @@ import os from 'node:os';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {encrypt,decrypt} from '../scripts/lib/crypto.mjs';
 import {PRICING_RULES_VERSION} from '../public/pricing-policy.js';
+import {pricingDecision} from '../public/pricing-policy.js';
 import {normalizeOfferPlatform} from '../public/owned-offers.js';
 import {xianyuReviewPlan} from '../scripts/lib/xianyu-review-plan.mjs';
 import {XIANYU_VERIFICATION} from '../scripts/lib/xianyu-evidence.mjs';
@@ -33,11 +34,18 @@ function inventory(){return accounts.flatMap(account=>[0,1].map(n=>{
 // Only the disposable copy replaces collector/browser exports. Production scan,
 // phase scheduling, own-source sharing, both budgets, reconciliation, coverage,
 // encryption and publication execute unchanged. Every source call is synthetic.
-async function runFixture(t,{exhaustYahoo=false,activeHolds=false,deferredQuotes=false}={}){
+async function runFixture(t,{exhaustYahoo=false,activeHolds=false,deferredQuotes=false,expireAfterFirstYahoo=false}={}){
  t.mock.timers.enable({apis:['Date'],now:NOW});
  const source=fileURLToPath(new URL('../',import.meta.url)),root=await fs.mkdtemp(path.join(os.tmpdir(),'scan-account-priority-'));
  const savedEnv=Object.fromEntries(envKeys.map(key=>[key,process.env[key]])),savedFetch=globalThis.fetch;
  const items=inventory(),byId=new Map(items.map(item=>[item.id,item])),events=[],ownedChecks=[],network=[];
+ if(expireAfterFirstYahoo)for(const item of items.filter(item=>item.platform==='yahoo')){
+  item.yahoo={...item.yahoo,rulesVersion:PRICING_RULES_VERSION-1,knownLastAttemptAt:new Date(NOW).toISOString(),
+   audit:{accountId:item.accountId,ownItemId:item.id,rulesVersion:PRICING_RULES_VERSION-1},
+   candidates:[{id:'external-'+item.id,title:item.title,price:4500,sellerId:'external-seller',image:'fixture-image',
+    url:'https://paypayfleamarket.yahoo.co.jp/item/external-'+item.id,matchMethod:'exact_bidirectional_title_identity',checkedAt:OLD}],
+   detailQueue:{ownKey:'a'.repeat(64),attempts:[{id:'prior-read',key:'b'.repeat(64),at:OLD}],schedulingAttempts:[],lastSelection:['prior-read']}};
+ }
  const sharedError=Object.freeze(new RequestDeferredError('request_cooldown_deadline',NOW+3600000)),originalErrorJSON=JSON.stringify(sharedError);
  if(exhaustYahoo){const reviewed=items.find(item=>item.platform==='rakuma');reviewed.xianyu={...reviewed.xianyu,status:'page_empty',verification:XIANYU_VERIFICATION,query:xianyuReviewPlan(reviewed).query};}
  const yahooHold={reason:'http_429',retryAt:activeHolds?NOW+3600000:NOW-60_000};
@@ -63,7 +71,8 @@ async function runFixture(t,{exhaustYahoo=false,activeHolds=false,deferredQuotes
     if(observed)await dependencies.fetchYahooItemBundle(item.id);
     event('quote:deferred',item,{sourceInputObserved:observed});throw sharedError;
    }
-   await pause();event('quote:end',item);yahooQuotes++;if(exhaustYahoo&&yahooQuotes===6)t.mock.timers.tick(61_000);return quote(item);
+   await pause();event('quote:end',item);yahooQuotes++;
+   if(exhaustYahoo&&yahooQuotes===6||expireAfterFirstYahoo&&yahooQuotes===1)t.mock.timers.tick(61_000);return quote(item);
   },
   async rakumaItem(item){event('detail',item);return detail(item);},
   async rakumaQuote(item,settings){event('quote:start',item);inspectOwned(settings);await pause();event('quote:end',item);return quote(item);},
@@ -216,4 +225,26 @@ test('real scan: deferred compare advances attempt clocks only after its own sou
  }
  // A returned input may be shared with another worker in this same run. These
  // are comparison-observation classifications, deliberately not network counts.
+});
+
+test('real scan: wall-clock expiry preserves old-rule links and queue through encrypted publication without upgrading evidence',async t=>{
+ const outcome=await runFixture(t,{expireAfterFirstYahoo:true}),{events,previous}=outcome;
+ const readIds=new Set(events.filter(row=>row.kind==='quote:start'&&row.platform==='yahoo').map(row=>row.id));
+ assert.equal(readIds.size,1);
+ for(const snapshot of outcome.snapshots){
+  assertRetainedAllAccounts(snapshot,outcome);
+  const deferred=snapshot.items.filter(item=>normalizeOfferPlatform(item.platform)==='yahoo'&&!readIds.has(item.id));
+  assert.equal(deferred.length,5);
+  for(const row of deferred){
+   const prior=previous.items.find(item=>item.id===row.id);
+   assert.equal(row.yahoo.rulesVersion,PRICING_RULES_VERSION-1);
+   for(const field of ['checkedAt','searchCheckedAt','lastAttemptAt','lastFullAttemptAt','knownLastAttemptAt'])assert.equal(row.yahoo[field],prior.yahoo[field],field);
+   assert.equal(row.yahoo.candidates.length,prior.yahoo.candidates.length);
+   for(const [index,candidate] of prior.yahoo.candidates.entries())for(const [field,value] of Object.entries(candidate))assert.deepEqual(row.yahoo.candidates[index][field],value);
+   assert.deepEqual(row.yahoo.detailQueue,prior.yahoo.detailQueue);
+   assert.equal(row.yahoo.cacheReason,'request_error');assert.equal(row.yahoo.deferredReason,'request_deadline');
+   assert.equal(pricingDecision(row,{now:NOW+61000}).canRecommend,false);
+  }
+  assert.equal(snapshot.cycleCoverage.accepted,false);
+ }
 });

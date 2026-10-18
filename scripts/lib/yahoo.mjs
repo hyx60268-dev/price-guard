@@ -2,12 +2,17 @@ import { isOwnedOffer } from '../../public/owned-offers.js';
 import { createRequestCooldown,retryAfterDeadline,isRequestDeferred,RequestDeferredError } from './request-cooldown.mjs';
 import { createYahooRequestAccess,loadYahooRequestAccess,yahooRetryAt } from './yahoo-request-access.mjs';
 import { parseShopProfile } from '../../public/shop-profile.js';
-import {planYahooDetailQueue,withYahooSchedulingCheckpoint} from './yahoo-detail-queue.mjs';
-import { knownYahooCandidates,yahooTargetShipping } from './yahoo-known-refresh.mjs';
+import {carryYahooDetailQueueVersion,planYahooDetailQueue,withYahooSchedulingCheckpoint} from './yahoo-detail-queue.mjs';
+import { knownYahooCandidates,knownYahooRevalidationCandidates,yahooTargetShipping } from './yahoo-known-refresh.mjs';
 import { extractYahooBundleComponents } from './merchant-bundles.mjs';
 import { merchantNameFromTitle } from './merchant-names.mjs';
 import { imageFingerprints,imageSetSimilarity,primaryProductSimilarity } from './image.mjs';
+import {createYahooReadObservations} from './yahoo-read-observations.mjs';
+import {yahooRecommendationReceipt} from './yahoo-recommendation-receipt.mjs';
+import {yahooProfileObservation} from './yahoo-profile-observation.mjs';
 import { offerIdentityGuard } from './offer-identity.mjs';
+import {yahooDetailVerificationDigest,yahooDetailVerificationContext} from './yahoo-verification-context.mjs';
+import {retainYahooProfileIdentity} from './yahoo-profile-identity.mjs';
 import { reviewedListingCandidate,reviewedListingIdentity } from './reviewed-listing-identities.mjs';
 import { rejectedByMemory } from '../../public/match-memory.js';
 import { descriptionColorMismatch } from './rules.mjs';
@@ -19,11 +24,14 @@ const DEFAULT_RATE_LIMIT_COOLDOWN_MS=60000;
 let requestIntervalMs=DEFAULT_REQUEST_INTERVAL_MS,rateLimitCooldownMs=DEFAULT_RATE_LIMIT_COOLDOWN_MS;
 const requestCooldown=createRequestCooldown({intervalMs:()=>requestIntervalMs});
 let requestAccess=createYahooRequestAccess(),requestAccessError=null;
+let readObservations=createYahooReadObservations();
 export async function initializeYahooRequestAccess(options){
+  readObservations=createYahooReadObservations();
   requestAccess=await loadYahooRequestAccess(options);requestCooldown.deferUntil(yahooRetryAt(requestAccess.snapshot()));return requestAccess.snapshot();
 }
 export const yahooRequestAccessSnapshot=()=>requestAccess.snapshot();
 export function yahooRequestStats(){return requestCooldown.stats()}
+export function yahooTransportStats(){return readObservations.snapshot()}
 
 function applyYahooSettings(settings={}){
   requestIntervalMs=Math.max(4000,Number(settings.yahooRequestIntervalMs)||DEFAULT_REQUEST_INTERVAL_MS);
@@ -110,7 +118,7 @@ function requestBounds({signal,deadline=Infinity,timeoutMs=Infinity}={}){
     async run(operation){
       check();let listener;
       const aborted=new Promise((_,reject)=>{listener=()=>reject(controller.signal.reason);controller.signal.addEventListener('abort',listener,{once:true})});
-      try{const result=await Promise.race([typeof operation==='function'?operation():operation,aborted]);check();return result}
+      try{const result=await Promise.race([Promise.resolve().then(()=>typeof operation==='function'?operation():operation),aborted]);check();return result}
       finally{controller.signal.removeEventListener('abort',listener)}
     },
     close(){clearTimeout(timer);signal?.removeEventListener('abort',abort);controller.abort()}
@@ -164,10 +172,25 @@ export async function fetchYahooPage(url,options={},dependencies={}){
         if(requestAccessError)throw requestAccessError;
       }while(!requestCooldown.isCurrent(admission));
     }catch(error){throw yahooDeferral(error)}
-    const bounds=requestBounds({signal,deadline,timeoutMs:15000});
+    const bounds=requestBounds({signal,deadline,timeoutMs:15000});let readObservation,auditReservation,observedStatus=null,observedRetryAfter=null,decodedBodyBytes=0,transportComplete=false,bodyObservedAt=null;
     try{
       bounds.check();
-      const response=await bounds.run(()=>Promise.resolve(directFetch(url,{headers:{'user-agent':UA,'accept-language':'ja-JP,ja;q=0.9'},signal:bounds.signal,redirect:'follow'})).then(response=>observeYahooResponse(response,attempt)));
+      const response=await bounds.run(()=>{
+        // The audit's durable claim and shared budget are checked at the actual
+        // transport boundary, after the unchanged source gate. A cache hit
+        // never reaches this callback. A denial never creates an extra retry.
+        try{
+          auditReservation=settings.beforeYahooTransport?.({url,purpose:settings.yahooRequestPurpose||null,accountId:settings.yahooRequestAccountId||null,targetId:settings.yahooRequestTargetId||null,attempt});
+          if(auditReservation&&typeof auditReservation.then==='function'){Promise.resolve(auditReservation).catch(()=>{});auditReservation=null;throw new Error('Audit reservation must be synchronous');}
+        }catch(error){
+          if(isRequestDeferred(error))throw error;
+          throw new RequestDeferredError('comparison_audit_not_admitted',Infinity);
+        }
+        bounds.check();
+        readObservation=readObservations.begin(url,settings.yahooRequestPurpose);
+        return Promise.resolve(directFetch(url,{headers:{'user-agent':UA,'accept-language':'ja-JP,ja;q=0.9'},signal:bounds.signal,redirect:settings.yahooComparisonAudit===true?'manual':'follow'}))
+          .then(response=>{observedStatus=response.status;observedRetryAfter=response.headers.get('retry-after');readObservation.response(response.status);return observeYahooResponse(response,attempt)});
+      });
       const retryAfter=response.headers.get('retry-after');
       if(response.status===429){
         const now=Date.now(),retryAt=yahooRetryAt(requestAccess.snapshot());
@@ -176,15 +199,29 @@ export async function fetchYahooPage(url,options={},dependencies={}){
       }
       if(!response.ok)throw Object.assign(new Error(`HTTP ${response.status}`),{httpStatus:response.status,retryAfter});
       const html=await bounds.run(()=>response.text()),observedAt=Date.now();
+      bodyObservedAt=observedAt;decodedBodyBytes=Buffer.byteLength(html,'utf8');
       if(html.length<10000)throw new Error(`页面内容异常短 (${html.length} bytes)`);
+      transportComplete=true;
+      readObservation.finish({bytes:decodedBodyBytes,complete:true});
       // Response.url is the actual final URL; never replace it with the request
       // URL if a reader omits it, or hide a redirect from graph validation.
-      return {html,status:response.status,observedAt,fromCache:false,...(response.url?{url:response.url,finalUrl:response.url}:{}),redirected:response.redirected===true};
+      return {html,status:response.status,observedAt,fromCache:false,...(response.url?{url:response.url,finalUrl:response.url}:{}),redirected:response.redirected===true,...(auditReservation?.reservationId?{auditReservationId:auditReservation.reservationId}:{})};
     }catch(error){
       if(signal?.aborted||isRequestDeferred(error))throw yahooDeferral(error);
       if(Date.now()>=deadline)throw [401,403].includes(error?.httpStatus)?error:yahooDeferral(new RequestDeferredError('request_deadline',requestCooldown.stats().nextRequestAt));
       last=error;
-    }finally{bounds.close()}
+    }finally{
+      readObservation?.finish({bytes:decodedBodyBytes,complete:transportComplete});bounds.close();
+      if((readObservation||auditReservation)&&settings.afterYahooTransport)try{
+        const receipt=settings.afterYahooTransport({reservation:auditReservation,httpStatus:observedStatus,retryAfter:observedRetryAfter,
+          completed:transportComplete,transportStarted:Boolean(readObservation),decodedBodyBytes,observedAt:bodyObservedAt});
+        if(receipt&&typeof receipt.then==='function'){Promise.resolve(receipt).catch(()=>{});throw Error('Audit completion must be synchronous');}
+      }catch(error){
+        const failed=new RequestDeferredError('comparison_audit_record_failed',Infinity);
+        if(observedStatus!==null)Object.assign(failed,{httpStatus:observedStatus,retryAfter:observedRetryAfter});
+        throw failed;
+      }
+    }
     if(attempt<attempts){
       if(Date.now()+1000*attempt>=deadline)throw [401,403].includes(last?.httpStatus)?last:yahooDeferral(new RequestDeferredError('request_deadline',requestCooldown.stats().nextRequestAt));
       await retryWait(1000*attempt,{signal,deadline});
@@ -197,15 +234,25 @@ export async function fetchYahooPage(url,options={},dependencies={}){
 
 export async function fetchYahooResult(url,settings={}){
   applyYahooSettings(settings);
-  const {html}=await fetchYahooPage(url,settings),result=searchResult(extractNextData(html));
+  const page=await fetchYahooPage(url,settings),{html}=page,result={...searchResult(extractNextData(html)),observedAt:page.observedAt,fromCache:page.fromCache,...(page.url?{url:page.url}:{}),redirected:page.redirected};
   return /^https:\/\/paypayfleamarket\.yahoo\.co\.jp\/user\//.test(url)?{...result,profileName:merchantNameFromTitle('yahoo',html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]||'')}:result;
 }
 
 export async function fetchYahooItemBundle(id,settings={}){
   applyYahooSettings(settings);
-  const {html}=await fetchYahooPage(`https://paypayfleamarket.yahoo.co.jp/item/${id}`,settings),nextData=extractNextData(html);
+  const requestedUrl=`https://paypayfleamarket.yahoo.co.jp/item/${id}`;
+  const page=await fetchYahooPage(requestedUrl,settings),{html}=page,nextData=extractNextData(html);
   const detail=extractItemData(nextData);
-  return {detail,shipping:yahooTargetShipping(html,detail),recommendations:extractRecommendationCards(nextData),components:extractYahooBundleComponents(html)};
+  let recommendationReceipt=null;
+  if(settings.yahooComparisonAudit===true){
+    // A receipt cannot claim the requested URL when the transport reports a
+    // different final source. Missing source metadata leaves this lane blocked.
+    if(page.url===requestedUrl&&page.redirected===false)
+      recommendationReceipt=yahooRecommendationReceipt(nextData,{requestedItemId:id,sourceUrl:page.url,observedAt:page.observedAt});
+  }
+  return {detail,shipping:yahooTargetShipping(html,detail),recommendations:extractRecommendationCards(nextData),components:extractYahooBundleComponents(html),
+    observedAt:page.observedAt,fromCache:page.fromCache,sourceUrl:page.url||null,...(page.auditReservationId?{auditReservationId:page.auditReservationId}:{}),
+    ...(recommendationReceipt?{recommendationReceipt}:{})};
 }
 
 export function categoryText(detail,card={}){
@@ -311,12 +358,16 @@ function assertYahooProfileTransport(page,requestedUrl){
 export async function discoverYahooProfile(_unusedPage,profileUrl,settings={},dependencies={}){
   applyYahooSettings(settings);
   const getPage=dependencies.fetchPage||dependencies.fetchYahooPage||fetchYahooPage;
+  const rawPages=[];
   const getResult=async(url,options)=>{
     if(dependencies.fetchYahooResult){
-      const result=await dependencies.fetchYahooResult(url,options);assertYahooProfileTransport(result,url);return result;
+      const result=await dependencies.fetchYahooResult(url,options);assertYahooProfileTransport(result,url);
+      rawPages.push({pageNumber:rawPages.length+1,requestedUrl:url,response:result,result});return result;
     }
     const page=await getPage(url,options,dependencies);assertYahooProfileTransport(page,url);
-    return {...searchResult(extractNextData(page.html)),observedAt:page.observedAt,fromCache:page.fromCache};
+    const result=searchResult(extractNextData(page.html));
+    rawPages.push({pageNumber:rawPages.length+1,requestedUrl:url,response:page,result});
+    return {...result,observedAt:page.observedAt,fromCache:page.fromCache};
   };
   const first=await getResult(`${profileUrl}?page=1`,settings),observations=[first];
   const pages=Math.max(1,Math.ceil(Number(first.totalResultsAvailable||first.items.length)/100));
@@ -333,7 +384,8 @@ export async function discoverYahooProfile(_unusedPage,profileUrl,settings={},de
   // separately from the active inventory, without inferring a sale date.
   const cards=all.filter(raw=>raw?.id&&(!profileSellerId||[raw.sellerId,raw.seller?.id].filter(Boolean).every(id=>String(id)===profileSellerId)));
   const listedItems=[...new Map(cards.map(raw=>[raw.id,{...liveItem(raw),sellerId:String(raw.sellerId||raw.seller?.id||profileSellerId)}])).values()];
-  return {items:listedItems.filter(item=>item.itemStatus==='OPEN'),listedItems:profileSellerId?listedItems:[],
+  const profileObservation=yahooProfileObservation({account:{id:settings.yahooRequestAccountId||profileSellerId,platform:'yahoo',profileUrl},pages:rawPages,now:Date.now()});
+  return {items:listedItems.filter(item=>item.itemStatus==='OPEN'),listedItems:profileSellerId?listedItems:[],profileObservation,
     profileUrl:profileSellerId?profile.profileUrl:null,profileSellerId,totalResults:total,pages,complete,
     ...(observations.every(page=>page.fromCache===false&&Number.isFinite(page.observedAt)&&page.observedAt<=Date.now())
       ?{observedAt:Math.min(...observations.map(page=>page.observedAt)),fromCache:false}:{})};
@@ -378,8 +430,10 @@ export function screenYahooCard(item,card,{ownSellerId='',ownCategory='',setting
 // Existing full-description/image/quantity/condition verifier, also used by
 // the full-inventory runner. Network selection remains outside this function.
 export async function evaluateYahooDetail({item,card,bundle,ownDetail,knownOnly=false,ownSellerId='',ownConditionText='',ownCategory='',
-  exactQuery=exactQueryFor(item.title),maxImages=8,ownFingerprints=[],ownImageEvidence=[],settings={}},{imageFingerprints:fingerprint=imageFingerprints}={}){
+  exactQuery=exactQueryFor(item.title),maxImages=8,ownFingerprints=[],ownImageEvidence=[],ownObservedAt=null,settings={}},{imageFingerprints:fingerprint=imageFingerprints,now:verificationNow=Date.now}={}){
   const detail=bundle.detail;let currentPrimaryImageScore=null;
+  const contextInputs={item,ownDetail,candidateDetail:detail,ownObservedAt,candidateObservedAt:bundle.observedAt};
+  const initialContextDigest=yahooDetailVerificationDigest(contextInputs);
   const currentDetailRead=detail?.id===card.id&&Boolean(detail?.title?.trim()&&detail?.description?.trim()&&detail?.status)&&Number.isFinite(Number(detail?.price))&&Number(detail.price)>0;
   const reject=rejection=>({rejection,currentDetailRead,currentPrimaryImageScore});
       if(detail?.id!==card.id){return reject({id:card.id,price:card.price,reason:'detail_id_mismatch'});}
@@ -470,19 +524,21 @@ export async function evaluateYahooDetail({item,card,bundle,ownDetail,knownOnly=
         return reject({id:card.id,price:Number(detail.price),reason:'physical_image_unconfirmed',titleScore:detailTitleScore,imageScore});
       }
       const detailImage=detailImages[0]||card.image;
+      const verificationContext=initialContextDigest===yahooDetailVerificationDigest(contextInputs)
+        ?yahooDetailVerificationContext({digest:initialContextDigest,verifiedAt:verificationNow(),ownObservedAt,candidateObservedAt:bundle.observedAt}):null;
       return {candidate:{...card,url:`https://paypayfleamarket.yahoo.co.jp/item/${detail.id}`,title:detail.title,
         text:`${detail.title}\n${detail.description||''}`,sellerId:String(detail.seller?.id||card.sellerId||''),image:detailImage,price:Number(detail.price),itemStatus:detail.status,
         titleScore:detailTitleScore,imageScore,primaryImageScore,semantic,queryFamily,candidateFamily,
         ...(reviewedIdentity?{identityEvidence:reviewedIdentity}:{}),
         ...(sharedIdentity.bonusComparison?{bonusComparison:sharedIdentity.bonusComparison}:{}),
         ...(knownOnly?{checkedAt:new Date().toISOString(),shippingJPY:0,shippingSource:bundle.shipping.shippingSource,priceSource:'current_target_detail'}:{}),
-        matchMethod:reviewedIdentity?'reviewed_sealed_box_identity':sealedBoxEquivalent?'same_sealed_single_box_primary':lotteryEquivalent?'lottery_release_prize_character':assortmentEquivalent?'same_packaging_assortment':exactTitleEquivalent?'exact_bidirectional_title_identity':visualEquivalent?'strong_visual_primary_product':textEquivalent?'detail_type_quantity_equivalent_text':'detail_type_quantity_text_images'},currentDetailRead,currentPrimaryImageScore};
+        matchMethod:reviewedIdentity?'reviewed_sealed_box_identity':sealedBoxEquivalent?'same_sealed_single_box_primary':lotteryEquivalent?'lottery_release_prize_character':assortmentEquivalent?'same_packaging_assortment':exactTitleEquivalent?'exact_bidirectional_title_identity':visualEquivalent?'strong_visual_primary_product':textEquivalent?'detail_type_quantity_equivalent_text':'detail_type_quantity_text_images'},currentDetailRead,currentPrimaryImageScore,verificationContext};
 }
 
 export async function yahooCompare(_unusedPage,item,settings={},dependencies={}){
   const knownOnly=settings.yahooKnownOnly===true;
   const requestedKnown=new Set(settings.yahooKnownCandidateIds||[]);
-  const knownCardsInput=knownOnly?knownYahooCandidates(item,settings).filter(card=>!requestedKnown.size||requestedKnown.has(card.id)).slice(0,2):[];
+  const knownCardsInput=knownOnly?knownYahooRevalidationCandidates(item,settings).filter(card=>!requestedKnown.size||requestedKnown.has(card.id)).slice(0,2):[];
   if(knownOnly&&!knownCardsInput.length)return {candidates:[],rejected:[],knownRefresh:{mode:'failed',reason:'no_eligible_known_offer'}};
   const getBundle=dependencies.fetchYahooItemBundle||fetchYahooItemBundle;
   const getResult=dependencies.fetchYahooResult||fetchYahooResult;
@@ -633,7 +689,7 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
   // Unselected old links follow new candidates even when their cached price is
   // lower. Otherwise a third known link could consume a reserved discovery slot.
   preliminary=[...knownCards.slice(0,recheckLimit),...preliminary.filter(card=>!knownIds.has(card.id)),...knownCards.slice(recheckLimit)];
-  const detailQueue=knownOnly?null:planYahooDetailQueue({item,detail:ownDetail,candidates:preliminary,knownIds,knownLimit:recheckLimit,limit:maxDetailChecks,prior:item.yahoo?.detailQueue});
+  const detailQueue=knownOnly?null:planYahooDetailQueue({item,detail:ownDetail,candidates:preliminary,knownIds,knownLimit:recheckLimit,limit:maxDetailChecks,prior:item.yahoo?.detailQueue,priorRulesVersion:item.yahoo?.rulesVersion});
   // Backoff changes selection only. Every recalled card stays in preliminary
   // for unresolved-lower/raise guards and incomplete-coverage accounting.
   const detailCandidates=detailQueue?.cards||preliminary;
@@ -651,10 +707,14 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
     try{
       const bundle=await getBundle(card.id,settings),detail=bundle.detail;
       currentTargetResponse=detail?.id===card.id&&Boolean(detail?.title?.trim()&&detail?.status)&&Number.isFinite(Number(detail?.price))&&Number(detail.price)>0;
-      const evaluation=await evaluateYahooDetail({item,card,bundle,ownDetail,knownOnly,ownSellerId,ownConditionText,ownCategory,
+      const evaluation=await evaluateYahooDetail({item,card,bundle,ownDetail,ownObservedAt:ownBundle?.observedAt,knownOnly,ownSellerId,ownConditionText,ownCategory,
         exactQuery,maxImages,ownFingerprints,ownImageEvidence,settings},{imageFingerprints:fingerprint});
       currentDetailRead=evaluation.currentDetailRead;currentPrimaryImageScore=evaluation.currentPrimaryImageScore;completedRejection=evaluation.rejection;
-      if(evaluation.candidate)competitors.push(evaluation.candidate);else if(evaluation.rejection)rejected.push(evaluation.rejection);
+      if(evaluation.candidate){
+        const profileIdentity=retainYahooProfileIdentity({item,ownDetail,candidateDetail:detail,evaluation,ownObservedAt:ownBundle?.observedAt,candidateObservedAt:bundle.observedAt,identityVerifiedAt:evaluation.verificationContext?.verifiedAt,rulesVersion:MATCHING_RULES_VERSION});
+        const {profileIdentity:_priorProfileIdentity,...currentCandidate}=evaluation.candidate;
+        competitors.push({...currentCandidate,...(profileIdentity?{profileIdentity}:{})});
+      }else if(evaluation.rejection)rejected.push(evaluation.rejection);
     }catch(error){if(isRequestDeferred(error))throw withYahooSchedulingCheckpoint(error,detailQueue);rejected.push({id:card.id,price:card.price,reason:'detail_error',error:String(error)})}
     finally{
       const rejection=[...rejected].reverse().find(row=>row.id===card.id);
@@ -687,7 +747,9 @@ export async function yahooCompare(_unusedPage,item,settings={},dependencies={})
     query,searchUrl,lowestPrice:lowest?.price??item.ownPrice,lowestUrl:lowest?.url??item.url,
     ...(knownOnly?{evidenceStatus:'incomplete',searchComplete:false,ownObservedPrice:item.ownPrice,knownRefresh:{mode:'details_only',reason:competitors.length?'verified_known_offers':'no_verified_known_offer'}}:{}),
     recommendedPrice:recommended,candidates:competitors.slice(0,5),cardCount:cards.length,
-    detailQueue:knownOnly?item.yahoo?.detailQueue:detailQueue?.snapshot(),
+    // A detail-only refresh may advance quote rules before the broad queue is
+    // resumed. Preserve the queue's own version provenance across that step.
+    detailQueue:knownOnly?carryYahooDetailQueueVersion({item,detail:ownDetail,prior:item.yahoo?.detailQueue,priorRulesVersion:item.yahoo?.rulesVersion}):detailQueue?.snapshot(),
     searchCardCount:searchCards.length,recommendationCardCount:recommendationCards.length,
     preliminaryCount:preliminary.length,unresolvedCandidateCount:unresolvedCandidates.length,uncheckedLowerCandidateCount:uncheckedLowerCandidates.length,unconfirmedLowerCandidateCount:unconfirmedLowerCandidates.length,detailCheckedCount,rejected:rejected.slice(-30),
     competitorCount:competitors.length,status:verificationIncomplete?'incomplete':'ok',comparisonStatus:verificationIncomplete?'verification_incomplete':lowest?.isOwn?(underpriced?'underpriced':'no_lower_found'):'competitor_lower',
