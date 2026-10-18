@@ -1,4 +1,4 @@
-import { classifyYahooCardFirst } from './yahoo-card-first.mjs';
+import { classifyYahooCardFirst, YAHOO_BUYER_SHIPPING_POLICY } from './yahoo-card-first.mjs';
 import { categoryText, evaluateYahooDetail, exactQueryFor, screenYahooCard } from './yahoo.mjs';
 import { rejectedByMemory } from '../../public/match-memory.js';
 import { COMPARISON_AUDIT_LIMITS } from './comparison-audit-control.mjs';
@@ -23,8 +23,46 @@ const requireThat = (condition, reason) => { if (!condition) throw fail(reason);
 const denial = error => [401, 403, 429].includes(error?.httpStatus) || error?.auditReason === 'source_denied';
 const unknown = reason => ({ status: 'unknown', reason, comparable: null, lowerThanOwn: null });
 
+// This policy applies only to exact Yahoo Fleamarket item URLs. Explicit
+// uncertain/conflicting shipping never silently falls back to free shipping.
+function deliveredPrice(observation) {
+  const { id, url, price, priceKind = 'ordinary', currency, shipping } = observation;
+  const uncertain = reason => ({ status: 'unknown', reason, deliveredPriceJPY: null });
+  if (!text(id) || !/^[a-zA-Z0-9_-]{1,80}$/.test(id) || url !== urlFor(id)) return uncertain('buyer_shipping_platform_unconfirmed');
+  if (priceKind !== 'ordinary' || !['number', 'string'].includes(typeof price) ||
+    typeof price === 'string' && !/^\d+(?:\.\d+)?$/.test(price) ||
+    !Number.isFinite(Number(price)) || Number(price) <= 0 || currency !== undefined && currency !== 'JPY')
+    return uncertain('ordinary_price_unconfirmed');
+  if (Object.hasOwn(observation, 'shipping') &&
+    (shipping?.shippingKnown !== true || shipping.currency !== 'JPY' || shipping.shippingJPY !== 0))
+    return uncertain('buyer_shipping_unconfirmed_or_conflicting');
+  return { status: 'confirmed', priceJPY: Number(price), deliveredPriceJPY: Number(price),
+    shipping: shipping ? clone(shipping) : { ...YAHOO_BUYER_SHIPPING_POLICY, shippingKnown: true },
+    shippingBasis: shipping ? 'explicit_current_observation' : 'yahoo_fleamarket_buyer_shipping_policy' };
+}
+
+function compareCardPrices(target, row) {
+  const own = deliveredPrice({ id: target.item.id, url: target.ownBundle.sourceUrl,
+    price: target.ownBundle.detail.price, priceKind: Object.hasOwn(target.ownBundle.detail, 'priceKind') ? target.ownBundle.detail.priceKind ?? 'unknown' : 'ordinary',
+    currency: target.ownBundle.detail.currency, ...(Object.hasOwn(target.ownBundle, 'shipping') ? { shipping: target.ownBundle.shipping } : {}) });
+  const observations = row.cardObservations.map(card => deliveredPrice({ ...card, priceKind: card.priceKind || 'unknown' }));
+  const unconfirmed = observations.find(value => value.status !== 'confirmed');
+  const statuses = observations.map(value => value.deliveredPriceJPY < own.deliveredPriceJPY ? 'confirmed_lower' : 'confirmed_not_lower');
+  const status = own.status !== 'confirmed' || unconfirmed || new Set(statuses).size !== 1 ? 'unknown' : statuses[0];
+  return { status, reason: own.status !== 'confirmed' ? `own_${own.reason}` : unconfirmed?.reason ||
+    (status === 'unknown' ? 'conflicting_card_price_observations' : 'ordinary_delivered_price_compared'), own, observations };
+}
+
 function countRows(target) {
   const rows = target.rows;
+  const cardHint = row => row.cardFirst?.mode === 'card_observation' && row.cardFirst.observation?.lowerPriceAlert === true;
+  const strictLower = row => row.paired === true && row.baseline?.status === 'comparable' && row.baseline.lowerThanOwn === true;
+  const verdictKnown = row => row.paired === true && ['comparable', 'rejected'].includes(row.baseline?.status);
+  // A different later price is not a card matching error. Only compare two
+  // confirmed ordinary delivered-price observations; source times stay distinct.
+  const priceChanged = row => row.paired === true && row.detailPriceComparison?.candidate?.status === 'confirmed' &&
+    row.priceComparison?.observations?.length > 0 && row.priceComparison.observations.every(value => value.status === 'confirmed') &&
+    row.priceComparison.observations.some(value => value.deliveredPriceJPY !== row.detailPriceComparison.candidate.deliveredPriceJPY);
   return {
     raw: target.receipt?.totalCards ?? null,
     retainedRaw: target.receipt?.cards?.length ?? 0,
@@ -33,6 +71,15 @@ function countRows(target) {
     total: rows.length, duplicates: rows.reduce((sum, row) => sum + row.cardObservations.length - 1, 0),
     eligible: rows.filter(row => row.eligible).length,
     eligibleLowPrice: rows.filter(row => row.eligible && row.lowPrice).length,
+    frozenPopulation: rows.length,
+    confirmedLowerPrice: rows.filter(row => row.priceComparison?.status === 'confirmed_lower').length,
+    unknownPrice: rows.filter(row => row.priceComparison?.status === 'unknown').length,
+    skippedNotLower: rows.filter(row => row.exclusionReason === 'confirmed_not_lower_delivered_price').length,
+    mainflowCardOnly: rows.filter(row => row.mainflow?.mode === 'card_only').length,
+    mainflowDetailRequired: rows.filter(row => row.mainflow?.mode === 'detail_required').length,
+    mainflowDetailPaired: rows.filter(row => row.detailPhase === 'newflow' && row.paired).length,
+    baselineValidationPaired: rows.filter(row => row.detailPhase === 'baseline_validation' && row.paired).length,
+    baselineValidationUnpaired: rows.filter(row => row.mainflow?.mode === 'card_only' && !row.paired).length,
     excluded: rows.filter(row => row.eligible === false).length,
     paired: rows.filter(row => row.paired).length,
     unpaired: rows.filter(row => !row.paired).length,
@@ -43,6 +90,23 @@ function countRows(target) {
     rejected: rows.filter(row => row.baseline?.status === 'rejected').length,
     unknown: rows.filter(row => row.baseline?.status === 'unknown').length,
     blocked: rows.filter(row => row.baseline?.status === 'blocked').length,
+    // These are cross-observation counts, not live precision/recall rates.
+    // Rejected includes insufficient identity evidence and later not-open terms.
+    cardLowerHints: rows.filter(cardHint).length,
+    cardLowerHintsPaired: rows.filter(row => cardHint(row) && row.paired).length,
+    cardLowerHintsStrictLower: rows.filter(row => cardHint(row) && strictLower(row)).length,
+    cardLowerHintsStrictRejected: rows.filter(row => cardHint(row) && row.paired && row.baseline?.status === 'rejected').length,
+    cardLowerHintsStrictNotLower: rows.filter(row => cardHint(row) && row.paired && row.baseline?.status === 'comparable' && row.baseline.lowerThanOwn === false).length,
+    cardLowerHintsUnresolved: rows.filter(row => cardHint(row) && !verdictKnown(row)).length,
+    cardLowerHintsUnpaired: rows.filter(row => cardHint(row) && !row.paired).length,
+    strictLowerWithoutCardHint: rows.filter(row => strictLower(row) && !cardHint(row)).length,
+    strictLowerWithoutCardHintDetailRequired: rows.filter(row => strictLower(row) && !cardHint(row) && row.mainflow?.mode === 'detail_required').length,
+    strictLowerWithoutCardHintUnknownCardPrice: rows.filter(row => strictLower(row) && !cardHint(row) && row.priceComparison?.status === 'unknown').length,
+    comparablePriceChanged: rows.filter(priceChanged).length,
+    cardLowerHintsPriceChanged: rows.filter(row => cardHint(row) && priceChanged(row)).length,
+    pairedVerdictUnknown: rows.filter(row => row.paired && !verdictKnown(row)).length,
+    detailNotObserved: rows.filter(row => !row.detailObservation).length,
+    detailAttemptedWithoutObservation: rows.filter(row => row.detailAttempted && !row.detailObservation).length,
   };
 }
 
@@ -111,15 +175,33 @@ function auditVerdict(evaluation, item) {
  * receives the original deadline, controller signal, and observeImageTransfer.
  * Only that callback's actual transfer metrics count; function calls/cache hits
  * never pretend to be image network requests. Source readers are never defaults.
+ * flowMode defaults to the historical paired_baseline. lower_price_card_first
+ * skips only confirmed non-lower delivered prices and keeps strong cards
+ * provisional. baselineValidation (default true) spends the SAME remaining
+ * controller budget on a separate validation pass; false disables that pass.
  */
 export async function runYahooComparisonAudit({ controller, ownershipIndex, targets, settings = {},
-  readDetail, imageFingerprints, now = Date.now, signal } = {}) {
+  readDetail, imageFingerprints, now = Date.now, signal, flowMode = 'paired_baseline', baselineValidation = true } = {}) {
   requireThat(controller && typeof controller.snapshot === 'function' && typeof controller.freezeCandidates === 'function', 'valid_controller_required');
   requireThat(typeof now === 'function', 'audit_clock_required');
   const prepared = prepareTargets(targets), initial = controller.snapshot();
   const deadlineAt = time(initial.deadlineAt), maxImages = 8;
-  let frozenSet = null, stopReason = null, timer, imageChain = Promise.resolve(), imageCalls = 0, imageTransportStarts = 0;
-  const cachedBundles = new Map();
+  let frozenSet = null, stopReason = null, cardPassCompletedAt = null, timer, imageChain = Promise.resolve(), imageCalls = 0, imageTransportStarts = 0;
+  const cachedBundles = new Map(), requestPhases = new Map();
+  const lowerPriceFirst = flowMode === 'lower_price_card_first';
+  const phaseTimings = Object.fromEntries(['card_pass', 'ambiguity_detail_pass', 'baseline_validation_pass'].map(phase =>
+    [phase, { elapsedMs: 0, intervals: 0, clockValid: true, interrupted: false }]));
+  async function measurePhase(phase, operation) {
+    const began = now(), timing = phaseTimings[phase];
+    timing.intervals++;
+    try { return await operation(); }
+    catch (error) { timing.interrupted = true; throw error; }
+    finally {
+      const ended = now();
+      if (Number.isFinite(began) && Number.isFinite(ended) && ended >= began) timing.elapsedMs += ended - began;
+      else timing.clockValid = false;
+    }
+  }
   const cancellationSignals = [...new Set([signal, settings.signal].filter(value => value && value !== controller.signal))];
   const cancel = () => controller.cancel();
   for (const inputSignal of cancellationSignals) { inputSignal.addEventListener('abort', cancel, { once: true }); if (inputSignal.aborted) cancel(); }
@@ -170,14 +252,26 @@ export async function runYahooComparisonAudit({ controller, ownershipIndex, targ
   function excludeOwned(candidate) {
     if (controller.classifyOwnership(candidate) !== 'owned') return false;
     ownedOffers.yahoo.items.add(candidate.id);
-    if (candidate.sellerId) ownedOffers.yahoo.sellers.add(candidate.sellerId);
+    // An owned listing ID does not authenticate a card's seller field. Never
+    // promote an unrelated seller into the complete owned-seller index.
+    if (candidate.sellerId && controller.classifyOwnership({ id: '__audit_seller_binding_probe__', sellerId: candidate.sellerId }) === 'owned')
+      ownedOffers.yahoo.sellers.add(candidate.sellerId);
     return true;
   }
   function finish() {
-    const snapshot = controller.snapshot();
+    const snapshot = clone(controller.snapshot());
+    for (const request of snapshot.requests) request.phase = requestPhases.get(request.reservationId) ||
+      (['profile', 'own'].includes(request.kind) ? 'prerequisite' : 'unattributed');
+    const phases = Object.fromEntries(['prerequisite', 'paired_baseline', 'newflow', 'baseline_validation', 'unattributed'].map(phase => {
+      const requests = snapshot.requests.filter(request => request.phase === phase);
+      return [phase, { pageReservations: requests.length, pageFetches: requests.filter(request => request.transportStarted === true).length,
+        pendingReservations: requests.filter(request => request.outcome === null).length,
+        detailPageFetches: requests.filter(request => ['known', 'detail'].includes(request.kind) && request.transportStarted === true).length,
+        successfulDetailObservations: requests.filter(request => ['known', 'detail'].includes(request.kind) && request.transportStarted === true && request.outcome === 'ok' && request.observedAt !== null).length }];
+    }));
     const reason = stopReason || snapshot.stopped;
     for (const target of prepared) for (const row of target.rows) {
-      if (!row.paired && !row.unpairedReason) row.unpairedReason = row.exclusionReason || reason || 'not_selected';
+      if (!row.paired && (!row.unpairedReason || row.unpairedReason === 'baseline_validation_pending')) row.unpairedReason = row.exclusionReason || reason || 'not_selected';
       delete row.card;
       delete row.priority;
     }
@@ -192,9 +286,16 @@ export async function runYahooComparisonAudit({ controller, ownershipIndex, targ
     return freeze({ version: 1, kind: 'standalone_frozen_yahoo_comparison_audit', requestId: snapshot.requestId,
       startedAt: snapshot.startedAt, deadlineAt: snapshot.deadlineAt, frozenAt: frozenSet?.frozenAt ?? null,
       candidateSetIdentity: frozenSet?.identity ?? null, status: reason ? 'incomplete' : 'completed', stopReason: reason || null,
+      flowMode, cardPassCompletedAt, baselineValidationEnabled: lowerPriceFirst && baselineValidation,
       canRecommend: false, procurementCostEligible: false, sourceTimesAreIndependent: true,
-      counts: totals, pairedCoverageComplete: Boolean(frozenSet && !reason && totals.eligibleUnpaired === 0 &&
+      requestPhases: phases,
+      phaseTimings: lowerPriceFirst ? phaseTimings : null,
+      phaseTimingMeaning: 'Sequential non-overlapping measured intervals from the injected clock, including awaited I/O; not CPU time. Detail phases sum their work intervals. Prerequisite collection and scheduling outside intervals are excluded.',
+      mainflowComplete: lowerPriceFirst ? Boolean(frozenSet && output.every(target => target.collectionComplete && target.rows.every(row =>
+        row.eligible === false || row.mainflow?.mode === 'card_only' || row.detailPhase === 'newflow' && row.paired))) : null,
+      counts: totals, pairedCoverageComplete: Boolean(frozenSet && !reason && (lowerPriceFirst ? totals.unpaired === 0 : totals.eligibleUnpaired === 0) &&
         output.every(target => target.collectionComplete && target.rows.every(row => typeof row.eligible === 'boolean'))),
+      pairedCoverageScope: lowerPriceFirst ? 'entire_frozen_population' : 'eligible_frozen_population',
       imageFingerprintCalls: imageCalls,
       imageTransfers: {started:imageTransportStarts,settled:snapshot.counts.imageFetches,
         pending:Math.max(0,imageTransportStarts-snapshot.counts.imageFetches),metricsComplete:imageTransportStarts===snapshot.counts.imageFetches,
@@ -204,10 +305,13 @@ export async function runYahooComparisonAudit({ controller, ownershipIndex, targ
       limitations: ['Card observations and later detail observations are different source times, not simultaneous ground truth.',
         'A verifier verdict is an audit result only and creates no accepted pricing candidate, recommendation, or verification clock.',
         'Unpaired, failed, blocked, invalid, and omitted source rows do not establish negative matches or a false-negative rate.',
-        'Image totals are supplied observed transfers, not inferred from fingerprint calls.'] });
+        'Image totals are supplied observed transfers, not inferred from fingerprint calls.',
+        ...(lowerPriceFirst ? ['Skipped non-lower cards remain in the frozen denominator and have no baseline match verdict.',
+          'Mainflow ambiguity details reuse the strict verifier observation; only baseline_validation denotes a separate later validation pass.'] : [])] });
   }
   try {
     check();
+    requireThat(['paired_baseline', 'lower_price_card_first'].includes(flowMode) && typeof baselineValidation === 'boolean', 'invalid_audit_flow_mode');
     requireThat(typeof readDetail === 'function' && typeof imageFingerprints === 'function', 'injected_source_readers_required');
     requireThat(typeof settings.beforeYahooTransport === 'function' && typeof settings.afterYahooTransport === 'function', 'parent_transport_hooks_required');
     if (!initial.ownershipReady) {
@@ -219,6 +323,16 @@ export async function runYahooComparisonAudit({ controller, ownershipIndex, targ
       ownershipIndex.sourceStateId === snapshot.ownershipSourceStateId && Array.isArray(ownershipIndex.accounts) &&
       time(ownershipIndex.verifiedAt) >= time(snapshot.startedAt) && time(ownershipIndex.verifiedAt) <= now(), 'complete_ownership_required');
     requireThat(JSON.stringify(Object.keys(snapshot.targets).sort()) === JSON.stringify(prepared.map(target => target.item.id).sort()), 'controller_target_mismatch');
+    for (const account of ownershipIndex.accounts) {
+      for (const id of account.listingIds || []) {
+        requireThat(controller.classifyOwnership({ id }) === 'owned', 'ownership_index_mismatch');
+        ownedOffers.yahoo.items.add(id);
+      }
+      for (const id of account.sellerIds || []) {
+        requireThat(controller.classifyOwnership({ id: '__audit_seller_binding_probe__', sellerId: id }) === 'owned', 'ownership_index_mismatch');
+        ownedOffers.yahoo.sellers.add(id);
+      }
+    }
     const ownRequests = new Set();
     for (const target of prepared) {
       const ownAccount = ownershipIndex.accounts.find(account => account.accountId === target.item.accountId);
@@ -238,16 +352,27 @@ export async function runYahooComparisonAudit({ controller, ownershipIndex, targ
     const verifierSettings = { ...settings, ownedOffers, ownedOffersComplete: true };
     for (const target of prepared) for (const row of target.rows) {
       row.card = row.cardObservations[0]; row.known = target.known.has(row.id);
-      row.lowPrice = row.card.priceKind === 'ordinary' && Number(row.card.price) > 0 && Number(row.card.price) < Number(target.item.ownPrice);
-      const own = row.cardObservations.some(excludeOwned);
-      const corrected = row.cardObservations.some(card => rejectedByMemory(settings.matchCorrections, target.item, 'yahoo', card));
-      const sold = row.cardObservations.some(card => ['SOLD', 'CLOSED'].includes(card.itemStatus));
-      row.exclusionReason = own ? 'own_offer' : corrected ? 'saved_user_correction' : sold ? 'not_open' : null;
-      row.eligible = !row.exclusionReason;
-      const screened = screenYahooCard(target.item, row.card, { ownSellerId: target.item.sellerId, ownCategory: categoryText(target.ownBundle.detail), settings: verifierSettings });
-      row.meaningful = Boolean(screened.card);
-      row.priority = row.known ? 0 : row.lowPrice ? (row.meaningful ? 1 : 2) : row.meaningful ? 3 : 4;
-      if (!row.eligible) { row.cardFirst = { mode: 'excluded', reason: row.exclusionReason, cardId: row.id }; row.unpairedReason = row.exclusionReason; }
+      if (lowerPriceFirst) row.priceComparison = compareCardPrices(target, row);
+      row.lowPrice = lowerPriceFirst ? row.priceComparison.status === 'confirmed_lower' :
+        row.card.priceKind === 'ordinary' && Number(row.card.price) > 0 && Number(row.card.price) < Number(target.item.ownPrice);
+      // Preserve every frozen row, including higher prices. They are discarded
+      // only from processing, before ownership/title screening or any image I/O.
+      if (lowerPriceFirst && row.priceComparison.status === 'confirmed_not_lower') {
+        row.eligible = false; row.exclusionReason = 'confirmed_not_lower_delivered_price';
+      } else {
+        const own = row.cardObservations.some(excludeOwned);
+        const corrected = row.cardObservations.some(card => rejectedByMemory(settings.matchCorrections, target.item, 'yahoo', card));
+        const sold = row.cardObservations.some(card => ['SOLD', 'CLOSED'].includes(card.itemStatus));
+        row.exclusionReason = own ? 'own_offer' : corrected ? 'saved_user_correction' : sold ? 'not_open' : null;
+        row.eligible = !row.exclusionReason;
+        const screened = screenYahooCard(target.item, row.card, { ownSellerId: target.item.sellerId, ownCategory: categoryText(target.ownBundle.detail), settings: verifierSettings });
+        row.meaningful = Boolean(screened.card);
+      }
+      row.priority = lowerPriceFirst ? (row.lowPrice ? 0 : 1) : row.known ? 0 : row.lowPrice ? (row.meaningful ? 1 : 2) : row.meaningful ? 3 : 4;
+      if (!row.eligible) {
+        row.cardFirst = { mode: 'excluded', reason: row.exclusionReason, cardId: row.id }; row.unpairedReason = row.exclusionReason;
+        if (lowerPriceFirst) row.mainflow = { mode: 'excluded', reason: row.exclusionReason };
+      }
     }
     frozenSet = controller.freezeCandidates({ targets: prepared.map(target => ({ targetId: target.item.id,
       candidates: target.rows.map(row => ({ id: row.id, ...(text(row.card.sellerId) ? { sellerId: row.card.sellerId } : {}), url: row.card.url })) })) });
@@ -257,27 +382,16 @@ export async function runYahooComparisonAudit({ controller, ownershipIndex, targ
     }
     expire();
     const queues = prepared.map(target => target.rows.filter(row => row.eligible).sort((a, b) => a.priority - b.priority || Number(a.card.price) - Number(b.card.price)));
-    let turn = 0;
-    while (queues.some(queue => queue.length)) {
-      const state = check();
-      const available = prepared.map((target, index) => {
-        const canRead = state.counts.pageReservations < COMPARISON_AUDIT_LIMITS.pageFetches &&
-          state.counts.competitorDetailReservations < COMPARISON_AUDIT_LIMITS.competitorDetailFetches &&
-          state.targets[target.item.id].detailReservations < state.targets[target.item.id].allowance;
-        // An uncached head must not hide an already-observed frozen ID that can
-        // still be paired without any additional page reservation.
-        return { target, index, row: canRead ? queues[index][0] : queues[index].find(row => cachedBundles.has(row.id)) };
-      }).filter(value => value.row);
-      if (!available.length) {
-        stopReason = state.counts.pageReservations >= COMPARISON_AUDIT_LIMITS.pageFetches ? 'page_budget_exhausted' :
-          state.counts.competitorDetailReservations >= COMPARISON_AUDIT_LIMITS.competitorDetailFetches ? 'detail_budget_exhausted' : 'target_allowance_exhausted'; break;
-      }
-      const known = available.filter(value => value.row.known), pool = known.length ? known : available;
-      const selected = pool.find(value => value.index === turn) || pool[0], { target, index, row } = selected;
-      queues[index].splice(queues[index].indexOf(row), 1); turn = 1 - index;
+    const canRead = (state, target, row) => cachedBundles.has(row.id) ||
+      state.counts.pageReservations < COMPARISON_AUDIT_LIMITS.pageFetches &&
+      state.counts.competitorDetailReservations < COMPARISON_AUDIT_LIMITS.competitorDetailFetches &&
+      state.targets[target.item.id].detailReservations < state.targets[target.item.id].allowance;
+    const budgetReason = state => state.counts.pageReservations >= COMPARISON_AUDIT_LIMITS.pageFetches ? 'page_budget_exhausted' :
+      state.counts.competitorDetailReservations >= COMPARISON_AUDIT_LIMITS.competitorDetailFetches ? 'detail_budget_exhausted' : 'target_allowance_exhausted';
+    async function classifyRow(target, row) {
       if (!target.ownImages) {
         target.ownImages = [];
-        for (const url of imageUrls(target.ownBundle.detail).slice(0, maxImages)) target.ownImages.push(await fingerprint(url));
+        for (const url of imageUrls(target.ownBundle.detail).slice(0, lowerPriceFirst ? 1 : maxImages)) target.ownImages.push(await fingerprint(url));
       }
       const ownObservation = { itemId: target.item.id, sourceUrl: target.ownBundle.sourceUrl, observedAt: iso(target.ownBundle.observedAt) };
       const cardPrimary = row.card.image ? await fingerprint(row.card.image) : null;
@@ -287,7 +401,12 @@ export async function runYahooComparisonAudit({ controller, ownershipIndex, targ
       if (row.cardFirst.mode === 'blocked') { row.baseline = { ...unknown(row.cardFirst.reason), status: 'blocked' }; throw fail(row.cardFirst.reason); }
       if (new Set(row.cardObservations.map(card => JSON.stringify([card.title, card.price, card.sellerId, card.image, card.itemStatus]))).size > 1)
         row.cardFirst = { mode: 'detail_required', reason: 'conflicting_card_observations', cardId: row.id };
+      if (lowerPriceFirst && row.priceComparison.status === 'unknown' && row.cardFirst.mode !== 'excluded')
+        row.cardFirst = { mode: 'detail_required', reason: row.priceComparison.reason, cardId: row.id };
+    }
+    async function verifyRow(target, row, phase) {
       let bundle, stage = 'detail_reader';
+      row.detailPhase = phase;
       try {
         const cached = cachedBundles.get(row.id);
         if (cached) {
@@ -296,10 +415,13 @@ export async function runYahooComparisonAudit({ controller, ownershipIndex, targ
         } else {
           const before = check().requests.length;
           row.detailAttempted = true;
-          bundle = await bounded(() => readDetail(row.id, { ...settings,
+          try { bundle = await bounded(() => readDetail(row.id, { ...settings,
             yahooRequestPurpose: row.known ? 'known' : 'candidate', yahooRequestTargetId: target.item.id,
             yahooRequestAccountId: target.item.accountId, signal: controller.signal,
-            deadlineAt, deadline: deadlineAt, yahooRequestDeadline: deadlineAt, attempts: 1 }));
+            deadlineAt, deadline: deadlineAt, yahooRequestDeadline: deadlineAt, attempts: 1, yahooAuditPhase: phase })); }
+          finally {
+            for (const request of controller.snapshot().requests.slice(before)) requestPhases.set(request.reservationId, phase);
+          }
           const requests = controller.snapshot().requests.slice(before);
           requireThat(requests.length > 0 && requests.every(request => request.targetId === target.item.id && request.candidateId === row.id &&
             ['known', 'detail'].includes(request.kind) && request.outcome !== null), 'detail_transport_not_counted');
@@ -313,6 +435,7 @@ export async function runYahooComparisonAudit({ controller, ownershipIndex, targ
         if (!cached) cachedBundles.set(row.id, freeze(clone(bundle)));
         const detailOwned = excludeOwned({ id: row.id, sellerId: seller(bundle.detail) });
         stage = 'verifier';
+        for (const url of imageUrls(target.ownBundle.detail).slice(target.ownImages.length, maxImages)) target.ownImages.push(await fingerprint(url));
         const evaluation = await bounded(() => evaluateYahooDetail({ item: target.item,
           card: { ...row.card, fromRecommendation: true }, bundle, ownDetail: target.ownBundle.detail,
           ownSellerId: target.item.sellerId, ownConditionText: [target.ownBundle.detail.title, target.ownBundle.detail.description,
@@ -320,16 +443,97 @@ export async function runYahooComparisonAudit({ controller, ownershipIndex, targ
           ownCategory: categoryText(target.ownBundle.detail), exactQuery: exactQueryFor(target.item.title), maxImages,
           ownFingerprints: target.ownImages.filter(Boolean), ownImageEvidence: target.ownImages, settings: verifierSettings }, { imageFingerprints: fingerprint }));
         requireThat(!detailOwned || evaluation.rejection, 'owned_detail_not_rejected');
-        row.baseline = auditVerdict(evaluation, target.item); row.paired = true;
+        row.baseline = auditVerdict(evaluation, target.item);
+        if (lowerPriceFirst && row.baseline.status === 'comparable') {
+          const detailPrice = deliveredPrice({ id: row.id, url: bundle.sourceUrl, price: bundle.detail.price,
+            priceKind: Object.hasOwn(bundle.detail, 'priceKind') ? bundle.detail.priceKind ?? 'unknown' : 'ordinary',
+            currency: bundle.detail.currency, ...(Object.hasOwn(bundle, 'shipping') ? { shipping: bundle.shipping } : {}) });
+          const ownPrice = row.priceComparison.own;
+          row.detailPriceComparison = { own: ownPrice, candidate: detailPrice };
+          if (detailPrice.status !== 'confirmed' || ownPrice.status !== 'confirmed')
+            row.baseline = unknown(detailPrice.status !== 'confirmed' ? detailPrice.reason : `own_${ownPrice.reason}`);
+          else row.baseline.lowerThanOwn = detailPrice.deliveredPriceJPY < ownPrice.deliveredPriceJPY;
+        }
+        row.paired = true;
         row.comparison = { provisionalCardLower: row.cardFirst.mode === 'card_observation' && row.cardFirst.observation.lowerPriceAlert,
           laterDetailComparableLower: row.baseline.lowerThanOwn,
-          interpretation: 'different_observation_times_not_ground_truth' };
+          interpretation: 'different_observation_times_not_ground_truth',
+          ...(lowerPriceFirst ? { detailPhase: phase,
+            pairingKind: phase === 'newflow' ? 'mainflow_detail_shared_verifier_observation' : 'later_card_only_baseline_validation' } : {}) };
       } catch (error) {
         const current = controller.snapshot();
         const reason = current.stopped || error?.auditReason || (denial(error) ? 'source_denied' : error?.code === 'request_deferred' ? 'source_request_deferred' : `${stage}_failed`);
         row.baseline = { ...unknown(reason), ...(reason === 'source_denied' || reason === 'cancelled' ? { status: 'blocked' } : {}) };
         row.unpairedReason = reason;
         if (current.stopped || ['source_denied', 'source_request_deferred', 'detail_transport_not_counted', 'detail_observation_not_counted', 'owned_detail_not_rejected'].includes(reason)) throw fail(reason);
+      }
+    }
+    let turn = 0;
+    if (lowerPriceFirst) {
+      // Classification is independent of detail-page admission: a full page
+      // budget must not hide provisional card observations still in the set.
+      await measurePhase('card_pass', async () => {
+        while (queues.some(queue => queue.length)) {
+          check();
+          const available = queues.map((queue, index) => ({ target: prepared[index], index, row: queue[0] })).filter(value => value.row);
+          const priority = Math.min(...available.map(value => value.row.priority));
+          const pool = available.filter(value => value.row.priority === priority);
+          const { target, index, row } = pool.find(value => value.index === turn) || pool[0];
+          queues[index].shift(); turn = 1 - index;
+          await classifyRow(target, row);
+          if (row.cardFirst.mode === 'card_observation') {
+            row.mainflow = { mode: 'card_only', provisional: true, detailVerified: false };
+            row.unpairedReason = baselineValidation ? 'baseline_validation_pending' : 'baseline_validation_disabled';
+            // Without validation this card has no pending detail work. Release
+            // its controller quota, without changing its provisional eligibility.
+            if (!baselineValidation) controller.markCandidateIneligible({ targetId: target.item.id, candidateId: row.id, reason: 'card_only_no_baseline_validation' });
+          } else if (row.cardFirst.mode === 'excluded') {
+            row.eligible = false; row.exclusionReason = row.cardFirst.reason; row.unpairedReason = row.exclusionReason;
+            row.mainflow = { mode: 'excluded', reason: row.exclusionReason };
+            controller.markCandidateIneligible({ targetId: target.item.id, candidateId: row.id, reason: row.exclusionReason });
+          } else {
+            row.mainflow = { mode: 'detail_required', reason: row.cardFirst.reason };
+          }
+        }
+        cardPassCompletedAt = iso(now());
+      });
+      // All card decisions precede detail work. Prioritize ambiguity details;
+      // optional baseline validation never blocks the card pass. Retry deferred
+      // ambiguity work first; validation may release the other target's quota.
+      const remaining = prepared.map(target => target.rows.filter(row => row.eligible && !row.detailPhase &&
+        (row.mainflow?.mode === 'detail_required' || baselineValidation && row.mainflow?.mode === 'card_only'))
+        .sort((a, b) => a.priority - b.priority || Number(a.card.price) - Number(b.card.price)));
+      while (remaining.some(queue => queue.length)) {
+        const state = check();
+        const available = remaining.flatMap((queue, index) => queue.filter(row => canRead(state, prepared[index], row))
+          .map(row => ({ target: prepared[index], index, row })));
+        if (!available.length) { stopReason = budgetReason(state); break; }
+        const ambiguity = available.filter(value => value.row.mainflow.mode === 'detail_required');
+        const candidates = ambiguity.length ? ambiguity : available;
+        const priority = Math.min(...candidates.map(value => value.row.priority));
+        const pool = candidates.filter(value => value.row.priority === priority);
+        const { target, index, row } = pool.find(value => value.index === turn) || pool[0];
+        remaining[index].splice(remaining[index].indexOf(row), 1); turn = 1 - index;
+        delete row.unpairedReason;
+        const detailRequired = row.mainflow.mode === 'detail_required';
+        await measurePhase(detailRequired ? 'ambiguity_detail_pass' : 'baseline_validation_pass',
+          () => verifyRow(target, row, detailRequired ? 'newflow' : 'baseline_validation'));
+      }
+      if (stopReason) for (const target of prepared) for (const row of target.rows)
+        if (row.unpairedReason === 'baseline_validation_pending') row.unpairedReason = stopReason;
+    } else {
+      // Existing paired-baseline scheduling remains the default, including its
+      // known-ID preference and cache reuse when page quotas are exhausted.
+      while (queues.some(queue => queue.length)) {
+        const state = check();
+        const available = prepared.map((target, index) => ({ target, index,
+          row: queues[index].find(row => canRead(state, target, row)) })).filter(value => value.row);
+        if (!available.length) { stopReason = budgetReason(state); break; }
+        const known = available.filter(value => value.row.known), pool = known.length ? known : available;
+        const { target, index, row } = pool.find(value => value.index === turn) || pool[0];
+        queues[index].splice(queues[index].indexOf(row), 1); turn = 1 - index;
+        await classifyRow(target, row);
+        await verifyRow(target, row, 'paired_baseline');
       }
     }
   } catch (error) { stopReason = stopReason || controller.snapshot().stopped || error?.auditReason || 'audit_validation_failed'; }

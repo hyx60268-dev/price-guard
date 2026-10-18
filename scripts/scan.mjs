@@ -461,7 +461,7 @@ if(comparisonAuditSession?.active){
   comparisonAuditResult=await executeScanComparisonAudit({session:comparisonAuditSession,activation:comparisonAuditConfig,contexts,settings:{...settings,matchCorrections},readBundle:fetchYahooItemBundle,imageFingerprints});
  }catch(error){const snapshot=comparisonAuditSession.controller.snapshot();comparisonAuditResult={version:1,kind:'standalone_frozen_yahoo_comparison_audit',requestId:comparisonAuditConfig.requestId,status:'incomplete',stopReason:snapshot.stopped||(isRequestDeferred(error)?error.reason||'source_request_deferred':'audit_prerequisite_failed'),canRecommend:false,procurementCostEligible:false,targets:[],controller:snapshot};}
  deferAccountPhase({contexts},'deferred_due_to_comparison_audit');
- console.log('[卡片详情配对对照]',JSON.stringify({requestId:comparisonAuditResult.requestId,status:comparisonAuditResult.status,stopReason:comparisonAuditResult.stopReason,counts:comparisonAuditResult.counts||null,transport:comparisonAuditResult.controller?.counts,imageTransfers:comparisonAuditResult.imageTransfers||null,canRecommend:false,procurementCostEligible:false}));
+ console.log('[卡片详情配对对照]',JSON.stringify({requestId:comparisonAuditResult.requestId,status:comparisonAuditResult.status,stopReason:comparisonAuditResult.stopReason,flowMode:comparisonAuditResult.flowMode||null,mainflowComplete:comparisonAuditResult.mainflowComplete??null,requestPhases:comparisonAuditResult.requestPhases||null,phaseTimings:comparisonAuditResult.phaseTimings||null,counts:comparisonAuditResult.counts||null,targets:(comparisonAuditResult.targets||[]).map(target=>({targetId:target.targetId,collectionComplete:target.collectionComplete,counts:target.counts})),transport:comparisonAuditResult.controller?.counts,imageTransfers:comparisonAuditResult.imageTransfers||null,canRecommend:false,procurementCostEligible:false}));
 }else if(graphEnabled){
  // The opt-in experimental graph retains its established all-root contract;
  // production uses the explicitly phased legacy engine below.
@@ -567,7 +567,7 @@ for(const context of contexts){
 if(comparisonAuditResult){
  for(const account of accountResults)for(const item of account.items){
   const target=comparisonAuditResult.targets?.find(row=>row.accountId===item.accountId&&row.targetId===item.id);
-  if(target)item.comparisonAudit={version:1,kind:'standalone_frozen_yahoo_comparison_audit',target,requestId:comparisonAuditResult.requestId,startedAt:comparisonAuditResult.startedAt,deadlineAt:comparisonAuditResult.deadlineAt,frozenAt:comparisonAuditResult.frozenAt,status:comparisonAuditResult.status,stopReason:comparisonAuditResult.stopReason,canRecommend:false,procurementCostEligible:false};
+  if(target)item.comparisonAudit={version:1,kind:'standalone_frozen_yahoo_comparison_audit',flowMode:comparisonAuditResult.flowMode||'paired_baseline',baselineValidationEnabled:comparisonAuditResult.baselineValidationEnabled===true,target,requestId:comparisonAuditResult.requestId,startedAt:comparisonAuditResult.startedAt,deadlineAt:comparisonAuditResult.deadlineAt,frozenAt:comparisonAuditResult.frozenAt,status:comparisonAuditResult.status,stopReason:comparisonAuditResult.stopReason,canRecommend:false,procurementCostEligible:false};
  }
 }
 const checkedAt=new Date().toISOString(),allItems=accountResults.flatMap(account=>account.items);

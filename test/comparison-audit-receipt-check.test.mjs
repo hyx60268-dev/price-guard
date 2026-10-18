@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {encrypt} from '../scripts/lib/crypto.mjs';
-import {checkComparisonAuditReceipt,runReceiptCheckCli} from '../scripts/check-comparison-audit-receipt.mjs';
+import {checkComparisonAuditReceipt,runReceiptCheckCli,COMPARISON_AUDIT_RECEIPT_MAX_BYTES} from '../scripts/check-comparison-audit-receipt.mjs';
 
 const password='synthetic-test-password-only',sha='a'.repeat(40),now=Date.parse('2026-10-18T00:52:00.000Z');
 const source='https://hyx60268-dev.github.io/price-guard/data/state.json.enc';
@@ -84,9 +84,9 @@ test('HTTP denials, redirects and server failure never retry or follow another U
  for(const status of [401,403,429,302,503]){let count=0;const result=await checkComparisonAuditReceipt({...opts(root),mode:'published',expectedCodeSha:sha,fetchImpl:async()=>{count++;return new Response('private message',{status,headers:{location:'https://example.com', 'retry-after':'600'}});}});assert.equal(count,1);assert.equal(result.valid,false);assert.equal(result.reason,[401,403,429].includes(status)?'published_http_denied':'published_http_error');}
 });
 test('published response bytes are bounded with and without content-length',async t=>{
- const root=await setup(t);
- for(const response of [new Response('small',{headers:{'content-length':String(32*1024*1024+1)}}),new Response(new Uint8Array(32*1024*1024+1))]){
-  const result=await checkComparisonAuditReceipt({...opts(root),mode:'published',expectedCodeSha:sha,fetchImpl:async()=>response});assert.equal(result.reason,'published_body_too_large');
+ const root=await setup(t),maxBytes=4096;
+ for(const response of [new Response('small',{headers:{'content-length':String(maxBytes+1)}}),new Response(new Uint8Array(maxBytes+1))]){
+  const result=await checkComparisonAuditReceipt({...opts(root),mode:'published',expectedCodeSha:sha,maxBytes,fetchImpl:async()=>response});assert.equal(result.reason,'published_body_too_large');
  }
 });
 test('network and body exceptions never print their private message or cause',async t=>{
@@ -115,4 +115,46 @@ test('diagnostic time is verification end, and regressed or invalid clocks fail 
   if(result.valid){assert.equal(result.diagnosticObservedAt,new Date(after).toISOString());assert.equal(result.evidenceScope,'local_publication_receipt_parity');}
   else assert.equal(result.reason,'invalid_options');
  }
+});
+
+const publication=value=>({codeSha:value.scanMeta.codeSha,checkedAt:value.checkedAt,dataRevision:value.dataRevision,finishedAt:value.cycleCoverage.finishedAt});
+test('checker cap is fixed128MiB and cannot be raised through options',async t=>{
+ assert.equal(COMPARISON_AUDIT_RECEIPT_MAX_BYTES,128*1024*1024);const root=await setup(t);
+ assert.equal((await checkComparisonAuditReceipt({...opts(root),maxBytes:COMPARISON_AUDIT_RECEIPT_MAX_BYTES+1,fetchImpl:()=>assert.fail('network')})).reason,'invalid_options');
+});
+test('valid local and streamed ciphertext exactly at a chosen bounded limit passes; one extra byte fails',async t=>{
+ const value=state(),root=await setup(t,value),bytes=encrypted(value),maxBytes=bytes.length;
+ assert.equal((await checkComparisonAuditReceipt({...opts(root),maxBytes})).valid,true);
+ const streamed=()=>new Response(new ReadableStream({start(controller){for(let at=0;at<bytes.length;at+=37)controller.enqueue(bytes.subarray(at,at+37));controller.close()}}),{headers:{'content-length':'1'}});
+ assert.equal((await checkComparisonAuditReceipt({...opts(root),maxBytes,mode:'published',expectedCodeSha:sha,fetchImpl:async()=>streamed()})).valid,true);
+ await fs.appendFile(path.join(root,'state/latest.json.enc'),Buffer.from([1]));
+ const local=await checkComparisonAuditReceipt({...opts(root),maxBytes,fetchImpl:()=>assert.fail('network')});assert.equal(local.reason,'state_too_large');
+ const overflow=new Response(new ReadableStream({start(controller){controller.enqueue(bytes);controller.enqueue(Buffer.from([1]));controller.close()}}),{headers:{'content-length':'1'}});
+ assert.equal((await checkComparisonAuditReceipt({...opts(root),maxBytes,mode:'published',expectedCodeSha:sha,fetchImpl:async()=>overflow})).reason,'published_body_too_large');
+});
+test('untrusted content length cannot hide cumulative chunks or leak invalid ciphertext',async t=>{
+ const root=await setup(t),maxBytes=4096;
+ for(const length of [null,'1','-1','abc','999999999999999999999999999999999999']){
+  let cancelled=false;
+  const response={ok:true,status:200,headers:new Headers(length===null?{}:{'content-length':length}),body:{getReader(){let n=0;return {async read(){return n++<3?{done:false,value:new Uint8Array(2048)}:{done:true}},async cancel(){cancelled=true}}},async cancel(){cancelled=true}}};
+  const report=await checkComparisonAuditReceipt({...opts(root),maxBytes,mode:'published',expectedCodeSha:sha,fetchImpl:async()=>response});
+  assert.equal(report.reason,'published_body_too_large');assert.equal(cancelled,true);assert.equal(report.networkRequests,1);
+  assert.doesNotMatch(JSON.stringify(report),/PRIVATE|password|cause|stack/);
+ }
+ const report=await checkComparisonAuditReceipt({...opts(root),maxBytes,mode:'published',expectedCodeSha:sha,fetchImpl:async()=>new Response('PRIVATE fake ciphertext password='+password)});
+ assert.equal(report.reason,'state_decryption_failed');assert.doesNotMatch(JSON.stringify(report),/PRIVATE|password|cause|stack/);
+});
+test('valid encrypted state above former32MiB limit remains bounded and readable',async t=>{
+ const value=state();value.fixturePadding='x'.repeat(33*1024*1024);const root=await setup(t,value);
+ const report=await checkComparisonAuditReceipt({...opts(root),fetchImpl:()=>assert.fail('network')});assert.equal(report.valid,true);assert.equal(report.networkRequests,0);
+});
+test('pre-claim parity requires pinned previous deployment metadata, not arbitrary matching historical copies',async t=>{
+ const value=state(),root=await setup(t,value),before=await snapshot(root),expectedPublication=publication(value);let calls=0;
+ const fetchImpl=async()=>{calls++;return new Response(encrypted(value))};
+ const report=await checkComparisonAuditReceipt({...opts(root),mode:'prerequisite',expectedPublication,fetchImpl});
+ assert.equal(report.valid,true);assert.equal(report.evidenceScope,'pinned_prior_publication_receipt_parity');assert.equal(calls,1);await unchanged(root,before);
+ for(const expected of [undefined,{...expectedPublication,codeSha:'b'.repeat(40)},{...expectedPublication,checkedAt:'2026-10-18T00:48:00.000Z'},{...expectedPublication,dataRevision:'2026-10-18T00:50:00.000Z'},{...expectedPublication,finishedAt:'2027-01-01T00:00:00.000Z'}]){
+  const result=await checkComparisonAuditReceipt({...opts(root),mode:'prerequisite',expectedPublication:expected,fetchImpl:()=>assert.fail('pin conflict cannot read Pages')});assert.equal(result.valid,false);assert.equal(result.networkRequests,0);
+ }
+ await unchanged(root,before);
 });

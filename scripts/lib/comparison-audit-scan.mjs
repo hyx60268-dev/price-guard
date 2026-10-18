@@ -1,5 +1,6 @@
+import {checkComparisonAuditReceipt} from '../check-comparison-audit-receipt.mjs';
 import {normalizeOfferPlatform} from '../../public/owned-offers.js';
-import {claimComparisonAudit,createComparisonAuditController,comparisonAuditMarker} from './comparison-audit-control.mjs';
+import {decideComparisonAuditActivation,claimComparisonAudit,createComparisonAuditController,comparisonAuditMarker} from './comparison-audit-control.mjs';
 import {openComparisonAuditState,prepareComparisonAuditState} from './comparison-audit-state.mjs';
 import {RequestDeferredError} from './request-cooldown.mjs';
 import {runYahooComparisonAudit} from './yahoo-comparison-audit-runner.mjs';
@@ -48,16 +49,30 @@ export function comparisonAuditTransportHooks(controller){
   }
  };
 }
-export async function openScanComparisonAudit({root,password,activation,legacyStateCodeShas,previous,accounts,startedAt,context,now=Date.now}){
+export async function openScanComparisonAudit({root,password,activation,legacyStateCodeShas,previous,accounts,startedAt,context,now=Date.now,receiptFetch=globalThis.fetch}){
  const stateOptions={root,password,writerLockHeld:context.writerLockHeld===true,runKey:`${context.runId}:${context.runAttempt}`,codeSha:context.codeSha,startedAt,now};
  if(activation.enabled===false){
   const prepared=await prepareComparisonAuditState({...stateOptions,activation,legacyStateCodeShas});
   return {active:false,prepared:true,receipt:prepared.receipt};
  }
  const state=await openComparisonAuditState(stateOptions);
+ const configuredOwnership=configuredAuditOwnership({accounts,previous,sourceStateId:state.sourceStateId});
+ assert(Array.isArray(activation.targets)&&activation.targets.length===2&&new Set(activation.targets.map(row=>row?.itemId)).size===2,'Two distinct bound audit targets required');
+ for(const target of activation.targets){
+  const owner=configuredOwnership.accounts.find(row=>row.accountId===target?.accountId);
+  const item=(previous.items||[]).find(row=>row.accountId===target?.accountId&&row.id===target?.itemId);
+  assert(owner&&item?.itemStatus==='OPEN'&&normalizeOfferPlatform(item.platform,item.url||item.ownUrl)==='yahoo'&&
+   owner.listingIds.includes(item.id)&&owner.sellerIds.includes(item.sellerId),'Restored current audit target binding required');
+ }
+ const decision=decideComparisonAuditActivation({activation,context:{...context,startedAt},receipt:state.receipt,now:now()});
+ assert(decision.admitted,`Comparison audit blocked: ${decision.reason}`);
+ // Pin the previously verified deployment, not arbitrary mutually old copies.
+ // A failed single readback never consumes the claim or starts a market read.
+ const prerequisite=await checkComparisonAuditReceipt({root,password,mode:'prerequisite',expectedPublication:activation.prerequisitePublication,fetchImpl:receiptFetch,now});
+ console.log('[COMPARISON AUDIT PREREQUISITE] '+JSON.stringify(prerequisite));
+ assert(prerequisite.valid,`Comparison audit prerequisite blocked: ${prerequisite.reason}`);
  const claim=await claimComparisonAudit({activation,context:{...context,startedAt},receipt:state.receipt,consumeReceipt:state.consumeReceipt,now});
  assert(claim.active,`Comparison audit blocked: ${claim.reason}`);
- const configuredOwnership=configuredAuditOwnership({accounts,previous,sourceStateId:state.sourceStateId});
  const targetIds=activation.targets.map(row=>row.itemId);
  const controller=createComparisonAuditController({claim,configuredOwnership,expectedAccountIds:configuredOwnership.accounts.map(row=>row.accountId),sourceStateId:state.sourceStateId,targetIds,now});
  return {active:true,state,controller,configuredOwnership,settings:{...comparisonAuditTransportHooks(controller),attempts:1,yahooComparisonAudit:true,signal:controller.signal,yahooRequestDeadline:Date.parse(claim.audit.deadlineAt)}};
@@ -77,6 +92,8 @@ export function currentAuditOwnership(session,contexts,now=Date.now()){
  session.controller.setOwnershipIndex(index);return index;
 }
 export async function executeScanComparisonAudit({session,activation,contexts,settings,readBundle,imageFingerprints,now=Date.now}){
+ const flowMode=activation.flowMode===undefined?'paired_baseline':activation.flowMode,baselineValidation=activation.baselineValidation===undefined?true:activation.baselineValidation;
+ assert(['paired_baseline','lower_price_card_first'].includes(flowMode)&&typeof baselineValidation==='boolean','Invalid comparison audit flow mode');
  const targets=[],ownershipIndex=currentAuditOwnership(session,contexts,now());
  for(const target of activation.targets){
   const context=contexts.find(row=>row.account.id===target.accountId),item=context?.activeItems.find(row=>row.id===target.itemId);
@@ -84,6 +101,6 @@ export async function executeScanComparisonAudit({session,activation,contexts,se
   const bundle=await readBundle(item.id,{...settings,yahooRequestPurpose:'own',yahooRequestAccountId:context.account.id});
   targets.push({item:{...item,platform:'yahoo',accountId:context.account.id},ownBundle:bundle,knownCandidateIds:target.knownCandidateIds||[]});
  }
- return runYahooComparisonAudit({controller:session.controller,ownershipIndex,targets,settings,now,readDetail:readBundle,
+ return runYahooComparisonAudit({controller:session.controller,ownershipIndex,targets,settings,now,flowMode,baselineValidation,readDetail:readBundle,
   imageFingerprints:(url,options)=>imageFingerprints(url,{...options,stopOnAccessDenial:true,auditTransport:true})});
 }

@@ -392,3 +392,13 @@ test('a never-started profile reservation cannot claim successful source evidenc
   assert.equal(controller.snapshot().counts.pageReservations, 1);
   assert.equal(controller.snapshot().counts.pageFetches, 0);
 });
+
+
+test('unknown or malformed flow configuration fails before receipt consumption',async()=>{
+ for(const patch of [{flowMode:'unknown'},{flowMode:null},{baselineValidation:'false'},{baselineValidation:0}]){
+  let writes=0;const result=await claimComparisonAudit({...options(),activation:{...activation(),...patch},consumeReceipt:async()=>{writes++;return receipt()}});
+  assert.equal(result.reason,'invalid_audit_flow_mode');assert.equal(writes,0);
+ }
+ for(const mode of ['paired_baseline','lower_price_card_first'])for(const baselineValidation of [true,false])
+  assert.equal(decideComparisonAuditActivation({...options(),activation:{...activation(),flowMode:mode,baselineValidation}}).admitted,true);
+});

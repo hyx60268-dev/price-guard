@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import {spawnSync} from 'node:child_process';
+import {comparisonAuditRequested} from '../scripts/lib/comparison-audit-scan.mjs';
 
 const workflow=await fs.readFile(new URL('../.github/workflows/price-scan-transaction.yml',import.meta.url),'utf8');
 function step(id){const at=workflow.indexOf(`        id: ${id}\n`);assert.ok(at>=0,id);const start=workflow.lastIndexOf('      - ',at),end=workflow.indexOf('\n      - ',at);return workflow.slice(start,end<0?undefined:end);}
@@ -54,9 +55,11 @@ test('diagnostic command exits become explicit false readiness inputs without ma
   const failed=spawnSync('bash',['-e','-c',script],{encoding:'utf8',env:{PATH:root+':'+process.env.PATH,GITHUB_OUTPUT:root,FAKE_NODE_EXIT:'0'}});assert.notEqual(failed.status,0);
  }
 });
-test('this diagnostic integration keeps audit disabled and adds no separate workflow or activation marker',async()=>{
+test('diagnostic integration cannot activate a comparison and adds no separate workflow or marker',async()=>{
  const config=JSON.parse(await fs.readFile(new URL('../config/comparison-audit.json',import.meta.url),'utf8'));
- assert.equal(config.enabled,false);assert.deepEqual(config.targets,[]);assert.equal(config.requestId,undefined);
+ assert.equal(comparisonAuditRequested(config,{head_commit:{message:'ordinary receipt maintenance'}}),false);
+ const checker=await fs.readFile(new URL('../scripts/check-comparison-audit-receipt.mjs',import.meta.url),'utf8');
+ assert.doesNotMatch(checker,/\b(?:writeFile|appendFile|consumeReceipt|claimComparisonAudit|prepareComparisonAuditState)\s*\(/);
  assert.doesNotMatch(workflow,/price-guard-audit-receipt-only|price-guard-yahoo-comparison-audit:/);
  assert.match(workflow,/timeout-minutes: \$\{\{ inputs\.full_audit && 360 \|\| 25 }}/);
  assert.match(workflow,/permissions:\n  contents: read\n  issues: write\n  pages: write\n  id-token: write/);

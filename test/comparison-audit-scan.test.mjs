@@ -12,14 +12,17 @@ const START=Date.parse('2026-10-16T12:00:00Z'),iso=value=>new Date(value).toISOS
 const accounts=['melon','boss','momoka'].map((id,i)=>({id,platform:'yahoo',profileUrl:`https://paypayfleamarket.yahoo.co.jp/user/p${i+1}`}));
 const items=accounts.map((account,i)=>({id:`z${i+1}`,accountId:account.id,platform:'yahoo',itemStatus:'OPEN',sellerId:`p${i+1}`,title:`新品 同型 フィギュア ${i}`,ownPrice:10000,image:`https://images.invalid/${i}.png`}));
 const activation={enabled:true,requestId:'synthetic-audit-run',issuedAt:iso(START-1000),expiresAt:iso(START+3600000),targets:items.slice(0,2).map(item=>({accountId:item.accountId,itemId:item.id}))};
+const prerequisitePublication={codeSha:sha,checkedAt:iso(START-3600000),dataRevision:iso(START-3600000),finishedAt:iso(START-3600000)};
+activation.prerequisitePublication=prerequisitePublication;
 const context={writerLockHeld:true,runId:'123',runAttempt:1,codeSha:sha,expectedSha:sha,eventSha:sha,currentMainSha:sha,eventName:'push',ref:'refs/heads/main',commitMessage:comparisonAuditMarker(activation.requestId)};
 async function fixture(t){
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'audit-scan-'));t.after(()=>fs.rm(root,{force:true,recursive:true}));await fs.mkdir(path.join(root,'state'));
- const previous={checkedAt:iso(START-3600000),items,listingHistory:{old:{id:'old-id',accountId:'melon',sellerId:'p99'}},manualCosts:{kept:{purchaseCNY:123}},yahooRequestAccess:{retryAt:START-1000,reason:'http_429'},scanMeta:{codeSha:sha},scanAdmission:{version:1,runKey:'123:1',codeSha:sha,claimedAt:iso(START-1),slotKey:''}};
+ const previous={checkedAt:iso(START-3600000),dataRevision:iso(START-3600000),cycleCoverage:{finishedAt:iso(START-3600000)},items,listingHistory:{old:{id:'old-id',accountId:'melon',sellerId:'p99'}},manualCosts:{kept:{purchaseCNY:123}},yahooRequestAccess:{retryAt:START-1000,reason:'http_429'},scanMeta:{codeSha:sha},scanAdmission:{version:1,runKey:'123:1',codeSha:sha,claimedAt:iso(START-1),slotKey:''}};
  const file=path.join(root,'state/latest.json.enc'),save=value=>fs.writeFile(file,encrypt(Buffer.from(JSON.stringify(value)),password)),read=async()=>JSON.parse(decrypt(await fs.readFile(file),password));
  await save(previous);
  const options={root,password,previous,accounts,startedAt:iso(START),context,now:()=>START};
  await openScanComparisonAudit({...options,activation:{enabled:false},legacyStateCodeShas:[sha]});
+ const published=await fs.readFile(file);options.receiptFetch=async url=>{assert.equal(url,'https://hyx60268-dev.github.io/price-guard/data/state.json.enc');return new Response(published)};
  return {root,file,previous,options,save,read};
 }
 function profile(session,account,index){
@@ -64,14 +67,14 @@ test('actual profile collector records raw shape before seller fallback without 
  assert.equal(reads,1);assert.equal(discovered.items.length,1);assert.equal(discovered.items[0].sellerId,'p1');
  const observed=discovered.profileObservation;assert.equal(observed.complete,true);assert.equal(observed.membershipIds.length,2);assert.equal(observed.quoteEligibleCount,0);assert.equal(observed.quoteIneligibleReasons.seller_missing,1);assert.equal(observed.schemaReceipts[0].missingSellerCount,1);
 });
-test('runner integration counts profiles and own pages inside the same budget with no new pricing evidence',async t=>{
+for(const flowMode of ['paired_baseline','lower_price_card_first'])test(`runner integration ${flowMode} counts profiles and own pages inside the same budget with no new pricing evidence`,async t=>{
  const f=await fixture(t),session=await openScanComparisonAudit({...f.options,activation}),contexts=accounts.map((account,i)=>profile(session,account,i));let details=0,images=0;
- const report=await executeScanComparisonAudit({session,activation,contexts,settings:session.settings,now:()=>START,imageFingerprints:async()=>{images++;return null},readBundle:async(id,settings)=>{
+ const report=await executeScanComparisonAudit({session,activation:{...activation,flowMode,baselineValidation:true},contexts,settings:session.settings,now:()=>START,imageFingerprints:async()=>{images++;return null},readBundle:async(id,settings)=>{
   details++;const item=items.find(row=>row.id===id),reservation=settings.beforeYahooTransport({url:`https://paypayfleamarket.yahoo.co.jp/item/${id}`,purpose:settings.yahooRequestPurpose,accountId:settings.yahooRequestAccountId});
   settings.afterYahooTransport({reservation,httpStatus:200,completed:true,transportStarted:true,decodedBodyBytes:200,observedAt:START});
   return {detail:{id,title:item.title,price:item.ownPrice,status:'OPEN',description:'新品 フィギュア1点',seller:{id:item.sellerId},images:[item.image]},sourceUrl:`https://paypayfleamarket.yahoo.co.jp/item/${id}`,observedAt:START,fromCache:false,auditReservationId:reservation.reservationId,recommendationReceipt:{version:1,requestedItemId:id,sourceUrl:`https://paypayfleamarket.yahoo.co.jp/item/${id}`,observedAt:iso(START),totalCards:0,invalidCards:0,cards:[]}};
  }});
- assert.equal(details,2);assert.equal(images,0);assert.equal(report.controller.counts.pageFetches,5);assert.equal(report.controller.counts.byKind.profile,3);assert.equal(report.controller.counts.byKind.own,2);assert.equal(report.canRecommend,false);assert.equal(report.procurementCostEligible,false);assert.deepEqual(f.previous.items,items);
+ assert.equal(report.flowMode,flowMode);assert.equal(report.baselineValidationEnabled,flowMode==='lower_price_card_first');assert.equal(details,2);assert.equal(images,0);assert.equal(report.controller.counts.pageFetches,5);assert.equal(report.controller.counts.byKind.profile,3);assert.equal(report.controller.counts.byKind.own,2);assert.equal(report.canRecommend,false);assert.equal(report.procurementCostEligible,false);assert.deepEqual(f.previous.items,items);
 });
 test('global private frozen report and replay ledger do not enter compact/member publications',()=>{
  const result={items,accounts,comparisonAudit:{privateMarker:'other-account'},comparisonAuditReceipt:{privateMarker:'execution'}};
